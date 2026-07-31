@@ -1,9 +1,9 @@
 # PDFTranslate
 
 PDFTranslate is a Windows-first Python command-line application for translating English PDF
-content into Russian. The current release foundation can inspect text-based PDFs, classify pages,
-and extract layout-aware text blocks into a stable JSON intermediate format. Translation, OCR,
-and PDF reconstruction are not implemented yet.
+content into Russian. It can inspect text-based PDFs, extract layout-aware text blocks into a
+stable JSON intermediate format, and translate those blocks locally with NLLB. OCR and PDF
+reconstruction are not implemented yet.
 
 ## Prerequisites
 
@@ -12,8 +12,9 @@ and PDF reconstruction are not implemented yet.
 - [uv](https://docs.astral.sh/uv/) on `PATH`.
 - Git, required for pre-commit hooks.
 
-No CUDA toolkit, NVIDIA GPU, model download, or administrator privileges are required for setup
-or tests. PyMuPDF is installed from the lock file as the PDF backend.
+No CUDA toolkit, NVIDIA GPU, model download, or administrator privileges are required for tests.
+PyMuPDF is the PDF backend; PyTorch and Transformers provide local inference. NLLB weights are
+downloaded only when translation runs without an already cached model.
 
 ## Windows setup
 
@@ -69,6 +70,58 @@ Encrypted PDFs can be identified by `inspect`, but `extract` rejects password-re
 because password input is outside this ticket. OCR is not run, so `scanned` pages contain no
 recognized text.
 
+## Local translation
+
+Translate extracted JSON while retaining every original block:
+
+```powershell
+uv run pdftranslate translate .\manual.document.json `
+  --output .\manual.ru.json `
+  --from en `
+  --to ru `
+  --backend nllb `
+  --device auto
+```
+
+The default backend is `facebook/nllb-200-distilled-600M` with `eng_Latn` to `rus_Cyrl`.
+The model loads once per process. `--device auto` uses CUDA only after availability and allocation
+probes succeed; `--device cpu` forces CPU, while explicit `--device cuda` fails clearly when CUDA
+is unavailable. Automatic CUDA out-of-memory recovery is bounded and can fall back to CPU once;
+explicit CUDA failures are not hidden.
+
+Useful runtime options:
+
+```text
+--model
+--device auto|cpu|cuda
+--batch-size
+--max-input-tokens
+--cache-dir
+--overwrite
+--offline
+--resume
+```
+
+Normal mode may download missing model files and reports this before loading. `--offline` uses
+local files only and fails clearly when they are absent. The upstream model repository was
+approximately 2.5 GB when this documentation was written; cache size, RAM, and VRAM requirements
+vary by revision and precision. The [NLLB model card](https://huggingface.co/facebook/nllb-200-distilled-600M) identifies
+the checkpoint as CC-BY-NC-4.0, so
+confirm that license fits the intended use.
+
+The cache root defaults to the platform application cache and can be changed with
+`PDFTRANSLATE_CACHE_DIR` or `--cache-dir`. Model files live below `models`; translation memory is a
+SQLite database in the same root. Default runtime data is not written into the repository.
+
+The translator skips whitespace, standalone page numbers, obvious code, measurement-only values,
+and numeric identifiers. Embedded URLs, email addresses, file paths, measurements, and identifiers
+are protected and must be restored exactly. Long blocks split at paragraph/sentence boundaries
+where possible; forced splits produce warnings instead of silent truncation.
+
+Translated output uses schema 1.1. It preserves schema 1.0 source fields and original block text,
+adds `translated_text`, and records model/device/settings, timestamps, warnings, counters, and
+completion state. Atomic checkpoints make interruption visible; `--resume` validates the source
+fingerprint, block structure, backend, model, language pair, batch size, and token limit.
 ## Page classification
 
 Each page is classified as `text`, `scanned`, `mixed`, or `empty`. The deterministic defaults are:
@@ -109,7 +162,8 @@ uv run pytest
 ```
 
 The suite generates small PDF fixtures at runtime for text, empty, image-only, mixed, encrypted,
-multiple-page, stable-order, and Unicode-path scenarios. No binary fixtures are committed.
+multiple-page, stable-order, and Unicode-path scenarios. Translation tests use deterministic fake
+backends and never load or download NLLB. No binary fixtures are committed.
 
 Run the coverage-oriented test helper:
 
@@ -119,9 +173,8 @@ Run the coverage-oriented test helper:
 
 ## Roadmap
 
-1. Add local English-to-Russian translation engines with optional CUDA acceleration.
-2. Reconstruct translated PDFs while preserving useful document structure.
-3. Add OCR support for scanned documents.
+1. Reconstruct translated PDFs while preserving useful document structure.
+2. Add OCR support for scanned documents.
 
 Large models, generated PDFs, extracted document JSON, and local model caches must remain outside
 version control.

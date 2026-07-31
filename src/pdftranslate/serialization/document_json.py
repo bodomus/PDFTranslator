@@ -6,11 +6,17 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from pydantic import ValidationError
+
 from pdftranslate.domain.document import ExtractedDocument
 
 
 class OutputExistsError(ValueError):
     """The requested output exists or aliases the immutable source PDF."""
+
+
+class DocumentJsonError(ValueError):
+    """The input is unreadable or not a supported document JSON file."""
 
 
 def document_to_json(document: ExtractedDocument, *, pretty: bool = True) -> str:
@@ -20,7 +26,23 @@ def document_to_json(document: ExtractedDocument, *, pretty: bool = True) -> str
 
 def document_from_json(value: str) -> ExtractedDocument:
     """Validate and deserialize an intermediate document."""
-    return ExtractedDocument.model_validate_json(value)
+    try:
+        return ExtractedDocument.model_validate_json(value)
+    except ValidationError as error:
+        raise DocumentJsonError(f"invalid document JSON: {error}") from error
+
+
+def read_document_json(input_path: Path) -> ExtractedDocument:
+    """Read and validate an extracted or translated UTF-8 document."""
+    path = input_path.expanduser().resolve()
+    if not path.exists():
+        raise DocumentJsonError(f"document JSON does not exist: {path}")
+    if not path.is_file():
+        raise DocumentJsonError(f"document JSON is not a file: {path}")
+    try:
+        return document_from_json(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as error:
+        raise DocumentJsonError(f"cannot read document JSON: {path}: {error}") from error
 
 
 def write_document_json(

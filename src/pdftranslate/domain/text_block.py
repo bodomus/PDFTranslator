@@ -43,7 +43,7 @@ class TextSpan(DomainModel):
 
 
 class TextBlock(DomainModel):
-    """A PyMuPDF text block retained without cross-column merging."""
+    """A source block plus an optional translated value."""
 
     id: str = Field(min_length=1)
     text: str = Field(min_length=1)
@@ -51,3 +51,4 @@ class TextBlock(DomainModel):
     original_order: int = Field(ge=0)
     normalized_order: int = Field(ge=0)
     spans: tuple[TextSpan, ...] = ()
+    translated_text: str | None = Field(default=None, exclude_if=lambda value: value is None)

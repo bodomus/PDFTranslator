@@ -1,110 +1,44 @@
-# PDFTR-2 Investigation
+# PDFTR-3 Investigation
 
-## Scope and risk
+## Scope and baseline
 
-PDFTR-2 is a Level 2 change. It adds a runtime dependency, a stable document schema,
-PDF parsing and validation, two CLI commands, filesystem writes, and generated PDF
-test scenarios.
-
-## Baseline
+PDFTR-3 is a Level 2 change: local ML inference, device selection, segmentation, SQLite translation memory, resumable output, schema extension, and a public CLI command.
 
 - Repository: `J:/Projects/Python/PDFTranslator`
 - Branch: `master`
-- Baseline commit: `7a4cb4e`
+- Baseline: `84e3e7a45bdb3aaa2dd87d8a7bb9ab0515946f55`
 - Python: 3.12.10
 - uv: 0.5.26
-- Existing CLI: Typer callback plus `doctor`
-- Existing runtime boundaries: `Settings`, logging setup, and a thin package entry point
-- Pre-existing untracked input: `Tasks/PDFTR-2-pdf-inspection-and-extraction.md`
+- Existing input contract: immutable `ExtractedDocument` schema 1.0
+- Pre-existing untracked input preserved: `Tasks/PDFTR-3-local-translation-engine.md`
 
-## Ticket and dependency
-
-- The complete ticket source is already attached to PDFTR-2 in YouTrack.
-- The required PDFTR-1 code is present in the repository and committed.
-- PDFTR-1 remains in review only because its review attachment could not be uploaded;
-  the user explicitly instructed work on PDFTR-2 to proceed.
+The complete ticket source is already attached to PDFTR-3 in YouTrack and is mirrored under `Tickets/`. PDFTR-1 and PDFTR-2 implementation commits are in current history.
 
 ## Graph preflight
 
-Graphify 0.9.8 found no existing `graphify-out` graph. No supported semantic LLM
-backend is configured, so the local no-LLM update path was used. It produced an
-AST/document graph with 161 nodes and 190 edges. Queries confirmed:
+Graphify 0.9.8 reused the existing graph. Ticket-focused BFS identified CLI, `ExtractedDocument`, `TextBlock`, settings, serialization, extraction, and adjacent tests. Source validation confirmed that `src/pdftranslate/cli.py` is the composition root; translation can consume extracted JSON without importing or modifying PyMuPDF; original block text can remain immutable; serialization owns atomic writes; and settings own the cache root.
 
-- `src/pdftranslate/cli.py` is the only CLI composition point;
-- domain and PDF services can be added without importing Typer;
-- the existing `doctor` command depends only on settings and logging;
-- README, CHANGELOG, tests, and the ticket are the relevant downstream documentation.
+Code-review-graph was updated to the baseline and contains 126 nodes and 874 edges across 26 files. Its communities separate PDF, CLI/CUDA, domain, serialization, and tests. Exact queries showed `document_from_json` is currently test-only while `write_document_json` is reached by extraction. New read/translate/write reachability and post-change graph refresh are therefore required.
 
-`code-review-graph` was updated to commit `7a4cb4e` and contains 32 code nodes and
-154 relationships across 11 source/test/script files. The current change starts with
-a low blast radius but introduces new module boundaries that require a post-change
-graph refresh.
+## External-library findings
 
-## Current PyMuPDF API findings
+Context7 was used for current Transformers and PyTorch documentation. Tokenizers do not truncate unless requested; explicit max length, padding, tensor output, and length reporting are available. PyTorch documents `torch.cuda.is_available()`, requires `model.eval()` in addition to `torch.inference_mode()`, and recommends leaving an OOM exception handler before retrying.
 
-Context7 was used against the current official PyMuPDF project documentation:
-
-- `pymupdf.open(path)` raises dedicated missing, empty, and file-data errors;
-- `Document.needs_pass` identifies a document that requires authentication;
-- `Page.get_text("dict", sort=False)` exposes original blocks, lines, spans,
-  bounding boxes, font name, font size, integer color, and font flags;
-- image blocks use type `1` and include placement bounding boxes;
-- `Page.rect` is the effective visible rectangle and accounts for rotation;
-- `Page.rotation` is normalized to 0, 90, 180, or 270;
-- italic and bold are derivable from the documented font flag bits.
+The official NLLB model card documents direct `AutoTokenizer` and `AutoModelForSeq2SeqLM` loading. Its repository is approximately 2.48 GB at investigation time; documentation will treat this only as an estimate.
 
 ## Decisions
 
-1. Use Pydantic domain models because it is already a project dependency and gives
-   strict validation plus deterministic JSON round-tripping.
-2. Store page numbers as one-based values and retain `source_index` as the explicit
-   zero-based PyMuPDF index.
-3. Preserve PyMuPDF block order. Normalization removes empty blocks and normalizes
-   line whitespace without geometrically reordering columns. Both original and
-   normalized indexes remain visible.
-4. Count actual image placements from `get_text("dict")`, not merely image resources.
-5. Use a conservative built-in Latin/Cyrillic character heuristic for probable
-   language; no new language-model dependency.
-6. Inspection of an encrypted document returns a restricted inspection report with
-   `encrypted=true`, `password_required=true`, and a warning. Extraction fails with
-   a useful password-required error because this ticket exposes no password option.
-7. Use a SHA-256 source fingerprint so later translation/rendering stages can verify
-   that JSON belongs to the immutable source PDF.
-8. Generate all PDF fixtures at test runtime with PyMuPDF; commit no binary fixtures.
+1. Add a small `Translator` protocol; keep Transformers and PyTorch types inside the NLLB adapter. Construct one backend per CLI process.
+2. Extend schema 1.0 compatibly to 1.1 with optional translated block text and translation metadata. Preserve original text unchanged.
+3. Keep skip rules, protected tokens, sentence/paragraph segmentation, and deterministic recombination in pure helpers.
+4. Use SQLite under the configured cache root. Keys include backend, model, language pair, and normalized source text. Wrap corruption/errors clearly.
+5. Write atomic checkpoints. Completed blocks and settings metadata support interruption and validated `--resume`.
+6. `auto` probes CUDA usability and falls back to CPU. Explicit CUDA failures are not masked. Automatic CUDA OOM fallback is bounded to one CPU transition; batch retry is bounded by halving.
+7. Offline mode uses local files only. Normal mode reports possible download before construction and uses the configured model cache.
+8. Add Transformers and PyTorch for the required NLLB backend. Tests inject fakes and never load or download a model.
 
-## Classification heuristic
+## Invariants and limitations
 
-Configurable settings use the `PDFTRANSLATE_` environment prefix:
+Translation imports neither Typer nor PyMuPDF. Input schema 1.0 remains readable. Backend tokenization never truncates; segmentation proves limits first. Empty/whitespace, page-number, code-like, measurement-only, and identifier-only blocks bypass the model. Embedded URLs, emails, paths, measurements, and identifiers are restored exactly or processing fails. Default cache/resume data is outside the repository. Source PDF identity and original text remain unchanged.
 
-- minimum meaningful text characters;
-- maximum incidental text block count;
-- minimum mixed-page image-area ratio;
-- minimum scanned-page image-area ratio.
-
-Classification is deterministic:
-
-- no text and no images: `empty`;
-- no meaningful text plus an image: `scanned`;
-- meaningful text plus sufficiently large image coverage: `mixed`;
-- otherwise, any extractable text: `text`.
-
-An image-only page remains `scanned` even when its image coverage is below the
-configured scanned threshold, with a warning that the classification is low
-coverage. This avoids misclassifying image-only content as empty.
-
-## Validation and security boundaries
-
-- Validate that input exists, is a regular `.pdf` file, opens as PDF, and has pages.
-- Reject corrupt files and password-required extraction.
-- Parse one-based page ranges and reject descending, duplicate, malformed, or
-  out-of-bounds selections.
-- Reject output equal to the source path.
-- Refuse existing outputs unless `--overwrite` is explicit.
-- Write UTF-8 JSON through a temporary sibling file followed by atomic replacement.
-- Never mutate or rewrite the source PDF.
-
-## Known limitation
-
-PyMuPDF's native block order is deterministic but is not a semantic reading-order
-solver. Multi-column PDFs are preserved as emitted; unrelated columns are not merged
-or heuristically rearranged in this ticket.
+NLLB quality, remote availability, CUDA usability, and VRAM consumption cannot be proven in unit tests. Real-model execution remains an explicit local integration activity. Sentence splitting is deterministic and conservative, not a full linguistic boundary detector.

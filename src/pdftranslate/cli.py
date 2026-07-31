@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Annotated, Never, Protocol, cast
 
@@ -16,14 +17,30 @@ from rich.table import Table
 
 from pdftranslate import __version__
 from pdftranslate.config import Settings
-from pdftranslate.domain.document import InspectionReport
+from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
-from pdftranslate.serialization import OutputExistsError, write_document_json
+from pdftranslate.serialization import (
+    DocumentJsonError,
+    OutputExistsError,
+    read_document_json,
+    write_document_json,
+)
+from pdftranslate.translation import (
+    DEFAULT_NLLB_MODEL,
+    NllbTranslator,
+    TranslationCache,
+    TranslationError,
+    TranslationInterruptedError,
+    TranslationOptions,
+    TranslationProgress,
+    translate_document,
+)
+from pdftranslate.translation.nllb import DeviceRequest
 
 app = typer.Typer(
     name="pdftranslate",
-    help="Translate English PDF documents into Russian (translation is not implemented yet).",
+    help="Translate English PDF documents into Russian with local models.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -187,3 +204,126 @@ def extract_pdf(
         _exit_with_error(error)
 
     console.print(f"Extracted {len(document.pages)} page(s) to [path]{output.resolve()}[/path]")
+
+
+@app.command("translate")
+def translate_json(
+    input_path: Annotated[Path, typer.Argument(help="Extracted document JSON to translate.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination for translated document JSON."),
+    ],
+    source_language: Annotated[
+        str, typer.Option("--from", help="Source language (currently en).")
+    ] = "en",
+    target_language: Annotated[
+        str, typer.Option("--to", help="Target language (currently ru).")
+    ] = "ru",
+    backend: Annotated[
+        str, typer.Option("--backend", help="Local translation backend (currently nllb).")
+    ] = "nllb",
+    model: Annotated[
+        str, typer.Option("--model", help="Hugging Face model identifier or local directory.")
+    ] = DEFAULT_NLLB_MODEL,
+    device: Annotated[
+        str, typer.Option("--device", help="Inference device: auto, cpu, or cuda.")
+    ] = "auto",
+    batch_size: Annotated[
+        int, typer.Option("--batch-size", min=1, help="Maximum inference segments per batch.")
+    ] = 8,
+    max_input_tokens: Annotated[
+        int,
+        typer.Option("--max-input-tokens", min=8, help="Maximum tokens per input segment."),
+    ] = 512,
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option("--cache-dir", help="Root for model files and translation memory."),
+    ] = None,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing output and start again.")
+    ] = False,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use local model files only; never use network.")
+    ] = False,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Continue a compatible interrupted output.")
+    ] = False,
+) -> None:
+    """Translate extracted text blocks with one reusable local NLLB model."""
+    started = time.perf_counter()
+    settings = Settings()
+    configure_logging(settings.log_level)
+    root_cache = (cache_dir or settings.cache_dir).expanduser().resolve()
+    output_path = output.expanduser().resolve()
+
+    try:
+        if backend != "nllb":
+            raise TranslationError(f"unsupported translation backend: {backend}")
+        if device not in {"auto", "cpu", "cuda"}:
+            raise TranslationError("--device must be one of: auto, cpu, cuda")
+        if overwrite and resume:
+            raise TranslationError("--overwrite and --resume cannot be used together")
+        source_document = read_document_json(input_path)
+        resume_document = None
+        if resume:
+            if not output_path.exists():
+                raise TranslationError(f"resume output does not exist: {output_path}")
+            resume_document = read_document_json(output_path)
+        elif output_path.exists() and not overwrite:
+            raise OutputExistsError(f"output already exists; use --overwrite: {output_path}")
+
+        mode_message = "local files only" if offline else "download may be required if not cached"
+        console.print(f"Loading model {model} ({mode_message})...")
+        translator = NllbTranslator(
+            model_name=model,
+            source_language=source_language,
+            target_language=target_language,
+            device=cast(DeviceRequest, device),
+            cache_dir=root_cache / "models",
+            offline=offline,
+            max_input_tokens=max_input_tokens,
+        )
+        console.print(f"Model loaded on {translator.device}; effective batch size {batch_size}")
+
+        def checkpoint(document: ExtractedDocument) -> None:
+            write_document_json(document, output_path, overwrite=True)
+
+        def report(event: TranslationProgress) -> None:
+            console.print(
+                f"Blocks {event.completed_blocks}/{event.total_blocks}; "
+                f"cache {event.cache_hits} hit(s), {event.cache_misses} miss(es); "
+                f"page {event.page_number}, block {event.block_id}"
+            )
+
+        options = TranslationOptions(
+            source_language=source_language,
+            target_language=target_language,
+            batch_size=batch_size,
+            max_input_tokens=max_input_tokens,
+        )
+        with TranslationCache(root_cache / "translation-memory.sqlite3") as cache:
+            result = translate_document(
+                source_document,
+                translator=translator,
+                cache=cache,
+                options=options,
+                resume_document=resume_document,
+                checkpoint=checkpoint,
+                progress=report,
+            )
+    except TranslationInterruptedError as error:
+        typer.echo(f"Interrupted: {error}", err=True)
+        raise typer.Exit(code=130) from error
+    except (DocumentJsonError, OutputExistsError, TranslationError, OSError, ValueError) as error:
+        _exit_with_error(error)
+
+    metadata = result.translation
+    assert metadata is not None
+    elapsed = time.perf_counter() - started
+    stats = metadata.statistics
+    console.print(
+        f"Translated {stats.completed_blocks}/{stats.total_blocks} block(s) to "
+        f"[path]{output_path}[/path]; cache {stats.cache_hits} hit(s), "
+        f"{stats.cache_misses} miss(es); device {metadata.effective_device}; "
+        f"elapsed {elapsed:.2f}s"
+    )

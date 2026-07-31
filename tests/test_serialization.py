@@ -24,6 +24,8 @@ def test_document_json_round_trip_preserves_domain_model(
     payload = document_to_json(document)
 
     assert '"schema_version":"1.0"'.replace(":", ": ") in payload
+    assert '"translated_text"' not in payload
+    assert '"translation"' not in payload
     assert document_from_json(payload) == document
 
 
