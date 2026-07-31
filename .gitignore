@@ -26,6 +26,7 @@ htmlcov/
 # Runtime output
 output/
 translated/
+*.document.json
 *.translated.pdf
 *.log
 logs/

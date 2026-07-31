@@ -27,3 +27,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cache_dir: Path = Field(default_factory=_default_cache_dir)
     config_dir: Path = Field(default_factory=_default_config_dir)
+    classification_min_text_characters: int = Field(default=20, ge=1)
+    classification_max_incidental_text_blocks: int = Field(default=1, ge=0)
+    classification_mixed_image_area_ratio: float = Field(default=0.15, ge=0, le=1)
+    classification_scanned_image_area_ratio: float = Field(default=0.65, ge=0, le=1)
