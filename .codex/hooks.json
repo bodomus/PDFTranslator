@@ -1,0 +1,19 @@
+{
+  "description": "Warn when the PDFTranslate Graphify index needs an update.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify check-update \"$(git rev-parse --show-toplevel)\"",
+            "commandWindows": "powershell -NoProfile -Command '$repoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & graphify.exe check-update $repoRoot'",
+            "timeout": 5,
+            "statusMessage": "Checking PDFTranslate Graphify freshness"
+          }
+        ]
+      }
+    ]
+  }
+}

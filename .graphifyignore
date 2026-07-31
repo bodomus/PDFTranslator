@@ -1,0 +1,41 @@
+# Version control and editor state
+.git/
+.idea/
+.vscode/
+.vs/
+
+# Agent instructions and generated repository graphs
+# Keep .codex/PRE_TICKET_WORKFLOW.md and .codex/hooks.json visible to Graphify,
+# but exclude bundled Graphify implementation docs and self-referential skills.
+.agents/
+.codex/skills/
+.code-review-graph/
+graphify-out/
+
+# Python environments, caches, coverage, and build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+
+# PDFTranslate runtime and local development artifacts
+.cache/
+models/
+logs/
+*.log
+output/
+translated/
+*.translated.pdf
+*.ru.pdf
+temp/
+tmp/
+*.zip

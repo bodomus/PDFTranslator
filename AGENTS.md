@@ -12,6 +12,21 @@
 - Never download large models during unit tests or CI.
 - Never commit generated PDFs, model weights, virtual environments, caches, or logs.
 
+## Repository intelligence
+
+- Before every non-trivial ticket, investigation, implementation, or code review, read and follow
+  `.codex/PRE_TICKET_WORKFLOW.md`.
+- Use `.agents/skills/graphify-repository-analysis/SKILL.md` for architectural orientation and
+  source-verify every important graph conclusion.
+- Use `.agents/skills/code-review-graph-analysis/SKILL.md` for exact symbols, callers, dependants,
+  tests, reachability, and blast-radius analysis.
+- Use `.agents/skills/python-design-patterns/SKILL.md` when introducing abstractions or changing
+  module boundaries.
+- Use Context7 for current documentation about external libraries, frameworks, SDKs, APIs, and
+  CLI tools. For Codex/OpenAI behavior, use the official Codex/OpenAI documentation workflow.
+- Respect `.graphifyignore`; do not index generated graphs, virtual environments, model caches,
+  runtime output, or bundled Graphify implementation documentation.
+
 ## Ticket workflow
 
 - Before starting a YouTrack or other application ticket, save its Markdown text under

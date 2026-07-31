@@ -42,3 +42,7 @@ desktop.ini
 
 # Local source material preserved outside the project deliverables
 /PDFTranslate-tickets.zip
+
+# Repository intelligence output
+.code-review-graph/
+graphify-out/
