@@ -3,7 +3,8 @@
 PDFTranslate is a Windows-first Python command-line application for translating English PDF
 content into Russian. It can inspect text-based PDFs, extract layout-aware text blocks into a
 stable JSON intermediate format, translate those blocks locally with NLLB, and render Russian text
-into a validated copy of the source PDF. OCR is not implemented yet.
+into a validated copy of the source PDF. Optional OCRmyPDF/Tesseract preprocessing supports
+scanned and mixed documents.
 
 ## Prerequisites
 
@@ -11,6 +12,8 @@ into a validated copy of the source PDF. OCR is not implemented yet.
 - Python 3.12 (the project intentionally supports `>=3.12,<3.13`).
 - [uv](https://docs.astral.sh/uv/) on `PATH`.
 - Git, required for pre-commit hooks.
+- Optional for scanned PDFs: OCRmyPDF, 64-bit Tesseract with English (`eng`) data, and
+  Ghostscript when required by the installed OCRmyPDF version.
 
 No CUDA toolkit, NVIDIA GPU, model download, or administrator privileges are required for tests.
 PyMuPDF is the PDF backend; PyTorch and Transformers provide local inference. NLLB weights are
@@ -67,8 +70,8 @@ JSON is written as UTF-8 through an atomic sibling file; existing output and the
 protected unless the applicable explicit option is supplied.
 
 Encrypted PDFs can be identified by `inspect`, but `extract` rejects password-required documents
-because password input is outside this ticket. OCR is not run, so `scanned` pages contain no
-recognized text.
+because password input is outside this ticket. The standalone `extract` command does not run OCR;
+use the root one-command workflow for scanned documents.
 
 ## One-command translation
 
@@ -84,14 +87,15 @@ uv run pdftranslate .\manual.pdf --resume
 ```
 
 Without `--output`, the destination is a sibling named `<input-stem>.ru.pdf`. The root command
-runs and reports five stages:
+runs and reports six stages:
 
 ```text
-1/5 Inspect
-2/5 Extract
-3/5 Translate
-4/5 Render
-5/5 Validate
+1/6 Inspect
+2/6 OCR
+3/6 Extract
+4/6 Translate
+5/6 Render
+6/6 Validate
 ```
 
 Translation also reports completed blocks and translation-memory hits/misses. The existing
@@ -103,6 +107,9 @@ Pipeline artifacts are stored outside the repository under the platform applicat
 ```text
 <cache>/workspaces/<run-id>/
   inspection.json
+  ocr.pdf           # present when OCR ran
+  ocr.log           # retained OCRmyPDF command/output
+  ocr.txt           # OCR sidecar when produced
   extracted.json
   translated.json
   rendered.pdf
@@ -129,9 +136,40 @@ Preview the selected pages and expected work without constructing or downloading
 uv run pdftranslate .\manual.pdf --pages 1-20 --dry-run
 ```
 
-Dry-run reports page classifications, estimated blocks, OCR requirement, backend, requested
-device, output path, and expected stages. Selected scanned pages fail a real run with the dedicated
-OCR-required category because OCR is still outside the implemented scope.
+Dry-run reports page classifications, estimated blocks, the OCR decision/pages, backend, requested
+device, output path, and expected stages without launching OCR or loading the translation model.
+
+### OCR preprocessing
+
+The root command defaults to conservative automatic OCR:
+
+```powershell
+uv run pdftranslate .\scanned.pdf --ocr auto
+uv run pdftranslate .\mixed.pdf --ocr on --ocr-language eng
+uv run pdftranslate .\text.pdf --ocr off
+```
+
+- `--ocr auto` runs only when selected pages are classified as scanned. Normal text PDFs skip the
+  external process. Mixed pages retain their reliable existing text.
+- `--ocr on` invokes OCRmyPDF for selected pages with `--mode skip`, so pages that already contain
+  text are preserved.
+- `--ocr off` never launches OCR and returns exit code 4 when selected scanned pages need it.
+- `--ocr-force` requires `--ocr on` and deliberately uses OCRmyPDF force mode, which rasterizes
+  selected pages. Use it only for known-bad text layers.
+- `--ocr-deskew`, `--ocr-clean`, and `--ocr-rotate-pages` opt into corresponding conservative
+  OCRmyPDF preprocessing. `--ocr-clean` also requires the external `unpaper` tool.
+
+OCR writes only inside the deterministic run workspace and never overwrites the source. The result
+is reopened, checked for page-count and page-geometry changes, reclassified, and warned about when
+little or no text was recovered. Compatible `ocr.pdf` artifacts are reused by `--resume`; changing
+the source or any OCR setting selects a different workspace.
+
+`pdftranslate doctor` reports resolved OCRmyPDF, Tesseract, and Ghostscript paths and versions plus
+English language-data availability. It provides guidance only and never installs system software.
+On Windows, follow the [OCRmyPDF installation guide](https://ocrmypdf.readthedocs.io/en/latest/installation.html);
+Tesseract can be installed with `winget install -e --id UB-Mannheim.TesseractOCR`, while Ghostscript
+requires its own 64-bit installation when needed. Ensure `ocrmypdf`, `tesseract`, and the `eng`
+trained-data file are discoverable before processing scans.
 
 ### Exit codes
 
@@ -147,6 +185,7 @@ The root pipeline command uses centralized stable categories:
 | 6 | Translation failure |
 | 7 | Rendering failure |
 | 8 | Output validation/publication failure |
+| 9 | OCR dependency, subprocess, timeout, or output-validation failure |
 | 130 | Ctrl+C or simulated interruption |
 
 ## Local translation
@@ -179,6 +218,12 @@ Useful runtime options:
 --overwrite
 --offline
 --resume
+--ocr auto|on|off
+--ocr-language eng
+--ocr-deskew
+--ocr-clean
+--ocr-rotate-pages
+--ocr-force
 ```
 
 Normal mode may download missing model files and reports this before loading. `--offline` uses
@@ -300,7 +345,7 @@ Run the coverage-oriented test helper:
 
 ## Roadmap
 
-1. Add OCR support for scanned documents.
+1. Add batch translation and richer reporting.
 2. Add directory batch orchestration for the existing one-document pipeline.
 
 Large models, generated PDFs, extracted document JSON, and local model caches must remain outside

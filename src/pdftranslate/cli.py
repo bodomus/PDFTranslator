@@ -20,6 +20,7 @@ from pdftranslate import __version__
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
+from pdftranslate.ocr import OcrMode, inspect_ocr_dependencies
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
 from pdftranslate.pipeline import (
     DryRunResult,
@@ -199,6 +200,8 @@ def _dry_run_table(dry_run: DryRunResult) -> Table:
     table.add_row("Page classifications", classifications)
     table.add_row("Estimated text blocks", str(dry_run.estimated_text_blocks))
     table.add_row("OCR required", str(dry_run.ocr_required).lower())
+    table.add_row("OCR decision", "run" if dry_run.ocr_will_run else "skip")
+    table.add_row("OCR pages", ", ".join(map(str, dry_run.ocr_pages)) or "none")
     table.add_row("Translation backend", dry_run.backend)
     table.add_row("Selected device", dry_run.device)
     table.add_row("Output", str(dry_run.output_path))
@@ -268,6 +271,30 @@ def translate_pdf(
         bool,
         typer.Option("--allow-expand", help="Expand blocks downward within safe limits."),
     ] = False,
+    ocr: Annotated[
+        str,
+        typer.Option("--ocr", help="OCR preprocessing: auto, on, or off."),
+    ] = "auto",
+    ocr_language: Annotated[
+        str,
+        typer.Option("--ocr-language", help="Tesseract source language data."),
+    ] = "eng",
+    ocr_deskew: Annotated[
+        bool,
+        typer.Option("--ocr-deskew", help="Deskew scanned pages before OCR."),
+    ] = False,
+    ocr_clean: Annotated[
+        bool,
+        typer.Option("--ocr-clean", help="Clean scan images with OCRmyPDF/unpaper."),
+    ] = False,
+    ocr_rotate_pages: Annotated[
+        bool,
+        typer.Option("--ocr-rotate-pages", help="Detect and correct page rotation."),
+    ] = False,
+    ocr_force: Annotated[
+        bool,
+        typer.Option("--ocr-force", help="Rasterize and OCR selected pages; requires --ocr on."),
+    ] = False,
     offline: Annotated[
         bool,
         typer.Option("--offline", help="Use local model files only; never use network."),
@@ -306,6 +333,12 @@ def translate_pdf(
             line_height=line_height,
             redaction_padding=redaction_padding,
             allow_expand=allow_expand,
+            ocr=cast(OcrMode, ocr),
+            ocr_language=ocr_language,
+            ocr_deskew=ocr_deskew,
+            ocr_clean=ocr_clean,
+            ocr_rotate_pages=ocr_rotate_pages,
+            ocr_force=ocr_force,
         )
     except ValueError as error:
         _print_pipeline_error(
@@ -347,8 +380,15 @@ def translate_pdf(
         f"Translated {statistics.completed_blocks}/{statistics.total_blocks} block(s) to "
         f"[path]{result.output_path}[/path]; cache {statistics.cache_hits} hit(s), "
         f"{statistics.cache_misses} miss(es); reused {len(result.reused_stages)} stage(s); "
+        f"OCR {result.ocr_status} ({len(result.ocr_pages)} page(s)); "
         f"size {result.file_size} bytes; elapsed {elapsed:.2f}s"
     )
+
+
+def _executable_diagnostic(path: str | None, version: str | None) -> str:
+    if path is None:
+        return "unavailable"
+    return f"{version or 'version unknown'} ({path})"
 
 
 @app.command()
@@ -367,6 +407,19 @@ def doctor() -> None:
     table.add_row("Cache directory", str(settings.cache_dir))
     table.add_row("CUDA", _cuda_status())
     table.add_row("NVIDIA GPU", _nvidia_gpu_status())
+    ocr = inspect_ocr_dependencies()
+    table.add_row("OCRmyPDF", _executable_diagnostic(ocr.ocrmypdf.path, ocr.ocrmypdf.version))
+    table.add_row("Tesseract", _executable_diagnostic(ocr.tesseract.path, ocr.tesseract.version))
+    table.add_row(
+        "Ghostscript", _executable_diagnostic(ocr.ghostscript.path, ocr.ghostscript.version)
+    )
+    table.add_row("English OCR", "available" if "eng" in ocr.languages else "unavailable")
+    if ocr.ocrmypdf.path is None or ocr.tesseract.path is None or "eng" not in ocr.languages:
+        table.add_row(
+            "OCR guidance",
+            "Install OCRmyPDF, 64-bit Tesseract, and eng language data; "
+            "no automatic installation is attempted.",
+        )
     table.add_row("Status", "OK" if sys.version_info[:2] == (3, 12) else "WARNING")
     console.print(table)
 

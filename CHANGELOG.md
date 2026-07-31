@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- OCRmyPDF/Tesseract preprocessing stage with `auto`, `on`, and `off` modes, English language
+  selection, deskew/clean/rotation controls, explicit force mode, bounded subprocess execution,
+  retained logs/sidecars, actionable dependency failures, and a dedicated OCR failure exit code.
+- Conservative mixed-PDF handling via OCRmyPDF skip mode, immutable source files, post-OCR
+  page-count/geometry/classification validation, low-text warnings, and resumable `ocr.pdf`
+  workspace artifacts invalidated by source or OCR-setting changes.
+- `pdftranslate doctor` OCRmyPDF, Tesseract, Ghostscript, executable-path, version, and English
+  language-data diagnostics without automatic system installation.
+- Mocked OCR unit and pipeline tests plus an explicitly enabled optional real-OCR integration test.
 - Root `pdftranslate INPUT.pdf` workflow for inspection, extraction, local translation, rendering,
   final validation, and atomic publication with `<stem>.ru.pdf` default naming.
 - Deterministic application-cache workspaces containing inspection/extraction/translation

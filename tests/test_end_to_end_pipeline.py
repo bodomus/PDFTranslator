@@ -221,6 +221,7 @@ def test_resume_reuses_completed_translation_after_render_interruption(
     assert output.is_file()
     assert resumed.reused_stages == (
         PipelineStage.INSPECT,
+        PipelineStage.OCR,
         PipelineStage.EXTRACT,
         PipelineStage.TRANSLATE,
     )
@@ -319,7 +320,13 @@ def test_scanned_pdf_uses_stable_ocr_required_exit_category(
 
     with pytest.raises(PipelineExecutionError) as failure:
         run_pipeline(
-            _options(source, tmp_path / "scan.ru.pdf", tmp_path / "cache", cyrillic_font_path),
+            _options(
+                source,
+                tmp_path / "scan.ru.pdf",
+                tmp_path / "cache",
+                cyrillic_font_path,
+                ocr="off",
+            ),
             services=_services(translator),
         )
 
@@ -450,6 +457,7 @@ def test_exit_code_values_are_stable() -> None:
         "TRANSLATION_FAILED": 6,
         "RENDERING_FAILED": 7,
         "OUTPUT_VALIDATION_FAILED": 8,
+        "OCR_FAILED": 9,
         "INTERRUPTED": 130,
     }
 
@@ -480,8 +488,8 @@ def test_root_cli_runs_complete_pipeline_with_fake_backend(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert output.is_file()
-    assert "1/5 Inspect" in result.stdout
-    assert "5/5 Validate" in result.stdout
+    assert "1/6 Inspect" in result.stdout
+    assert "6/6 Validate" in result.stdout
     assert "Translated 1/1 block(s)" in result.stdout
     loader.assert_called_once()
 

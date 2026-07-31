@@ -58,6 +58,7 @@ show_error_codes = true
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=pdftranslate --cov-report=term-missing --cov-fail-under=80 -q"
 testpaths = ["tests"]
+markers = ["ocr_integration: requires explicitly enabled OCR system dependencies"]
 
 [tool.coverage.run]
 branch = true

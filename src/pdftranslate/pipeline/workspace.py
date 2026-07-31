@@ -57,6 +57,9 @@ class PipelineWorkspace:
         self.manifest = manifest
         self.manifest_path = path / "manifest.json"
         self.inspection_path = path / "inspection.json"
+        self.ocr_path = path / "ocr.pdf"
+        self.ocr_log_path = path / "ocr.log"
+        self.ocr_sidecar_path = path / "ocr.txt"
         self.extracted_path = path / "extracted.json"
         self.translated_path = path / "translated.json"
         self.rendered_path = path / "rendered.pdf"
@@ -112,6 +115,7 @@ class PipelineWorkspace:
         paths = {
             PipelineStage.INSPECT: self.inspection_path,
             PipelineStage.EXTRACT: self.extracted_path,
+            PipelineStage.OCR: self.ocr_path,
             PipelineStage.TRANSLATE: self.translated_path,
             PipelineStage.RENDER: self.rendered_path,
             PipelineStage.VALIDATE: Path(str(self.manifest.options["output_path"])),
@@ -123,6 +127,16 @@ class PipelineWorkspace:
         if record.status != "completed" or record.artifact is None:
             return False
         return Path(record.artifact).is_file()
+
+    def completed_artifact(self, stage: PipelineStage) -> Path:
+        """Return a completed artifact after checking the persisted record."""
+        record = self.manifest.stages[stage.value]
+        if record.status != "completed" or record.artifact is None:
+            raise PipelineStateError(f"stage {stage.value} has no completed artifact")
+        artifact = Path(record.artifact)
+        if not artifact.is_file():
+            raise PipelineStateError(f"stage {stage.value} artifact is missing: {artifact}")
+        return artifact
 
     def mark_completed(self, stage: PipelineStage, artifact: Path) -> None:
         now = _now()

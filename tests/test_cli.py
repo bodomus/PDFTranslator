@@ -26,6 +26,8 @@ def test_doctor_exits_successfully() -> None:
     assert result.exit_code == 0
     assert "PDFTranslate doctor" in result.stdout
     assert "Application" in result.stdout
+    assert "OCRmyPDF" in result.stdout
+    assert "English OCR" in result.stdout
     assert "Status" in result.stdout
 
 

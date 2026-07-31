@@ -10,12 +10,14 @@ from typing import Literal
 from pdftranslate.domain.document import InspectionReport, TranslationStatistics
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
+OcrMode = Literal["auto", "on", "off"]
 
 
 class PipelineStage(StrEnum):
     """Stable ordered pipeline stage names persisted in manifests."""
 
     INSPECT = "inspect"
+    OCR = "ocr"
     EXTRACT = "extract"
     TRANSLATE = "translate"
     RENDER = "render"
@@ -24,6 +26,7 @@ class PipelineStage(StrEnum):
 
 STAGE_LABELS: dict[PipelineStage, str] = {
     PipelineStage.INSPECT: "Inspect",
+    PipelineStage.OCR: "OCR",
     PipelineStage.EXTRACT: "Extract",
     PipelineStage.TRANSLATE: "Translate",
     PipelineStage.RENDER: "Render",
@@ -53,6 +56,12 @@ class PipelineOptions:
     line_height: float = 1.2
     redaction_padding: float = 0.5
     allow_expand: bool = False
+    ocr: OcrMode = "auto"
+    ocr_language: str = "eng"
+    ocr_deskew: bool = False
+    ocr_clean: bool = False
+    ocr_rotate_pages: bool = False
+    ocr_force: bool = False
 
     def __post_init__(self) -> None:
         if self.backend != "nllb":
@@ -69,6 +78,18 @@ class PipelineOptions:
             raise ValueError("redaction_padding cannot be negative")
         if self.resume and self.overwrite:
             raise ValueError("--resume and --overwrite cannot be used together")
+
+        if self.ocr not in {"auto", "on", "off"}:
+            raise ValueError("ocr mode must be one of: auto, on, off")
+        if not self.ocr_language.strip():
+            raise ValueError("OCR language cannot be empty")
+        processing_requested = (
+            self.ocr_deskew or self.ocr_clean or self.ocr_rotate_pages or self.ocr_force
+        )
+        if self.ocr == "off" and processing_requested:
+            raise ValueError("OCR processing options cannot be used with --ocr off")
+        if self.ocr_force and self.ocr != "on":
+            raise ValueError("--ocr-force requires --ocr on")
 
     def identity_values(self) -> dict[str, str | int | float | bool | None]:
         """Return canonical values that determine artifact compatibility."""
@@ -88,6 +109,12 @@ class PipelineOptions:
             "line_height": self.line_height,
             "redaction_padding": self.redaction_padding,
             "allow_expand": self.allow_expand,
+            "ocr": self.ocr,
+            "ocr_language": self.ocr_language,
+            "ocr_deskew": self.ocr_deskew,
+            "ocr_clean": self.ocr_clean,
+            "ocr_rotate_pages": self.ocr_rotate_pages,
+            "ocr_force": self.ocr_force,
         }
 
 
@@ -111,6 +138,9 @@ class PipelineResult:
     reused_stages: tuple[PipelineStage, ...]
     statistics: TranslationStatistics
     file_size: int
+    ocr_status: Literal["skipped", "processed", "reused"]
+    ocr_pages: tuple[int, ...] = ()
+    ocr_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,6 +152,8 @@ class DryRunResult:
     selected_page_classifications: tuple[str, ...]
     estimated_text_blocks: int
     ocr_required: bool
+    ocr_will_run: bool
+    ocr_pages: tuple[int, ...]
     backend: str
     device: DeviceRequest
     output_path: Path

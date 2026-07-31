@@ -6,12 +6,14 @@ import os
 import shutil
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Literal
 
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
+from pdftranslate.ocr import OcrError, OcrOptions, OcrProcessor, validate_ocr_output
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
 from pdftranslate.pdf.pymupdf_backend import source_identity
 from pdftranslate.pipeline.errors import (
@@ -64,6 +66,7 @@ class PipelineServices:
     renderer: PdfRenderer
     translator_factory: TranslatorFactory
     validator: OutputValidator = validate_output_pdf
+    ocr_processor: OcrProcessor = field(default_factory=OcrProcessor)
 
 
 def default_services(settings: Settings | None = None) -> PipelineServices:
@@ -86,6 +89,7 @@ def default_services(settings: Settings | None = None) -> PipelineServices:
         extractor=PdfExtractor(selected_settings),
         renderer=PdfRenderer(),
         translator_factory=create_translator,
+        ocr_processor=OcrProcessor(),
     )
 
 
@@ -112,12 +116,16 @@ def plan_pipeline(
             exit_code=ExitCode.INVALID_ARGUMENTS,
         ) from error
     classifications = tuple(page.classification.value for page in extracted.pages)
+    scanned_pages = _scanned_pages(extracted)
+    ocr_pages = _reported_ocr_pages(extracted, options)
     return DryRunResult(
         inspection=inspection,
         selected_pages=extracted.selected_pages,
         selected_page_classifications=classifications,
         estimated_text_blocks=sum(len(page.text_blocks) for page in extracted.pages),
-        ocr_required=any(value == "scanned" for value in classifications),
+        ocr_required=bool(scanned_pages),
+        ocr_will_run=options.ocr == "on" or (options.ocr == "auto" and bool(scanned_pages)),
+        ocr_pages=ocr_pages,
         backend=options.backend,
         device=options.device,
         output_path=options.output_path.expanduser().resolve(),
@@ -161,22 +169,24 @@ def run_pipeline(
             reused,
             stage_progress,
         )
-        current_stage = PipelineStage.EXTRACT
-        extracted = _extract(
+        current_stage = PipelineStage.OCR
+        working_pdf, pre_extracted, ocr_status, ocr_pages, ocr_warnings = _ocr(
             options,
             workspace,
             selected_services,
             reused,
             stage_progress,
         )
-        scanned_pages = tuple(
-            page.page_number for page in extracted.pages if page.classification.value == "scanned"
+        current_stage = PipelineStage.EXTRACT
+        extracted = _extract(
+            options,
+            working_pdf,
+            pre_extracted,
+            workspace,
+            selected_services,
+            reused,
+            stage_progress,
         )
-        if scanned_pages:
-            pages = ", ".join(str(number) for number in scanned_pages)
-            raise OcrRequiredError(
-                f"OCR is required for selected scanned page(s): {pages}; OCR is not implemented"
-            )
 
         current_stage = PipelineStage.TRANSLATE
         translated = _translate(
@@ -193,6 +203,7 @@ def run_pipeline(
             options,
             workspace,
             translated,
+            working_pdf,
             selected_services,
             reused,
             stage_progress,
@@ -233,6 +244,9 @@ def run_pipeline(
         reused_stages=tuple(reused),
         statistics=metadata.statistics,
         file_size=file_size,
+        ocr_status=ocr_status,
+        ocr_pages=ocr_pages,
+        ocr_warnings=ocr_warnings,
     )
 
 
@@ -257,8 +271,129 @@ def _inspect(
     return report
 
 
+def _ocr(
+    options: PipelineOptions,
+    workspace: PipelineWorkspace,
+    services: PipelineServices,
+    reused: list[PipelineStage],
+    callback: StageCallback | None,
+) -> tuple[
+    Path,
+    ExtractedDocument,
+    Literal["skipped", "processed", "reused"],
+    tuple[int, ...],
+    tuple[str, ...],
+]:
+    stage = PipelineStage.OCR
+    source_path = options.input_path.expanduser().resolve()
+    before = services.extractor.extract(source_path, options.pages)
+    scanned_pages = _scanned_pages(before)
+    target_pages = before.selected_pages if options.ocr == "on" else scanned_pages
+    reported_pages = _reported_ocr_pages(before, options)
+
+    if options.ocr == "off" and scanned_pages:
+        pages = ", ".join(str(number) for number in scanned_pages)
+        raise OcrRequiredError(
+            f"OCR is required for selected scanned page(s): {pages}; rerun with --ocr auto or on"
+        )
+
+    if options.resume and workspace.can_reuse(stage):
+        artifact = workspace.completed_artifact(stage).resolve()
+        after = before
+        warnings: tuple[str, ...] = ()
+        if artifact != source_path:
+            after = services.extractor.extract(artifact, options.pages)
+            warnings = validate_ocr_output(
+                source_path,
+                artifact,
+                before,
+                after,
+                reported_pages,
+            )
+        _announce(stage, True, reused, callback, workspace)
+        return (
+            artifact,
+            after,
+            "reused",
+            reported_pages if artifact != source_path else (),
+            warnings,
+        )
+
+    should_run = options.ocr == "on" or (options.ocr == "auto" and bool(scanned_pages))
+    _announce(stage, False, reused, callback, workspace)
+    if not should_run:
+        workspace.log(
+            "OCR skipped: selected pages contain no scanned pages; mixed/text layers preserved"
+        )
+        workspace.mark_completed(stage, source_path)
+        return source_path, before, "skipped", (), ()
+
+    execution = services.ocr_processor.process(
+        source_path,
+        workspace.ocr_path,
+        log_path=workspace.ocr_log_path,
+        sidecar_path=workspace.ocr_sidecar_path,
+        pages=target_pages,
+        options=OcrOptions(
+            mode=options.ocr,
+            language=options.ocr_language,
+            deskew=options.ocr_deskew,
+            clean=options.ocr_clean,
+            rotate_pages=options.ocr_rotate_pages,
+            force=options.ocr_force,
+        ),
+    )
+    after = services.extractor.extract(execution.output_path, options.pages)
+    warnings = validate_ocr_output(
+        source_path,
+        execution.output_path,
+        before,
+        after,
+        reported_pages,
+    )
+    workspace.mark_completed(stage, execution.output_path)
+    workspace.log(
+        f"OCR processed {len(reported_pages)} page(s): "
+        + ", ".join(str(page) for page in reported_pages)
+    )
+    for warning in warnings:
+        workspace.log(f"OCR warning: {warning}")
+    return (
+        execution.output_path,
+        after,
+        "processed",
+        reported_pages,
+        warnings,
+    )
+
+
+def _reported_ocr_pages(
+    document: ExtractedDocument,
+    options: PipelineOptions,
+) -> tuple[int, ...]:
+    if options.ocr == "auto":
+        return _scanned_pages(document)
+    if options.ocr == "on" and options.ocr_force:
+        return document.selected_pages
+    if options.ocr == "on":
+        return tuple(
+            page.page_number
+            for page in document.pages
+            if page.classification.value in {"scanned", "empty"}
+        )
+    return ()
+
+
+def _scanned_pages(document: ExtractedDocument) -> tuple[int, ...]:
+    return tuple(
+        page.page_number for page in document.pages if page.classification.value == "scanned"
+    )
+
+
 def _extract(
     options: PipelineOptions,
+    working_pdf: Path,
+    pre_extracted: ExtractedDocument,
     workspace: PipelineWorkspace,
     services: PipelineServices,
     reused: list[PipelineStage],
@@ -267,12 +402,12 @@ def _extract(
     stage = PipelineStage.EXTRACT
     if options.resume and workspace.can_reuse(stage):
         document = workspace.read_document(workspace.extracted_path)
-        if document.source != workspace.manifest.source or document.translation is not None:
+        if document.source != source_identity(working_pdf) or document.translation is not None:
             raise PipelineStateError("extracted artifact is incompatible with this run")
         _announce(stage, True, reused, callback, workspace)
         return document
     _announce(stage, False, reused, callback, workspace)
-    document = services.extractor.extract(options.input_path, options.pages)
+    document = pre_extracted
     workspace.write_document(document, workspace.extracted_path)
     workspace.mark_completed(stage, workspace.extracted_path)
     return document
@@ -329,6 +464,7 @@ def _render(
     options: PipelineOptions,
     workspace: PipelineWorkspace,
     translated: ExtractedDocument,
+    working_pdf: Path,
     services: PipelineServices,
     reused: list[PipelineStage],
     callback: StageCallback | None,
@@ -340,7 +476,7 @@ def _render(
         return
     _announce(stage, False, reused, callback, workspace)
     services.renderer.render(
-        options.input_path,
+        working_pdf,
         translated,
         workspace.rendered_path,
         font_path=options.font_path,
@@ -473,6 +609,8 @@ def _announce(
 def _exit_code_for(error: Exception, stage: PipelineStage) -> ExitCode:
     if isinstance(error, OcrRequiredError):
         return ExitCode.OCR_REQUIRED
+    if isinstance(error, OcrError) or stage == PipelineStage.OCR:
+        return ExitCode.OCR_FAILED
     if isinstance(error, ModelUnavailableError):
         return ExitCode.MODEL_UNAVAILABLE
     if isinstance(error, OutputValidationError) or stage == PipelineStage.VALIDATE:

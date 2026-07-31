@@ -13,7 +13,7 @@ class PipelineStateError(ValueError):
 
 
 class OcrRequiredError(RuntimeError):
-    """Selected scanned pages require OCR, which is intentionally not implemented."""
+    """Selected scanned pages require OCR, but preprocessing is disabled."""
 
 
 class ModelUnavailableError(RuntimeError):
