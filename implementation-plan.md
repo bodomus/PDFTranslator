@@ -1,14 +1,14 @@
-# PDFTR-4 Implementation Plan
+# PDFTR-5 Implementation Plan
 
-1. Mirror the attached ticket Markdown under `Tickets/`.
-2. Add rendering errors, typed options/results, font discovery, glyph validation, and fitting helpers.
-3. Implement a PyMuPDF renderer that validates source identity/schema/page/block contracts.
-4. Redact original text while retaining image/vector objects and sampling background colors.
-5. Insert embedded Cyrillic text with deterministic wrapping, font reduction, bounded expansion, and explicit overflow warnings.
-6. Save through a temporary sibling, reopen and validate, then atomically publish the PDF.
-7. Generate separate debug-layout PDFs with source/final/expanded/overflow annotations.
-8. Add a thin `pdftranslate render` command with font, fitting, padding, mismatch override, overwrite, expansion, and debug options.
-9. Add runtime-generated tests for replacement, images, geometry, fitting, overflow, glyph rejection, source mismatch, reopening, debug output, and Unicode paths.
-10. Update README and CHANGELOG with usage, font discovery, safety behavior, and limitations.
-11. Run focused tests, CLI smoke checks, full `scripts/check.ps1`, CRG analysis, and Graphify refresh.
-12. Create and attach `review-PDFTR-4.md`, update YouTrack to `In Review`, and commit only PDFTR-4 files while preserving unrelated user files.
+1. Mirror the attached ticket under `Tickets/`, assign ChatGPT, and move it to `In Progress`.
+2. Add centralized stable exit codes and typed pipeline contracts.
+3. Implement deterministic run identity and an application-cache workspace with atomic manifests,
+   logs, failure state, and strict resume validation.
+4. Implement inspect, extract, translate, render-to-candidate, validate, and atomic publication.
+5. Reuse validated stages only with `--resume`; retain normal translation-memory caching.
+6. Add dry-run inspection without constructing a model backend or writing translated output.
+7. Add root PDF-path dispatch while preserving existing Typer subcommands.
+8. Add generated-PDF/fake-backend tests for all ticket acceptance and failure scenarios.
+9. Update README and CHANGELOG with usage, artifacts, resume, progress, and exit codes.
+10. Run focused tests, full checks, CLI smoke tests, CRG update, and Graphify refresh.
+11. Create `reviews/review-PDFTR-5.md`, commit ticket scope, comment, and move to `In Review`.

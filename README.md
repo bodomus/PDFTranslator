@@ -70,6 +70,85 @@ Encrypted PDFs can be identified by `inspect`, but `extract` rejects password-re
 because password input is outside this ticket. OCR is not run, so `scanned` pages contain no
 recognized text.
 
+## One-command translation
+
+Run the complete local pipeline with a PDF path as the first argument:
+
+```powershell
+uv run pdftranslate .\manual.pdf
+uv run pdftranslate .\manual.pdf --output .\manual.ru.pdf
+uv run pdftranslate .\manual.pdf --pages 1-20
+uv run pdftranslate .\manual.pdf --device cuda
+uv run pdftranslate .\manual.pdf --offline
+uv run pdftranslate .\manual.pdf --resume
+```
+
+Without `--output`, the destination is a sibling named `<input-stem>.ru.pdf`. The root command
+runs and reports five stages:
+
+```text
+1/5 Inspect
+2/5 Extract
+3/5 Translate
+4/5 Render
+5/5 Validate
+```
+
+Translation also reports completed blocks and translation-memory hits/misses. The existing
+`inspect`, `extract`, `translate`, and `render` subcommands remain available for advanced or
+diagnostic workflows.
+
+Pipeline artifacts are stored outside the repository under the platform application cache:
+
+```text
+<cache>/workspaces/<run-id>/
+  inspection.json
+  extracted.json
+  translated.json
+  rendered.pdf
+  manifest.json
+  pipeline.log
+  failure.json       # present after a failed or interrupted run
+```
+
+The stable run ID includes the immutable source fingerprint/path and behavior-affecting options.
+`--resume` requires that exact identity, validates each completed artifact, reports reused stages,
+and continues a translation checkpoint without repeating completed model translations. A changed
+source or relevant option is rejected rather than consuming stale state. Normal translation-memory
+cache reuse remains active without `--resume`.
+
+Rendering targets the workspace candidate first. Validation reopens the candidate, copies it to a
+temporary sibling of the requested destination, validates that copy, and only then atomically
+publishes the final filename. Failures retain intermediate artifacts and detailed diagnostics but
+never publish a partial PDF under the final name. Existing output is protected unless
+`--overwrite` is explicit; `--overwrite` and `--resume` are mutually exclusive.
+
+Preview the selected pages and expected work without constructing or downloading a model:
+
+```powershell
+uv run pdftranslate .\manual.pdf --pages 1-20 --dry-run
+```
+
+Dry-run reports page classifications, estimated blocks, OCR requirement, backend, requested
+device, output path, and expected stages. Selected scanned pages fail a real run with the dedicated
+OCR-required category because OCR is still outside the implemented scope.
+
+### Exit codes
+
+The root pipeline command uses centralized stable categories:
+
+| Code | Category |
+| ---: | --- |
+| 0 | Success |
+| 2 | Invalid arguments or incompatible resume state |
+| 3 | Unsupported, missing, encrypted, empty, or corrupt PDF |
+| 4 | OCR required |
+| 5 | Local model unavailable |
+| 6 | Translation failure |
+| 7 | Rendering failure |
+| 8 | Output validation/publication failure |
+| 130 | Ctrl+C or simulated interruption |
+
 ## Local translation
 
 Translate extracted JSON while retaining every original block:
@@ -222,7 +301,7 @@ Run the coverage-oriented test helper:
 ## Roadmap
 
 1. Add OCR support for scanned documents.
-2. Add one-command and batch orchestration for the existing pipeline stages.
+2. Add directory batch orchestration for the existing one-document pipeline.
 
 Large models, generated PDFs, extracted document JSON, and local model caches must remain outside
 version control.

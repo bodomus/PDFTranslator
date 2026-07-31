@@ -9,6 +9,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Root `pdftranslate INPUT.pdf` workflow for inspection, extraction, local translation, rendering,
+  final validation, and atomic publication with `<stem>.ru.pdf` default naming.
+- Deterministic application-cache workspaces containing inspection/extraction/translation
+  artifacts, render candidates, versioned stage manifests, detailed logs, and failure state.
+- Stage-aware `--resume` with strict source/options/artifact compatibility, completed-stage reuse,
+  translation checkpoint continuation, and visible reused-stage reporting.
+- Model-free `--dry-run` planning with page classifications, block estimates, OCR requirement,
+  selected backend/device, output path, and expected stages.
+- Centralized stable exit-code categories for arguments, PDF input, OCR, model loading,
+  translation, rendering, output validation, and interruption.
+- Generated-PDF/fake-backend end-to-end tests including option/source invalidation, publication
+  safety, Ctrl+C, spaces, and Cyrillic paths.
 - `pdftranslate render` for validated Russian text reconstruction in a new PDF.
 - Cyrillic system-font discovery and glyph validation, embedded custom fonts, deterministic
   wrapping/font reduction, bounded block expansion, and explicit overflow warnings.
@@ -39,6 +51,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- The one-command workflow renders only to its cache workspace, validates a temporary destination
+  sibling, and publishes the final name atomically; failed runs retain diagnostics without leaving
+  a partial final PDF.
 - Rendering validates source identity and block/page layout, refuses source/output aliases, and
   publishes only a reopened valid PDF; mismatch override never skips structural validation.
 - Translation preserves original source text and fails rather than silently dropping protected

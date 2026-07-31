@@ -10,6 +10,7 @@ from pdftranslate.rendering.errors import (
 from pdftranslate.rendering.fonts import discover_font, validate_font
 from pdftranslate.rendering.models import BlockRenderResult, RenderOptions, RenderResult
 from pdftranslate.rendering.renderer import PdfRenderer
+from pdftranslate.rendering.validation import validate_output_pdf
 
 __all__ = [
     "BlockRenderResult",
@@ -23,4 +24,5 @@ __all__ = [
     "SourceMismatchError",
     "discover_font",
     "validate_font",
+    "validate_output_pdf",
 ]

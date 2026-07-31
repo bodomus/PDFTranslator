@@ -9,17 +9,28 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Annotated, Never, Protocol, cast
+from typing import Annotated, Any, Never, Protocol, cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
+from typer.core import TyperGroup
 
 from pdftranslate import __version__
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
+from pdftranslate.pipeline import (
+    DryRunResult,
+    ExitCode,
+    PipelineExecutionError,
+    PipelineOptions,
+    StageProgress,
+    default_output_path,
+    plan_pipeline,
+    run_pipeline,
+)
 from pdftranslate.rendering import PdfRenderer, RenderingError, RenderOptions
 from pdftranslate.serialization import (
     DocumentJsonError,
@@ -39,11 +50,37 @@ from pdftranslate.translation import (
 )
 from pdftranslate.translation.nllb import DeviceRequest
 
+try:
+    _usage_error_module = importlib.import_module("typer._click.exceptions")
+except ImportError:  # Typer before its vendored Click runtime
+    _usage_error_module = importlib.import_module("click")
+UsageError = cast(type[Exception], _usage_error_module.UsageError)
+
+
+class _RootCommandGroup(TyperGroup):
+    """Dispatch a leading PDF path to the hidden pipeline command."""
+
+    def resolve_command(
+        self,
+        ctx: Any,
+        args: list[str],
+    ) -> Any:
+        try:
+            return super().resolve_command(ctx, args)
+        except UsageError:
+            if args and Path(args[0]).suffix.lower() == ".pdf":
+                command = self.get_command(ctx, "run")
+                if command is not None:
+                    return "run", command, args
+            raise
+
+
 app = typer.Typer(
     name="pdftranslate",
     help="Translate English PDF documents into Russian with local models.",
     no_args_is_help=True,
     add_completion=False,
+    cls=_RootCommandGroup,
 )
 console = Console()
 
@@ -135,6 +172,183 @@ def main(
     ] = None,
 ) -> None:
     """PDFTranslate command-line application."""
+
+
+def _print_pipeline_error(error: PipelineExecutionError) -> Never:
+    typer.echo(f"Error: {error.user_message}", err=True)
+    raise typer.Exit(code=int(error.exit_code))
+
+
+def _dry_run_table(dry_run: DryRunResult) -> Table:
+    classifications = (
+        ", ".join(
+            f"{page}:{classification}"
+            for page, classification in zip(
+                dry_run.selected_pages,
+                dry_run.selected_page_classifications,
+                strict=True,
+            )
+        )
+        or "none"
+    )
+    table = Table(title="PDFTranslate dry run", show_header=False)
+    table.add_column("Property", style="bold")
+    table.add_column("Value")
+    table.add_row("Source", dry_run.inspection.source.path)
+    table.add_row("Pages", str(dry_run.inspection.page_count))
+    table.add_row("Page classifications", classifications)
+    table.add_row("Estimated text blocks", str(dry_run.estimated_text_blocks))
+    table.add_row("OCR required", str(dry_run.ocr_required).lower())
+    table.add_row("Translation backend", dry_run.backend)
+    table.add_row("Selected device", dry_run.device)
+    table.add_row("Output", str(dry_run.output_path))
+    table.add_row(
+        "Expected stages",
+        " -> ".join(stage.value for stage in dry_run.expected_stages),
+    )
+    return table
+
+
+@app.command("run", hidden=True)
+def translate_pdf(
+    input_path: Annotated[Path, typer.Argument(help="English PDF file to translate.")],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Destination PDF; defaults to <stem>.ru.pdf."),
+    ] = None,
+    pages: Annotated[
+        str | None,
+        typer.Option("--pages", help="One-based page range, for example 1,3-5."),
+    ] = None,
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="Local translation backend (currently nllb)."),
+    ] = "nllb",
+    model: Annotated[
+        str,
+        typer.Option("--model", help="Hugging Face model identifier or local directory."),
+    ] = DEFAULT_NLLB_MODEL,
+    device: Annotated[
+        str,
+        typer.Option("--device", help="Inference device: auto, cpu, or cuda."),
+    ] = "auto",
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", min=1, help="Maximum inference segments per batch."),
+    ] = 8,
+    max_input_tokens: Annotated[
+        int,
+        typer.Option("--max-input-tokens", min=8, help="Maximum tokens per input segment."),
+    ] = 512,
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option("--cache-dir", help="Application cache and pipeline workspace root."),
+    ] = None,
+    font: Annotated[
+        Path | None,
+        typer.Option("--font", help="TrueType or OpenType Cyrillic font path."),
+    ] = None,
+    min_font_size: Annotated[
+        float,
+        typer.Option("--min-font-size", min=0.1, help="Smallest allowed font size."),
+    ] = 6.0,
+    font_size_step: Annotated[
+        float,
+        typer.Option("--font-size-step", min=0.1, help="Font reduction step."),
+    ] = 0.5,
+    line_height: Annotated[
+        float,
+        typer.Option("--line-height", min=0.1, help="Textbox line-height factor."),
+    ] = 1.2,
+    redaction_padding: Annotated[
+        float,
+        typer.Option("--redaction-padding", min=0.0, help="Source-text padding in points."),
+    ] = 0.5,
+    allow_expand: Annotated[
+        bool,
+        typer.Option("--allow-expand", help="Expand blocks downward within safe limits."),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Use local model files only; never use network."),
+    ] = False,
+    resume: Annotated[
+        bool,
+        typer.Option("--resume", help="Reuse compatible completed stages and checkpoints."),
+    ] = False,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace an existing final PDF after validation."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Inspect and report the plan without loading a model."),
+    ] = False,
+) -> None:
+    """Translate one PDF from inspection through validated atomic publication."""
+    try:
+        options = PipelineOptions(
+            input_path=input_path,
+            output_path=output or default_output_path(input_path),
+            pages=pages,
+            backend=backend,
+            model=model,
+            device=cast(DeviceRequest, device),
+            batch_size=batch_size,
+            max_input_tokens=max_input_tokens,
+            cache_dir=cache_dir,
+            offline=offline,
+            resume=resume,
+            overwrite=overwrite,
+            font_path=font,
+            min_font_size=min_font_size,
+            font_size_step=font_size_step,
+            line_height=line_height,
+            redaction_padding=redaction_padding,
+            allow_expand=allow_expand,
+        )
+    except ValueError as error:
+        _print_pipeline_error(
+            PipelineExecutionError(str(error), exit_code=ExitCode.INVALID_ARGUMENTS)
+        )
+
+    if dry_run:
+        try:
+            console.print(_dry_run_table(plan_pipeline(options)))
+        except PipelineExecutionError as error:
+            _print_pipeline_error(error)
+        return
+
+    started = time.perf_counter()
+
+    def report_stage(progress: StageProgress) -> None:
+        reuse = " (reused)" if progress.reused else ""
+        console.print(f"{progress.index}/{progress.total} {progress.stage.value.title()}{reuse}")
+
+    def report_translation(event: TranslationProgress) -> None:
+        console.print(
+            f"Blocks {event.completed_blocks}/{event.total_blocks}; "
+            f"cache {event.cache_hits} hit(s), {event.cache_misses} miss(es); "
+            f"page {event.page_number}, block {event.block_id}"
+        )
+
+    try:
+        result = run_pipeline(
+            options,
+            stage_progress=report_stage,
+            translation_progress=report_translation,
+        )
+    except PipelineExecutionError as error:
+        _print_pipeline_error(error)
+
+    elapsed = time.perf_counter() - started
+    statistics = result.statistics
+    console.print(
+        f"Translated {statistics.completed_blocks}/{statistics.total_blocks} block(s) to "
+        f"[path]{result.output_path}[/path]; cache {statistics.cache_hits} hit(s), "
+        f"{statistics.cache_misses} miss(es); reused {len(result.reused_stages)} stage(s); "
+        f"size {result.file_size} bytes; elapsed {elapsed:.2f}s"
+    )
 
 
 @app.command()

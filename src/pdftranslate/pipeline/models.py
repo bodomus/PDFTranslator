@@ -1,0 +1,134 @@
+"""Typed pipeline contracts independent from Typer and third-party adapters."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Literal
+
+from pdftranslate.domain.document import InspectionReport, TranslationStatistics
+
+DeviceRequest = Literal["auto", "cpu", "cuda"]
+
+
+class PipelineStage(StrEnum):
+    """Stable ordered pipeline stage names persisted in manifests."""
+
+    INSPECT = "inspect"
+    EXTRACT = "extract"
+    TRANSLATE = "translate"
+    RENDER = "render"
+    VALIDATE = "validate"
+
+
+STAGE_LABELS: dict[PipelineStage, str] = {
+    PipelineStage.INSPECT: "Inspect",
+    PipelineStage.EXTRACT: "Extract",
+    PipelineStage.TRANSLATE: "Translate",
+    PipelineStage.RENDER: "Render",
+    PipelineStage.VALIDATE: "Validate",
+}
+
+
+@dataclass(frozen=True)
+class PipelineOptions:
+    """All behavior-affecting settings for one end-to-end run."""
+
+    input_path: Path
+    output_path: Path
+    pages: str | None = None
+    backend: str = "nllb"
+    model: str = "facebook/nllb-200-distilled-600M"
+    device: DeviceRequest = "auto"
+    batch_size: int = 8
+    max_input_tokens: int = 512
+    cache_dir: Path | None = None
+    offline: bool = False
+    resume: bool = False
+    overwrite: bool = False
+    font_path: Path | None = None
+    min_font_size: float = 6.0
+    font_size_step: float = 0.5
+    line_height: float = 1.2
+    redaction_padding: float = 0.5
+    allow_expand: bool = False
+
+    def __post_init__(self) -> None:
+        if self.backend != "nllb":
+            raise ValueError(f"unsupported translation backend: {self.backend}")
+        if self.device not in {"auto", "cpu", "cuda"}:
+            raise ValueError("device must be one of: auto, cpu, cuda")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        if self.max_input_tokens < 8:
+            raise ValueError("max_input_tokens must be at least 8")
+        if self.min_font_size <= 0 or self.font_size_step <= 0 or self.line_height <= 0:
+            raise ValueError("font and line-size options must be greater than zero")
+        if self.redaction_padding < 0:
+            raise ValueError("redaction_padding cannot be negative")
+        if self.resume and self.overwrite:
+            raise ValueError("--resume and --overwrite cannot be used together")
+
+    def identity_values(self) -> dict[str, str | int | float | bool | None]:
+        """Return canonical values that determine artifact compatibility."""
+        font = self.font_path.expanduser().resolve() if self.font_path is not None else None
+        return {
+            "output_path": str(self.output_path.expanduser().resolve()),
+            "pages": self.pages,
+            "backend": self.backend,
+            "model": self.model,
+            "device": self.device,
+            "batch_size": self.batch_size,
+            "max_input_tokens": self.max_input_tokens,
+            "offline": self.offline,
+            "font_path": str(font) if font is not None else None,
+            "min_font_size": self.min_font_size,
+            "font_size_step": self.font_size_step,
+            "line_height": self.line_height,
+            "redaction_padding": self.redaction_padding,
+            "allow_expand": self.allow_expand,
+        }
+
+
+@dataclass(frozen=True)
+class StageProgress:
+    """One stage transition suitable for terminal and log reporting."""
+
+    index: int
+    total: int
+    stage: PipelineStage
+    reused: bool = False
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    """Summary of a successfully validated and published run."""
+
+    output_path: Path
+    workspace_path: Path
+    run_id: str
+    reused_stages: tuple[PipelineStage, ...]
+    statistics: TranslationStatistics
+    file_size: int
+
+
+@dataclass(frozen=True)
+class DryRunResult:
+    """Inspection-only planning result that never constructs a model backend."""
+
+    inspection: InspectionReport
+    selected_pages: tuple[int, ...]
+    selected_page_classifications: tuple[str, ...]
+    estimated_text_blocks: int
+    ocr_required: bool
+    backend: str
+    device: DeviceRequest
+    output_path: Path
+    expected_stages: tuple[PipelineStage, ...] = tuple(PipelineStage)
+
+
+def default_output_path(input_path: Path) -> Path:
+    """Return the documented sibling `<stem>.ru.pdf` output path."""
+    source = input_path.expanduser()
+    return source.with_name(f"{source.stem}.ru.pdf")
