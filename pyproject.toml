@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdftranslate"
+version = "0.1.0"
+description = "Windows-first CLI foundation for translating English PDF documents into Russian."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "PDFTranslate contributors" }]
+dependencies = [
+    "platformdirs>=4.3,<5",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "rich>=13.9,<15",
+    "typer>=0.15,<1",
+]
+
+[project.scripts]
+pdftranslate = "pdftranslate.cli:app"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14,<2",
+    "pre-commit>=4.0,<5",
+    "pytest>=8.3,<9",
+    "pytest-cov>=6.0,<7",
+    "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdftranslate"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pdftranslate"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/pdftranslate"]
+pretty = true
+show_error_codes = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=pdftranslate --cov-report=term-missing --cov-fail-under=80 -q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["pdftranslate"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

@@ -1,0 +1,44 @@
+# Python bytecode and package outputs
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments and uv
+.venv/
+venv/
+.python-version
+
+# Quality-tool caches and reports
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Runtime output
+output/
+translated/
+*.translated.pdf
+*.log
+logs/
+.cache/
+models/
+
+# Temporary and operating-system files
+*.tmp
+*.temp
+~$*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local source material preserved outside the project deliverables
+/PDFTranslate-tickets.zip
