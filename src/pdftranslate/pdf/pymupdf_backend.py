@@ -64,7 +64,7 @@ def _metadata(document: pymupdf.Document) -> DocumentMetadata:
     )
 
 
-def _source(path: Path) -> SourceDocument:
+def source_identity(path: Path) -> SourceDocument:
     digest = hashlib.sha256()
     with path.open("rb") as source_file:
         for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
@@ -176,7 +176,7 @@ class PyMuPdfBackend:
     def inspect(self, input_path: Path) -> InspectionReport:
         path = input_path.expanduser()
         with self.open_pdf(path) as document:
-            source = _source(path)
+            source = source_identity(path)
             encrypted = bool(document.is_encrypted or document.needs_pass)
             password_required = bool(document.needs_pass)
             if password_required:
@@ -195,7 +195,7 @@ class PyMuPdfBackend:
     def extract(self, input_path: Path, page_range: str | None = None) -> ExtractedDocument:
         path = input_path.expanduser()
         with self.open_pdf(path) as document:
-            source = _source(path)
+            source = source_identity(path)
             if document.needs_pass:
                 raise PdfEncryptedError(f"PDF requires a password and cannot be extracted: {path}")
             if document.page_count == 0:

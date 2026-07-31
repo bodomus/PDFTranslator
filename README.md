@@ -2,8 +2,8 @@
 
 PDFTranslate is a Windows-first Python command-line application for translating English PDF
 content into Russian. It can inspect text-based PDFs, extract layout-aware text blocks into a
-stable JSON intermediate format, and translate those blocks locally with NLLB. OCR and PDF
-reconstruction are not implemented yet.
+stable JSON intermediate format, translate those blocks locally with NLLB, and render Russian text
+into a validated copy of the source PDF. OCR is not implemented yet.
 
 ## Prerequisites
 
@@ -122,6 +122,53 @@ Translated output uses schema 1.1. It preserves schema 1.0 source fields and ori
 adds `translated_text`, and records model/device/settings, timestamps, warnings, counters, and
 completion state. Atomic checkpoints make interruption visible; `--resume` validates the source
 fingerprint, block structure, backend, model, language pair, batch size, and token limit.
+
+## Render translated PDFs
+
+Render a completed schema 1.1 translation into a new PDF:
+
+```powershell
+uv run pdftranslate render .\manual.pdf .\manual.ru.json `
+  --output .\manual.ru.pdf `
+  --allow-expand
+```
+
+The renderer validates the source SHA-256 and file size, page count and dimensions, source page
+indexes, block IDs, original text, bounding boxes, completed translation state, and translated
+text before publication. `--force-source-mismatch` bypasses only the size/fingerprint comparison;
+layout and block validation still run. The source PDF is never overwritten. Output is saved to a
+temporary sibling, reopened and checked, then atomically published.
+
+Use `--font PATH` to select a TrueType or OpenType font. Without it, PDFTranslate searches Windows
+fonts (Segoe UI, Arial, then Calibri) and common DejaVu/Liberation locations on Linux. The selected
+font is loaded before rendering and every required Cyrillic glyph is validated. No font files are
+bundled in this repository.
+
+Layout options are:
+
+```text
+--min-font-size
+--font-size-step
+--line-height
+--redaction-padding
+--allow-expand
+--debug-layout
+--force-source-mismatch
+--overwrite
+```
+
+Text is wrapped inside the extracted block rectangle and reduced in deterministic steps. Optional
+expansion stops at the page edge or the next horizontally overlapping text block. Unresolved
+overflow is reported and is not silently clipped. `--debug-layout` writes a separate sibling named
+`<output-stem>.debug.pdf`; it marks source rectangles in blue, fitted rectangles in green,
+expanded rectangles in orange, and overflow in red.
+
+Original text regions are redacted while PyMuPDF is instructed to retain overlapping image and
+vector objects. A median color sampled from the source rectangle is used instead of assuming a
+white page. This is conservative: complex gradients, patterned backgrounds, text intersecting
+line art, and unusually dense layouts may still require manual review. OCR and text inside images
+are not rendered by this stage.
+
 ## Page classification
 
 Each page is classified as `text`, `scanned`, `mixed`, or `empty`. The deterministic defaults are:
@@ -161,9 +208,10 @@ uv run mypy src
 uv run pytest
 ```
 
-The suite generates small PDF fixtures at runtime for text, empty, image-only, mixed, encrypted,
-multiple-page, stable-order, and Unicode-path scenarios. Translation tests use deterministic fake
-backends and never load or download NLLB. No binary fixtures are committed.
+The suite generates small PDF fixtures at runtime for extraction, translation, rendering,
+image/vector preservation, fitting, overflow, source mismatch, debug layout, and Unicode paths.
+Translation tests use deterministic fake backends and never load or download NLLB. No binary
+fixtures are committed.
 
 Run the coverage-oriented test helper:
 
@@ -173,8 +221,8 @@ Run the coverage-oriented test helper:
 
 ## Roadmap
 
-1. Reconstruct translated PDFs while preserving useful document structure.
-2. Add OCR support for scanned documents.
+1. Add OCR support for scanned documents.
+2. Add one-command and batch orchestration for the existing pipeline stages.
 
 Large models, generated PDFs, extracted document JSON, and local model caches must remain outside
 version control.

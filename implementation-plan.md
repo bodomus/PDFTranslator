@@ -1,14 +1,14 @@
-# PDFTR-3 Implementation Plan
+# PDFTR-4 Implementation Plan
 
-1. Add and lock compatible Transformers and PyTorch runtime dependencies.
-2. Extend the intermediate schema compatibly with translated text, status, settings identity, timestamps, statistics, and warnings.
-3. Add a backend-independent translator protocol and translation errors.
-4. Implement pure skip/protection/segmentation/recombination helpers with exact protected-token restoration and no truncation.
-5. Implement SQLite translation memory below the application cache root.
-6. Implement an injectable NLLB adapter with direct loading, EN/RU mapping, offline/cache behavior, CPU/CUDA/auto selection, inference mode, and bounded CUDA OOM recovery.
-7. Implement the document orchestrator with token-aware batches, cache reuse, progress events, atomic checkpoints, interruption metadata, and validated resume.
-8. Add a thin `translate` Typer command with every required option and useful logs/statistics.
-9. Add fake-backed tests for abstraction, batching, segmentation, skip/protection, cache, device selection, offline loading, JSON integrity, interruption/resume, CLI, and output safety.
-10. Update README and CHANGELOG with usage, cache/model behavior, storage estimate, offline operation, and limitations.
-11. Run formatting, lint, strict mypy, full tests/coverage, CLI smoke checks, CRG update/impact analysis, and Graphify refresh.
-12. Create and attach `review-PDFTR-3.md`, move the ticket to review, and commit only PDFTR-3 files while preserving unrelated user files.
+1. Mirror the attached ticket Markdown under `Tickets/`.
+2. Add rendering errors, typed options/results, font discovery, glyph validation, and fitting helpers.
+3. Implement a PyMuPDF renderer that validates source identity/schema/page/block contracts.
+4. Redact original text while retaining image/vector objects and sampling background colors.
+5. Insert embedded Cyrillic text with deterministic wrapping, font reduction, bounded expansion, and explicit overflow warnings.
+6. Save through a temporary sibling, reopen and validate, then atomically publish the PDF.
+7. Generate separate debug-layout PDFs with source/final/expanded/overflow annotations.
+8. Add a thin `pdftranslate render` command with font, fitting, padding, mismatch override, overwrite, expansion, and debug options.
+9. Add runtime-generated tests for replacement, images, geometry, fitting, overflow, glyph rejection, source mismatch, reopening, debug output, and Unicode paths.
+10. Update README and CHANGELOG with usage, font discovery, safety behavior, and limitations.
+11. Run focused tests, CLI smoke checks, full `scripts/check.ps1`, CRG analysis, and Graphify refresh.
+12. Create and attach `review-PDFTR-4.md`, update YouTrack to `In Review`, and commit only PDFTR-4 files while preserving unrelated user files.

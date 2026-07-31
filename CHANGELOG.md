@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `pdftranslate render` for validated Russian text reconstruction in a new PDF.
+- Cyrillic system-font discovery and glyph validation, embedded custom fonts, deterministic
+  wrapping/font reduction, bounded block expansion, and explicit overflow warnings.
+- Text-only redaction that retains image/vector objects, sampled non-white backgrounds, atomic PDF
+  publication, reopening validation, and separate debug-layout output.
+- Runtime-generated rendering tests for geometry, images/vectors, fitting, overflow, mismatch,
+  Unicode paths, font validation, and CLI behavior.
 - Local `pdftranslate translate` English-to-Russian pipeline using the
   `facebook/nllb-200-distilled-600M` backend.
 - Backend-independent translator protocol, CPU/CUDA/auto selection, offline model loading, bounded
@@ -32,6 +39,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- Rendering validates source identity and block/page layout, refuses source/output aliases, and
+  publishes only a reopened valid PDF; mismatch override never skips structural validation.
 - Translation preserves original source text and fails rather than silently dropping protected
   URLs, email addresses, paths, measurements, or identifiers.
 - Offline mode prevents remote model acquisition; default cache paths remain outside the repository.

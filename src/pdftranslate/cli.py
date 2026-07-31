@@ -20,6 +20,7 @@ from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
+from pdftranslate.rendering import PdfRenderer, RenderingError, RenderOptions
 from pdftranslate.serialization import (
     DocumentJsonError,
     OutputExistsError,
@@ -327,3 +328,79 @@ def translate_json(
         f"{stats.cache_misses} miss(es); device {metadata.effective_device}; "
         f"elapsed {elapsed:.2f}s"
     )
+
+
+@app.command("render")
+def render_pdf(
+    input_path: Annotated[Path, typer.Argument(help="Immutable source PDF file.")],
+    document_json: Annotated[
+        Path, typer.Argument(help="Completed translated document JSON (schema 1.1).")
+    ],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Destination translated PDF.")],
+    font: Annotated[
+        Path | None, typer.Option("--font", help="TrueType or OpenType Cyrillic font path.")
+    ] = None,
+    min_font_size: Annotated[
+        float, typer.Option("--min-font-size", min=0.1, help="Smallest allowed font size.")
+    ] = 6.0,
+    font_size_step: Annotated[
+        float, typer.Option("--font-size-step", min=0.1, help="Font reduction step.")
+    ] = 0.5,
+    line_height: Annotated[
+        float, typer.Option("--line-height", min=0.1, help="Textbox line-height factor.")
+    ] = 1.2,
+    redaction_padding: Annotated[
+        float,
+        typer.Option("--redaction-padding", min=0.0, help="Padding around source text in points."),
+    ] = 0.5,
+    allow_expand: Annotated[
+        bool, typer.Option("--allow-expand", help="Expand blocks downward within safe limits.")
+    ] = False,
+    debug_layout: Annotated[
+        bool, typer.Option("--debug-layout", help="Also write a separate annotated debug PDF.")
+    ] = False,
+    force_source_mismatch: Annotated[
+        bool,
+        typer.Option(
+            "--force-source-mismatch",
+            help="Ignore only source size/SHA mismatch; layout validation still applies.",
+        ),
+    ] = False,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace existing output and debug PDFs.")
+    ] = False,
+) -> None:
+    """Render completed Russian translations into a validated copy of the source PDF."""
+    started = time.perf_counter()
+    try:
+        translated = read_document_json(document_json)
+        result = PdfRenderer().render(
+            input_path,
+            translated,
+            output,
+            font_path=font,
+            options=RenderOptions(
+                min_font_size=min_font_size,
+                font_size_step=font_size_step,
+                line_height=line_height,
+                redaction_padding=redaction_padding,
+                allow_expand=allow_expand,
+                overwrite=overwrite,
+                force_source_mismatch=force_source_mismatch,
+                debug_layout=debug_layout,
+            ),
+        )
+    except (DocumentJsonError, RenderingError, OSError, ValueError) as error:
+        _exit_with_error(error)
+
+    elapsed = time.perf_counter() - started
+    console.print(
+        f"Rendered {result.blocks_rendered}/{len(result.blocks)} block(s) to "
+        f"[path]{result.output_path}[/path]; font reductions {result.font_reductions}; "
+        f"expanded {result.expanded_blocks}; overflow {result.overflow_blocks}; "
+        f"size {result.file_size} bytes; elapsed {elapsed:.2f}s"
+    )
+    if result.debug_output_path is not None:
+        console.print(f"Debug layout: [path]{result.debug_output_path}[/path]")
+    for warning in result.warnings:
+        console.print(f"Warning: {warning}")
