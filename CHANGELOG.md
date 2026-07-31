@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Recursive and non-recursive `pdftranslate batch INPUT_DIR` processing with deterministic
+  case-insensitive PDF discovery, glob/exclude filters, `.ru.pdf` and output-tree protection,
+  preserved relative output structure, and Unicode/spaced-path support.
+- Lazy single-model and shared SQLite translation-cache lifetime across sequential batch files,
+  while retaining source-specific workspaces, OCR settings, atomic output publication, and resume.
+- Atomic versioned JSON batch reports, human-readable summaries, fail-fast and
+  `--continue-on-error` policies, explicit skipped-file reasons, and exit code 10 for partial or
+  complete batch failure.
+
 - OCRmyPDF/Tesseract preprocessing stage with `auto`, `on`, and `off` modes, English language
   selection, deskew/clean/rotation controls, explicit force mode, bounded subprocess execution,
   retained logs/sidecars, actionable dependency failures, and a dedicated OCR failure exit code.

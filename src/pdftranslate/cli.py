@@ -17,6 +17,7 @@ from rich.table import Table
 from typer.core import TyperGroup
 
 from pdftranslate import __version__
+from pdftranslate.batch import BatchOptions, BatchProgress, BatchReport, run_batch
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
@@ -383,6 +384,136 @@ def translate_pdf(
         f"OCR {result.ocr_status} ({len(result.ocr_pages)} page(s)); "
         f"size {result.file_size} bytes; elapsed {elapsed:.2f}s"
     )
+
+
+def _batch_report_table(report: BatchReport) -> Table:
+    table = Table(title="PDFTranslate batch", show_header=False)
+    table.add_column("Property", style="bold")
+    table.add_column("Value")
+    table.add_row("Status", report.status)
+    table.add_row("Started", report.started_at.isoformat())
+    table.add_row("Finished", report.finished_at.isoformat())
+    table.add_row("Input root", report.input_root)
+    table.add_row("Output root", report.output_root)
+    table.add_row("Discovered", str(len(report.discovered_files)))
+    table.add_row("Successful", str(len(report.successful_files)))
+    table.add_row("Failed", str(len(report.failed_files)))
+    table.add_row("Skipped", str(len(report.skipped_files)))
+    table.add_row("Pages processed", str(report.pages_processed))
+    table.add_row("OCR pages", str(report.ocr_pages))
+    table.add_row("Translated blocks", str(report.translated_blocks))
+    table.add_row("Cache hits", str(report.cache_hits))
+    table.add_row("Elapsed", f"{report.elapsed_seconds:.2f}s")
+    table.add_row("Report", report.report_path)
+    return table
+
+
+@app.command("batch")
+def translate_batch(
+    input_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Directory containing English PDF files.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            readable=True,
+            resolve_path=True,
+        ),
+    ],
+    output_dir: Annotated[
+        Path | None,
+        typer.Option("--output-dir", help="Output root; defaults to <input-dir>_ru."),
+    ] = None,
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", help="Discover PDF files in nested directories."),
+    ] = False,
+    glob_pattern: Annotated[
+        str,
+        typer.Option("--glob", help="Case-insensitive PDF include pattern."),
+    ] = "*.pdf",
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option("--exclude", help="Repeatable case-insensitive exclusion pattern."),
+    ] = None,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace existing validated output PDFs."),
+    ] = False,
+    resume: Annotated[
+        bool,
+        typer.Option("--resume", help="Resume each source from its compatible workspace."),
+    ] = False,
+    continue_on_error: Annotated[
+        bool,
+        typer.Option("--continue-on-error", help="Continue processing after a file failure."),
+    ] = False,
+    ocr: Annotated[
+        str,
+        typer.Option("--ocr", help="OCR preprocessing for each PDF: auto, on, or off."),
+    ] = "auto",
+    device: Annotated[
+        str,
+        typer.Option("--device", help="Inference device shared by the batch: auto, cpu, or cuda."),
+    ] = "auto",
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", help="JSON report path; defaults below the output root."),
+    ] = None,
+) -> None:
+    """Translate a directory sequentially with one model and translation cache."""
+    try:
+        options = BatchOptions(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            recursive=recursive,
+            include_pattern=glob_pattern,
+            exclude_patterns=tuple(exclude or ()),
+            overwrite=overwrite,
+            resume=resume,
+            continue_on_error=continue_on_error,
+            ocr=cast(OcrMode, ocr),
+            device=cast(DeviceRequest, device),
+            report_path=report,
+        )
+    except ValueError as error:
+        _print_pipeline_error(
+            PipelineExecutionError(str(error), exit_code=ExitCode.INVALID_ARGUMENTS)
+        )
+
+    def report_file(event: BatchProgress) -> None:
+        relative = event.input_path.relative_to(options.resolved_input_dir)
+        console.print(f"{event.index}/{event.total} [path]{relative}[/path]")
+
+    try:
+        result = run_batch(options, progress=report_file)
+    except ValueError as error:
+        _print_pipeline_error(
+            PipelineExecutionError(str(error), exit_code=ExitCode.INVALID_ARGUMENTS)
+        )
+    except OSError as error:
+        _print_pipeline_error(
+            PipelineExecutionError(
+                f"cannot write batch output/report: {error}",
+                exit_code=ExitCode.OUTPUT_VALIDATION_FAILED,
+            )
+        )
+
+    console.print(_batch_report_table(result.report))
+    for success in result.report.successful_files:
+        console.print(
+            f"OK: [path]{success.input_path}[/path] -> [path]{success.output_path}[/path]"
+        )
+    for skipped in result.report.skipped_files:
+        console.print(f"Skipped: [path]{skipped.input_path}[/path]: {skipped.reason}")
+    for failure in result.report.failed_files:
+        typer.echo(
+            f"Failed: {failure.input_path} -> {failure.output_path}: {failure.error}",
+            err=True,
+        )
+    if result.exit_code != ExitCode.SUCCESS:
+        raise typer.Exit(code=int(result.exit_code))
 
 
 def _executable_diagnostic(path: str | None, version: str | None) -> str:

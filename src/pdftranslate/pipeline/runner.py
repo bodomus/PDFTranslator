@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -69,6 +70,38 @@ class PipelineServices:
     ocr_processor: OcrProcessor = field(default_factory=OcrProcessor)
 
 
+@dataclass
+class TranslationRuntime:
+    """One lazily initialized translator and open cache shared across documents."""
+
+    translator_factory: TranslatorFactory
+    cache_root: Path
+    model_cache: Path
+    cache: TranslationCache
+    _translator: Translator | None = None
+    _identity: tuple[str, str, str, int, bool, str] | None = None
+
+    def translator_for(self, options: PipelineOptions) -> Translator:
+        """Create the model once and reject incompatible reuse."""
+        requested_cache_root = (options.cache_dir or Settings().cache_dir).expanduser().resolve()
+        if requested_cache_root != self.cache_root:
+            raise ValueError("shared translation runtime cache root does not match this document")
+        identity = (
+            options.backend,
+            options.model,
+            options.device,
+            options.max_input_tokens,
+            options.offline,
+            str(requested_cache_root),
+        )
+        if self._identity is not None and self._identity != identity:
+            raise ValueError("shared translation runtime settings do not match this document")
+        if self._translator is None:
+            self._translator = self.translator_factory(options, self.model_cache)
+            self._identity = identity
+        return self._translator
+
+
 def default_services(settings: Settings | None = None) -> PipelineServices:
     """Build production adapters without loading the heavyweight model yet."""
     selected_settings = settings or Settings()
@@ -91,6 +124,25 @@ def default_services(settings: Settings | None = None) -> PipelineServices:
         translator_factory=create_translator,
         ocr_processor=OcrProcessor(),
     )
+
+
+@contextmanager
+def open_translation_runtime(
+    options: PipelineOptions,
+    *,
+    services: PipelineServices | None = None,
+) -> Iterator[TranslationRuntime]:
+    """Open one cache and lazily construct one translator for repeated pipeline runs."""
+    selected_services = services or default_services()
+    settings = Settings()
+    cache_root = (options.cache_dir or settings.cache_dir).expanduser().resolve()
+    with TranslationCache(cache_root / "translation-memory.sqlite3") as cache:
+        yield TranslationRuntime(
+            translator_factory=selected_services.translator_factory,
+            cache_root=cache_root,
+            model_cache=cache_root / "models",
+            cache=cache,
+        )
 
 
 def plan_pipeline(
@@ -136,6 +188,7 @@ def run_pipeline(
     options: PipelineOptions,
     *,
     services: PipelineServices | None = None,
+    translation_runtime: TranslationRuntime | None = None,
     stage_progress: StageCallback | None = None,
     translation_progress: TranslationCallback | None = None,
 ) -> PipelineResult:
@@ -194,6 +247,7 @@ def run_pipeline(
             workspace,
             extracted,
             selected_services,
+            translation_runtime,
             reused,
             stage_progress,
             translation_progress,
@@ -247,6 +301,7 @@ def run_pipeline(
         ocr_status=ocr_status,
         ocr_pages=ocr_pages,
         ocr_warnings=ocr_warnings,
+        pages_processed=len(translated.selected_pages),
     )
 
 
@@ -418,6 +473,7 @@ def _translate(
     workspace: PipelineWorkspace,
     extracted: ExtractedDocument,
     services: PipelineServices,
+    translation_runtime: TranslationRuntime | None,
     reused: list[PipelineStage],
     stage_callback: StageCallback | None,
     translation_callback: TranslationCallback | None,
@@ -433,30 +489,57 @@ def _translate(
     resume_document = None
     if options.resume and workspace.translated_path.is_file():
         resume_document = workspace.read_document(workspace.translated_path)
+    if translation_runtime is None:
+        with open_translation_runtime(options, services=services) as owned_runtime:
+            return _translate_with_runtime(
+                options,
+                workspace,
+                extracted,
+                resume_document,
+                owned_runtime,
+                translation_callback,
+            )
+    return _translate_with_runtime(
+        options,
+        workspace,
+        extracted,
+        resume_document,
+        translation_runtime,
+        translation_callback,
+    )
+
+
+def _translate_with_runtime(
+    options: PipelineOptions,
+    workspace: PipelineWorkspace,
+    extracted: ExtractedDocument,
+    resume_document: ExtractedDocument | None,
+    runtime: TranslationRuntime,
+    translation_callback: TranslationCallback | None,
+) -> ExtractedDocument:
     try:
-        translator = services.translator_factory(options, workspace.path.parent.parent / "models")
+        translator = runtime.translator_for(options)
     except TranslationError as error:
         raise ModelUnavailableError(str(error)) from error
 
     def checkpoint(document: ExtractedDocument) -> None:
         workspace.write_document(document, workspace.translated_path)
 
-    with TranslationCache(workspace.path.parent.parent / "translation-memory.sqlite3") as cache:
-        translated = translate_document(
-            extracted,
-            translator=translator,
-            cache=cache,
-            options=TranslationOptions(
-                source_language="en",
-                target_language="ru",
-                batch_size=options.batch_size,
-                max_input_tokens=options.max_input_tokens,
-            ),
-            resume_document=resume_document,
-            checkpoint=checkpoint,
-            progress=translation_callback,
-        )
-    workspace.mark_completed(stage, workspace.translated_path)
+    translated = translate_document(
+        extracted,
+        translator=translator,
+        cache=runtime.cache,
+        options=TranslationOptions(
+            source_language="en",
+            target_language="ru",
+            batch_size=options.batch_size,
+            max_input_tokens=options.max_input_tokens,
+        ),
+        resume_document=resume_document,
+        checkpoint=checkpoint,
+        progress=translation_callback,
+    )
+    workspace.mark_completed(PipelineStage.TRANSLATE, workspace.translated_path)
     return translated
 
 

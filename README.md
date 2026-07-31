@@ -171,6 +171,53 @@ Tesseract can be installed with `winget install -e --id UB-Mannheim.TesseractOCR
 requires its own 64-bit installation when needed. Ensure `ocrmypdf`, `tesseract`, and the `eng`
 trained-data file are discoverable before processing scans.
 
+## Directory batch translation
+
+Translate every selected PDF below a directory while keeping one NLLB model and one translation
+memory open for the whole batch:
+
+```powershell
+uv run pdftranslate batch "J:\Books" --recursive
+uv run pdftranslate batch .\manuals --output-dir .\manuals_ru --exclude "**/drafts/**"
+uv run pdftranslate batch .\manuals --resume --ocr auto --device cuda
+```
+
+The available options are:
+
+```text
+--output-dir PATH
+--recursive
+--glob PATTERN
+--exclude PATTERN          # repeatable
+--overwrite
+--resume
+--continue-on-error
+--ocr auto|on|off
+--device auto|cpu|cuda
+--report PATH
+```
+
+Without `--output-dir`, results are written under the sibling `<input-dir>_ru`. Relative
+subdirectories are preserved and each output is named `<input-stem>.ru.pdf`, so equal filenames in
+different source folders do not collide. Discovery is deterministically sorted, treats `.pdf`
+case-insensitively, skips `.ru.pdf` files, and excludes a nested output tree. `--glob` and every
+repeatable `--exclude` match both normalized relative paths and filenames case-insensitively.
+
+Processing is sequential. The translation backend is initialized lazily at most once and the same
+open SQLite translation cache is shared by every document. Each PDF still receives its own
+source/options-derived workspace, so `--resume` validates and reuses stages independently.
+
+The default failure policy is fail-fast: the failed PDF is recorded and remaining files are marked
+as not processed. `--continue-on-error` instead attempts the remaining files. Any file failure
+returns exit code 10 after the report is written; Ctrl+C remains exit code 130. Existing outputs are
+reported as skipped unless `--overwrite` or `--resume` is explicit.
+
+An atomic UTF-8 JSON report is always written to `<output-dir>/batch-report.json`, or to `--report`
+when supplied. The terminal prints a human-readable summary plus successful output paths, skip
+reasons, and errors. The versioned report contains start/finish time, roots, every discovered file,
+success/failure/skip records, output and diagnostic paths, pages, OCR pages, translated blocks,
+cache hits, elapsed time, and the final exit code.
+
 ### Exit codes
 
 The root pipeline command uses centralized stable categories:
@@ -186,6 +233,7 @@ The root pipeline command uses centralized stable categories:
 | 7 | Rendering failure |
 | 8 | Output validation/publication failure |
 | 9 | OCR dependency, subprocess, timeout, or output-validation failure |
+| 10 | One or more batch files failed |
 | 130 | Ctrl+C or simulated interruption |
 
 ## Local translation
@@ -333,7 +381,7 @@ uv run pytest
 ```
 
 The suite generates small PDF fixtures at runtime for extraction, translation, rendering,
-image/vector preservation, fitting, overflow, source mismatch, debug layout, and Unicode paths.
+image/vector preservation, fitting, overflow, source mismatch, debug layout, Unicode paths, and batch discovery/orchestration/reporting.
 Translation tests use deterministic fake backends and never load or download NLLB. No binary
 fixtures are committed.
 
@@ -345,8 +393,7 @@ Run the coverage-oriented test helper:
 
 ## Roadmap
 
-1. Add batch translation and richer reporting.
-2. Add directory batch orchestration for the existing one-document pipeline.
+Future work is tracked in the PDFTranslate YouTrack project.
 
 Large models, generated PDFs, extracted document JSON, and local model caches must remain outside
 version control.

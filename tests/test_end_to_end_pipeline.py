@@ -458,6 +458,7 @@ def test_exit_code_values_are_stable() -> None:
         "RENDERING_FAILED": 7,
         "OUTPUT_VALIDATION_FAILED": 8,
         "OCR_FAILED": 9,
+        "BATCH_FAILED": 10,
         "INTERRUPTED": 130,
     }
 

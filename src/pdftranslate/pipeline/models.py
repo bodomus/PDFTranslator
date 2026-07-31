@@ -141,6 +141,7 @@ class PipelineResult:
     ocr_status: Literal["skipped", "processed", "reused"]
     ocr_pages: tuple[int, ...] = ()
     ocr_warnings: tuple[str, ...] = ()
+    pages_processed: int = 0
 
 
 @dataclass(frozen=True)
