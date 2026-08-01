@@ -86,6 +86,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Benchmark exact-source cache hits now reuse only inference artifacts and independently recompute
+  protected-token, human-review, historical-trace findings, and status for every sample.
+- NLLB `--offline` now resolves a local model/cache snapshot before Transformers import, loads
+  configuration/tokenizer/model with local-only settings under a restored scoped offline
+  environment, and fails before any online fallback when files are missing.
 - NLLB protected-token restoration now uses collision-safe ASCII placeholders that the real model
   preserves, instead of Unicode sentinels that were stripped during inference.
 

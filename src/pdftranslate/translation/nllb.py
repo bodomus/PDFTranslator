@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+import os
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -60,6 +61,7 @@ class _PretrainedFactory(Protocol):
 
 
 class _TransformersRuntime(Protocol):
+    AutoConfig: _PretrainedFactory
     AutoTokenizer: _PretrainedFactory
     AutoModelForSeq2SeqLM: _PretrainedFactory
 
@@ -222,17 +224,89 @@ def _load_components(
     cache_dir: Path,
     offline: bool,
 ) -> tuple[_Tokenizer, _Model]:
-    runtime = cast(_TransformersRuntime, importlib.import_module("transformers"))
+    load_source = _resolve_model_source(model_name, cache_dir) if offline else model_name
     common: dict[str, object] = {
         "cache_dir": str(cache_dir),
         "local_files_only": offline,
     }
-    tokenizer = cast(
-        _Tokenizer,
-        runtime.AutoTokenizer.from_pretrained(model_name, src_lang=source_code, **common),
-    )
-    model = cast(_Model, runtime.AutoModelForSeq2SeqLM.from_pretrained(model_name, **common))
+    with _offline_environment(offline):
+        runtime = cast(_TransformersRuntime, importlib.import_module("transformers"))
+        config = runtime.AutoConfig.from_pretrained(load_source, **common)
+        tokenizer = cast(
+            _Tokenizer,
+            runtime.AutoTokenizer.from_pretrained(
+                load_source,
+                src_lang=source_code,
+                **common,
+            ),
+        )
+        model = cast(
+            _Model,
+            runtime.AutoModelForSeq2SeqLM.from_pretrained(
+                load_source,
+                config=config,
+                **common,
+            ),
+        )
     return tokenizer, model
+
+
+def _resolve_model_source(model_name: str, cache_dir: Path) -> str:
+    direct = Path(model_name).expanduser()
+    if direct.is_dir():
+        return str(direct.resolve())
+
+    repository = cache_dir / f"models--{model_name.replace('/', '--')}"
+    snapshots = repository / "snapshots"
+    reference = repository / "refs" / "main"
+    revision: str | None = None
+    try:
+        if reference.is_file():
+            revision = reference.read_text(encoding="utf-8").strip()
+        elif snapshots.is_dir():
+            available = sorted(path for path in snapshots.iterdir() if path.is_dir())
+            if len(available) == 1:
+                revision = available[0].name
+    except OSError as error:
+        raise FileNotFoundError(
+            f"cannot inspect offline model cache {repository}: {error}"
+        ) from error
+
+    if revision:
+        candidate = (snapshots / revision).resolve()
+        try:
+            candidate.relative_to(snapshots.resolve())
+        except ValueError:
+            snapshot = None
+        else:
+            snapshot = candidate
+        if snapshot is not None and snapshot.is_dir():
+            return str(snapshot)
+
+    raise FileNotFoundError(
+        "offline mode is enabled; required model files are missing for "
+        f"{model_name}; checked local path {direct.resolve()} and cache {repository.resolve()}; "
+        "populate the local cache or rerun without --offline"
+    )
+
+
+@contextmanager
+def _offline_environment(enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+    names = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    previous = {name: os.environ.get(name) for name in names}
+    try:
+        for name in names:
+            os.environ[name] = "1"
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _import_torch() -> _TorchRuntime:

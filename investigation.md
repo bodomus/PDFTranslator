@@ -1,75 +1,66 @@
-# Investigation — PDFTR-9
-## Baseline
+# PDFTR-9A Investigation
 
-- Workflow level: 2.
-- Branch: `codex/PDFTR-9-translation-quality-benchmark` from PDFTR-8 commit `d16ed0e`.
-- Working tree was clean before the ticket file was added.
-- Python: 3.12 through uv; no dependency change is required.
-- PDFTR-9 is In Progress and its augmented Markdown ticket is attached in YouTrack.
+## Workflow and baseline
 
-## Current behavior
+- Level 2: model lifecycle/offline contract plus benchmark cache correctness.
+- Branch required by ticket: `codex/PDFTR-9-translation-quality-benchmark`.
+- Base commit: `411bc72b51d19701d201f6440cf68688d39b79a4`.
+- Working tree was clean before switching from merged `master` to the required branch.
+- Python 3.12.10, uv 0.5.26; no dependency change is required.
 
-PDFTranslate can protect tokens, segment blocks, run NLLB, cache completed block translations and
-render PDFs. It has no versioned quality dataset, benchmark runner, deterministic diagnostic model,
-human scoring schema, baseline comparison, or JSON/Markdown benchmark report.
+## Graph and source findings
 
-The production translation path combines protection, segmentation, inference and recombination.
-Consequently, a bad final PDF does not by itself prove whether a defect originated in extraction,
-segmentation, the model, token restoration, terminology, or rendering.
+- Graphify BFS connected benchmark, `NllbTranslator`, `Translator`, CLI and translation tests.
+  The result was source-verified and saved to Graphify work memory. The stored interpreter path was
+  stale, so the first module invocation failed; the installed `graphify save-result` CLI succeeded.
+- CRG refreshed to 648 FTS rows and reported no pre-existing working-tree changes.
+- Source is authoritative: `run_benchmark()` owns the in-run benchmark cache;
+  `NllbTranslator` owns third-party loading; Typer only propagates `offline` and cache paths.
 
-## Mandatory PDFTR-8 inputs
+## Issue 1 — Cache isolation
 
-1. Historical NLLB output damaged protected token `1900-1`.
-2. A page-7 observation damaged numbers/dates and introduced junk such as `F￾`.
+Current behavior: `_CachedResult` stores output, segment evidence, findings and status. A hit keyed by
+`effective_source` copies `cached.findings` and `cached.status` into the next sample.
 
-Both must remain explicit regression cases. The current ASCII placeholder mitigation does not
-remove their value as benchmark inputs.
+Root cause: inference artifacts and sample evaluation were combined in one cache value. Protected
+token declarations, human review and stage trace are sample-specific even when source text is equal.
 
-## Expected behavior
+Smallest correct change: cache only translation execution artifacts (output, evidence, segment
+counts, segmentation warning, restore error and runtime error). Analyze every sample after lookup and
+derive its status independently. Translator execution remains deduplicated by effective source.
 
-- Validate a safe, versioned 50–100 sample dataset.
-- Run a reusable `Translator` once over the dataset without requiring PDF rendering.
-- Preserve raw protected/segmented/model outputs in evidence.
-- Detect token, numeric, unit, URL, path, option, segment-count, untranslated, length-ratio and
-  suspicious-character problems deterministically.
-- Attribute findings to extraction, segmentation, protected-token, model, terminology, or
-  rendering stages.
-- Record version/commit/backend/model/tokenizer/device/settings/timing/cache counters.
-- Accept documented human review fields and compare a current report with a prior baseline.
-- Produce atomic JSON and Markdown reports.
+## Issue 2 — Strict offline loading
 
-## Smallest coherent design
+Current behavior: tokenizer and model receive `local_files_only=offline`, but the remote model ID is
+still passed to Transformers. The PDFTR-9 real run showed Hugging Face API metadata requests.
 
-Create an isolated `pdftranslate.benchmark` package composed of:
+Official Hugging Face documentation confirms that `local_files_only=True` restricts file loading,
+while `HF_HUB_OFFLINE=1` explicitly prevents Hub HTTP calls. The current installed versions are
+Transformers 5.14.1 and huggingface-hub 1.26.0.
 
-- Pydantic models for dataset, trace observations, findings, reviews and reports;
-- pure diagnostic functions for stage-aware checks;
-- a runner using the existing `Translator`, `protect_text()` and `segment_text()` contracts;
-- atomic JSON/Markdown reporting and baseline comparison;
-- one thin Typer `benchmark-translation` command;
-- a 60-sample synthetic dataset and fake-backed tests.
+Root cause: no scoped Hub offline environment is applied, and remote repository identity is resolved
+inside third-party code. Environment flags are imported into Hub constants, so setting them after a
+prior Hub import alone is not a complete process-wide guarantee.
 
-No renderer or extraction algorithm is changed. Optional stage observations in the dataset are
-diagnostic evidence, not instructions to alter production output.
+Smallest robust change:
 
-## Graph and source evidence
+1. in offline mode, resolve the requested model to an existing local directory or a Hugging Face
+   cache snapshot before importing Transformers;
+2. set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` only around component loading, restoring the
+   previous values in `finally`;
+3. load `AutoConfig`, `AutoTokenizer` and `AutoModelForSeq2SeqLM` from the resolved local path with
+   `local_files_only=True`; pass the loaded config to the model;
+4. fail before any third-party network-capable loader when the local snapshot is absent, including
+   model and checked cache path in the message;
+5. preserve remote-ID online behavior when `offline=False`.
 
-- Graphify connected `NllbTranslator`, `ProtectedText`, `segment_text()`, `TranslationCache`,
-  `translate_document()`, CLI and report patterns. Source inspection confirmed these boundaries.
-- CRG is current at 647 nodes / 5,067 edges / 76 files on `d16ed0e`.
-- CRG found production caller `translate_document()` plus direct tests for `protect_text()` and
-  `segment_text()`. A new benchmark runner will be a deliberate second caller.
-- Graphify still contains ignored historical `Tasks/PDFTR-9...` nodes; current YouTrack text,
-  `Tickets/PDFTR-9...`, source and tests are authoritative.
+Resolving to a local filesystem path is the strict boundary even if Hugging Face was imported earlier;
+the scoped environment is defense in depth and follows the documented offline mechanism.
 
-## Contracts and risks
+## Boundaries and risks
 
-- CLI: adds one command; existing commands and exit codes remain unchanged.
-- Dataset/report schemas: new, versioned 1.0 contracts.
-- Cache: benchmark uses an in-run exact-source cache for deterministic hit/miss reporting; it does
-  not mutate production translation memory.
-- Model: one loaded translator per run; fake backend in tests; NLLB only in explicit runs.
-- PDF integrity: no PDF is opened, written or rendered by benchmark execution.
-- OCR/CUDA: unaffected; device metadata is recorded when a real translator is used.
-- Main risk: deterministic checks cannot decide semantic adequacy or fluency. Those remain explicit
-  human scores and must not be inferred from token preservation alone.
+- Affected: benchmark runner, NLLB loader, focused tests, CLI help/docs/reports.
+- Unaffected: PDF extraction, rendering, OCR, schemas, persistent TranslationCache and CUDA logic.
+- No model download in tests; mocks verify loader arguments and environment restoration.
+- Real verification should use the existing local cache and inspect logs for absence of HTTP requests.
+- Production token-protection behavior for command filenames/options is explicitly out of scope.
