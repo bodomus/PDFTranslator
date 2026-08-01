@@ -1,116 +1,75 @@
-# Investigation — PDFTR-8
+# Investigation — PDFTR-9
+## Baseline
+
+- Workflow level: 2.
+- Branch: `codex/PDFTR-9-translation-quality-benchmark` from PDFTR-8 commit `d16ed0e`.
+- Working tree was clean before the ticket file was added.
+- Python: 3.12 through uv; no dependency change is required.
+- PDFTR-9 is In Progress and its augmented Markdown ticket is attached in YouTrack.
 
 ## Current behavior
 
-- `run_pipeline()` already owns the safe six-stage single-document path: inspect, OCR, extract,
-  translate, render, and validate/publish.
-- `plan_pipeline()` provides a model-free classification and OCR decision, while
-  `open_translation_runtime()` allows repeated documents to share one translator and SQLite cache.
-- `PipelineWorkspace` records resumable artifacts and `run_pipeline()` returns output, cache,
-  OCR, page, and reused-stage counters.
-- The batch feature reports coarse per-file success/failure data, but it does not create the
-  validation evidence required by PDFTR-8: immutable source checksums, stage timing, per-document
-  JSON, Markdown compatibility matrix, manual-review results, or normalized defects.
-- No reusable real-PDF validation command or PowerShell harness exists.
+PDFTranslate can protect tokens, segment blocks, run NLLB, cache completed block translations and
+render PDFs. It has no versioned quality dataset, benchmark runner, deterministic diagnostic model,
+human scoring schema, baseline comparison, or JSON/Markdown benchmark report.
+
+The production translation path combines protection, segmentation, inference and recombination.
+Consequently, a bad final PDF does not by itself prove whether a defect originated in extraction,
+segmentation, the model, token restoration, terminology, or rendering.
+
+## Mandatory PDFTR-8 inputs
+
+1. Historical NLLB output damaged protected token `1900-1`.
+2. A page-7 observation damaged numbers/dates and introduced junk such as `F￾`.
+
+Both must remain explicit regression cases. The current ASCII placeholder mitigation does not
+remove their value as benchmark inputs.
 
 ## Expected behavior
 
-- Add a local, opt-in harness that discovers or reads a manifest of representative PDFs, supports
-  dry-run and subset selection, continues after individual failures, and writes outside source
-  files.
-- Produce `validation-summary.json`, `validation-summary.md`, one JSON result per document, and
-  retained logs.
-- Record source identity before and after each run, page classifications, stage outcomes and
-  durations, backend/effective device, OCR decision, output/workspace sizes, cache/resume data,
-  warnings, failures, and manual PDF-XChange checklist state.
-- Convert deterministic failures and source-integrity violations into severity/stage/reproduction/
-  root-cause/follow-up defect records.
-- Keep real model, CUDA, OCR, and GUI/manual work explicit and opt-in; unit tests use generated PDFs,
-  injected fakes, and mocks only.
+- Validate a safe, versioned 50–100 sample dataset.
+- Run a reusable `Translator` once over the dataset without requiring PDF rendering.
+- Preserve raw protected/segmented/model outputs in evidence.
+- Detect token, numeric, unit, URL, path, option, segment-count, untranslated, length-ratio and
+  suspicious-character problems deterministically.
+- Attribute findings to extraction, segmentation, protected-token, model, terminology, or
+  rendering stages.
+- Record version/commit/backend/model/tokenizer/device/settings/timing/cache counters.
+- Accept documented human review fields and compare a current report with a prior baseline.
+- Produce atomic JSON and Markdown reports.
 
-## Root cause / missing capability
+## Smallest coherent design
 
-The production pipeline exposes the necessary safe execution and test-injection boundaries, but
-there is no validation-domain coordinator or report schema that combines planning evidence,
-execution evidence, integrity checks, manual observations, and defects across a corpus.
+Create an isolated `pdftranslate.benchmark` package composed of:
 
-## Smallest coherent change
+- Pydantic models for dataset, trace observations, findings, reviews and reports;
+- pure diagnostic functions for stage-aware checks;
+- a runner using the existing `Translator`, `protect_text()` and `segment_text()` contracts;
+- atomic JSON/Markdown reporting and baseline comparison;
+- one thin Typer `benchmark-translation` command;
+- a 60-sample synthetic dataset and fake-backed tests.
 
-1. Add a focused `pdftranslate.validation` package with typed versioned report models, corpus
-   discovery/manifest loading, sequential orchestration, and atomic JSON/Markdown reporting.
-2. Reuse `plan_pipeline()`, `run_pipeline()`, and one shared `TranslationRuntime`; do not alter
-   extraction, translation, OCR, rendering, or publication algorithms.
-3. Add a stdlib CLI entry point behind `scripts/validate-real-pdfs.ps1`; keep it separate from
-   Typer so validation remains callable and testable as domain code.
-4. Add generated-PDF/fake-translator tests for success, subset/dry-run, continuation and stage
-   failures, OCR-required behavior, Unicode paths, resume/cache evidence, reports, and checksum
-   preservation.
+No renderer or extraction algorithm is changed. Optional stage observations in the dataset are
+diagnostic evidence, not instructions to alter production output.
 
-## Affected contracts
+## Graph and source evidence
 
-- New opt-in script/API only; existing `pdftranslate` CLI contracts and exit codes remain stable.
-- New validation report schema version 1.0 and optional corpus/manual-observation JSON schemas.
-- Filesystem writes are limited to the selected results root and ordinary pipeline cache/output
-  roots; source PDFs are hashed again after every attempt.
-- The existing translated-document and workspace schemas remain unchanged.
-- One model/cache runtime is shared across the corpus, preserving the PDFTR-7 lifetime guarantee.
+- Graphify connected `NllbTranslator`, `ProtectedText`, `segment_text()`, `TranslationCache`,
+  `translate_document()`, CLI and report patterns. Source inspection confirmed these boundaries.
+- CRG is current at 647 nodes / 5,067 edges / 76 files on `d16ed0e`.
+- CRG found production caller `translate_document()` plus direct tests for `protect_text()` and
+  `segment_text()`. A new benchmark runner will be a deliberate second caller.
+- Graphify still contains ignored historical `Tasks/PDFTR-9...` nodes; current YouTrack text,
+  `Tickets/PDFTR-9...`, source and tests are authoritative.
 
-## PDF, model, OCR, and environment assessment
+## Contracts and risks
 
-- Source PDFs must never be overwritten; output aliases and partial publication remain guarded by
-  the existing pipeline, with an additional before/after SHA-256 assertion in the harness.
-- A pre-existing 10-page representative PDF is available in `tests/` (73,160 bytes); no external
-  `J:\PdfTestCorpus` directory is present.
-- A Hugging Face NLLB cache exists, but the application-specific model cache is absent; no model
-  download will occur during tests or standard checks.
-- Installed PyTorch is CPU-only (`2.13.0+cpu`); CUDA is unavailable.
-- `ocrmypdf`, `tesseract`, and `gswin64c` are unavailable on `PATH`.
-- PDF-XChange Editor 10 is installed, but visual/select/search/copy judgments require an explicit
-  manual observation and cannot be inferred from automated PDF reopening.
-
-## Graph and source validation
-
-- Graphify (existing graph) linked `run_pipeline()`, `PipelineWorkspace`, `TranslationCache`,
-  `OcrProcessor`, `PdfRenderer`, batch reporting, and end-to-end tests. Source inspection confirmed
-  those boundaries.
-- CRG was rebuilt on branch `codex/PDFTR-8-real-pdf-end-to-end-validation` at commit
-  `1ddd6bc3596a`: 562 nodes, 4,282 edges, 68 files.
-- CRG found 17 direct callers/tests around `run_pipeline()` and five batch tests calling
-  `run_batch()`; its `tests_for` heuristic returned no explicit links, so direct caller evidence
-  and source tests are authoritative.
-- `code-review-graph detect-changes --base master --brief` analyzed the preflight diff but its final
-  panel hit a Windows cp1251 encoding error; the graph build itself completed successfully.
-
-## Expected blast radius
-
-- New validation package, PowerShell wrapper, focused tests, README, CHANGELOG, workflow reports,
-  ticket/review artifacts, and ignore rules for generated validation output.
-- No existing package boundary, document schema, model loader, OCR subprocess, renderer, or public
-  Typer command needs modification.
-
-## Validation plan
-
-- Focused validation-harness tests first, then existing end-to-end/OCR/batch tests.
-- Generated text, image, scanned, mixed, failure, Unicode, cache, and resume scenarios with fakes.
-- Controlled dry-run/real-PDF execution on the available representative document without model
-  download; real-model execution only if the existing cache can be consumed safely.
-- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src`, full pytest, CLI/script
-  smoke tests, and final `.\scripts\check.ps1`.
-
-## Review correction: real-world proof
-
-- The pages 3/5 output is not positive translation evidence. Page 3 contains only two extracted
-  text fragments over a graphical title, so rendering inserted isolated Russian fragments while
-  leaving the source title design intact. Page 5 contains only an intentional-blank-page label.
-- Page 7 is the first available page with a full English paragraph. Its paragraph is split across
-  three adjacent extraction blocks, ending one block with `infor-` and starting the next with
-  `mation`; translating the final fragment independently produces degenerate NLLB output.
-- The current Unicode protected-token sentinel is also stripped by NLLB. A real-model probe
-  confirmed that collision-safe ASCII sentinels are preserved.
-- The smallest coherent correction is to use ASCII protected-token sentinels and conservatively
-  merge only vertically adjacent, similarly aligned/width text blocks into a single paragraph,
-  including deterministic dehyphenation. Page 3 does not satisfy the merge heuristic and remains
-  a separately reported mapping/rendering defect.
-- Positive evidence requires a rendered page 7 with a coherent Russian paragraph, no visible or
-  extractable English source beneath it, correct placement, searchable/selectable/copyable Russian
-  text, unchanged source checksum, and a reopened valid PDF.
+- CLI: adds one command; existing commands and exit codes remain unchanged.
+- Dataset/report schemas: new, versioned 1.0 contracts.
+- Cache: benchmark uses an in-run exact-source cache for deterministic hit/miss reporting; it does
+  not mutate production translation memory.
+- Model: one loaded translator per run; fake backend in tests; NLLB only in explicit runs.
+- PDF integrity: no PDF is opened, written or rendered by benchmark execution.
+- OCR/CUDA: unaffected; device metadata is recorded when a real translator is used.
+- Main risk: deterministic checks cannot decide semantic adequacy or fluency. Those remain explicit
+  human scores and must not be inferred from token preservation alone.

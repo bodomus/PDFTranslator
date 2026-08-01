@@ -297,6 +297,47 @@ adds `translated_text`, and records model/device/settings, timestamps, warnings,
 completion state. Atomic checkpoints make interruption visible; `--resume` validates the source
 fingerprint, block structure, backend, model, language pair, batch size, and token limit.
 
+## Translation quality benchmark
+
+Run the repository-safe 61-sample English-to-Russian benchmark without extracting or rendering a
+PDF:
+
+```powershell
+uv run pdftranslate benchmark-translation `
+  .\benchmarks\translation-en-ru-v1.json `
+  --output .\temp\benchmark\nllb.json `
+  --device cpu `
+  --offline
+```
+
+Use `--baseline <prior.json>` to compare sample status and finding identities with an earlier run.
+The JSON and sibling Markdown report record the application version, commit, dataset version,
+backend, model/tokenizer identity, effective device, segmentation settings, elapsed time, and
+in-run exact-source cache hits/misses. One translator instance is reused for the whole dataset.
+Normal tests substitute a fake translator and never download NLLB.
+
+The versioned dataset contains prose, technical text, headings, captions, lists, warnings, labels,
+long sentences, abbreviations, units, URLs, paths, commands, code, product names, repeated terms,
+hyphenated breaks, and multi-sentence paragraphs. It also retains the PDFTR-8 `1900-1` protected-
+token failure and page-7 number/date corruption with `F￾` as explicit historical stage traces.
+Findings identify `current_run` versus `historical_trace`; only current-run errors determine the
+sample pass/fail status, so preserved defect evidence cannot masquerade as a new regression.
+
+Findings are attributed to one of six boundaries:
+
+- `extraction`: source and extracted snapshots differ;
+- `segmentation`: forced or missing/duplicated segment evidence;
+- `protected_token`: declared values or internal placeholders are damaged;
+- `model`: inference output loses numeric/structural content, remains untranslated, or contains
+  suspicious characters;
+- `terminology`: explicitly low human terminology score;
+- `rendering`: rendered text differs from the clean translated-text snapshot.
+
+This attribution is diagnostic: a final-PDF symptom is not automatically a model defect. PDFTR-9
+does not change PDF appearance or rendering behavior. Automated checks cover structural integrity,
+not semantic adequacy or fluency. Optional human scores use a documented 1–5 scale: 1 unacceptable,
+2 major problems, 3 usable with edits, 4 good, and 5 excellent.
+
 ## Render translated PDFs
 
 Render a completed schema 1.1 translation into a new PDF:

@@ -18,6 +18,15 @@ from typer.core import TyperGroup
 
 from pdftranslate import __version__
 from pdftranslate.batch import BatchOptions, BatchProgress, BatchReport, run_batch
+from pdftranslate.benchmark import (
+    BenchmarkOptions,
+    compare_with_baseline,
+    read_dataset,
+    read_report,
+    run_benchmark,
+    write_report_json,
+    write_report_markdown,
+)
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.logging_config import configure_logging
@@ -725,6 +734,102 @@ def translate_json(
         f"[path]{output_path}[/path]; cache {stats.cache_hits} hit(s), "
         f"{stats.cache_misses} miss(es); device {metadata.effective_device}; "
         f"elapsed {elapsed:.2f}s"
+    )
+
+
+@app.command("benchmark-translation")
+def benchmark_translation(
+    dataset_path: Annotated[
+        Path, typer.Argument(help="Versioned translation benchmark dataset JSON.")
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Benchmark JSON output path."),
+    ] = None,
+    baseline: Annotated[
+        Path | None,
+        typer.Option("--baseline", help="Prior benchmark JSON to compare."),
+    ] = None,
+    backend: Annotated[
+        str, typer.Option("--backend", help="Local translation backend (currently nllb).")
+    ] = "nllb",
+    model: Annotated[
+        str, typer.Option("--model", help="Hugging Face model identifier or local directory.")
+    ] = DEFAULT_NLLB_MODEL,
+    device: Annotated[
+        str, typer.Option("--device", help="Inference device: auto, cpu, or cuda.")
+    ] = "auto",
+    batch_size: Annotated[
+        int, typer.Option("--batch-size", min=1, help="Maximum inference segments per batch.")
+    ] = 8,
+    max_input_tokens: Annotated[
+        int,
+        typer.Option("--max-input-tokens", min=8, help="Maximum tokens per input segment."),
+    ] = 512,
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option("--cache-dir", help="Root containing locally cached model files."),
+    ] = None,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use local model files only; never use network.")
+    ] = False,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace existing JSON and Markdown reports.")
+    ] = False,
+) -> None:
+    """Benchmark translation quality without extracting or rendering PDFs."""
+    started = time.perf_counter()
+    settings = Settings()
+    configure_logging(settings.log_level)
+    dataset_source = dataset_path.expanduser().resolve()
+    json_output = (
+        output.expanduser().resolve()
+        if output is not None
+        else dataset_source.with_name(f"{dataset_source.stem}.results.json")
+    )
+    markdown_output = json_output.with_suffix(".md")
+    try:
+        if backend != "nllb":
+            raise TranslationError(f"unsupported translation backend: {backend}")
+        if device not in {"auto", "cpu", "cuda"}:
+            raise TranslationError("--device must be one of: auto, cpu, cuda")
+        for destination in (json_output, markdown_output):
+            if destination.exists() and not overwrite:
+                raise FileExistsError(f"output already exists; use --overwrite: {destination}")
+        dataset = read_dataset(dataset_source)
+        baseline_report = read_report(baseline) if baseline is not None else None
+        root_cache = (cache_dir or settings.cache_dir).expanduser().resolve()
+        mode_message = "local files only" if offline else "download may be required if not cached"
+        console.print(f"Loading model {model} ({mode_message})...")
+        translator = NllbTranslator(
+            model_name=model,
+            device=cast(DeviceRequest, device),
+            cache_dir=root_cache / "models",
+            offline=offline,
+            max_input_tokens=max_input_tokens,
+        )
+        report = run_benchmark(
+            dataset,
+            translator=translator,
+            options=BenchmarkOptions(
+                batch_size=batch_size,
+                max_input_tokens=max_input_tokens,
+            ),
+        )
+        if baseline_report is not None:
+            report = report.model_copy(
+                update={"comparison": compare_with_baseline(report, baseline_report)}
+            )
+        write_report_json(report, json_output, overwrite=overwrite)
+        write_report_markdown(report, markdown_output, overwrite=overwrite)
+    except (FileExistsError, OSError, TranslationError, ValueError) as error:
+        _exit_with_error(error)
+
+    console.print(
+        f"Benchmarked {report.metadata.sample_count} sample(s): "
+        f"{report.metadata.passed_samples} passed, {report.metadata.failed_samples} failed, "
+        f"{report.metadata.error_samples} error; JSON [path]{json_output}[/path]; "
+        f"Markdown [path]{markdown_output}[/path]; elapsed {time.perf_counter() - started:.2f}s"
     )
 
 

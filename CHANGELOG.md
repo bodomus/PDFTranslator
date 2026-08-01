@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Versioned 61-sample synthetic English-to-Russian benchmark dataset with explicit PDFTR-8
+  regressions for protected token `1900-1` and page-7 numeric/date corruption with `F￾`.
+- `pdftranslate benchmark-translation` with atomic JSON/Markdown reports, backend/model/tokenizer/
+  device/settings/commit/timing/cache metadata, fake-testable execution, human 1–5 review fields,
+  and baseline comparison.
+- Deterministic, stage-attributed benchmark findings for extraction, segmentation, protected-token,
+  model, terminology, and rendering evidence, including numbers, units, URLs, paths, options,
+  missing segments, untranslated output, length ratios, and suspicious characters.
 - Opt-in `scripts/validate-real-pdfs.ps1` corpus harness with dry-run, manifest/category/path
   subset selection, continue-on-error/fail-fast policies, one shared model/cache runtime, and
   explicit real-model, device, OCR, offline, resume, and overwrite controls.
