@@ -1,88 +1,78 @@
 # Review — PDFTR-8
 
-## Outcome
+## Результат ревью
 
-Implemented a reusable, opt-in real-PDF validation harness and produced executable evidence for
-both a successful real NLLB pipeline run and a deterministic real-world failure. Existing pipeline,
-translation, OCR, rendering, and Typer contracts were not changed.
+Первоначальное доказательство по страницам 3 и 5 отклонено. Оно не подтверждало перевод
+полноценного текста: страница 5 содержит только blank-page label, а на странице 3 появились
+фрагменты перевода поверх неизменённого графического титула.
 
-## Review focus
+Исправленный результат подтверждён на странице 7. В финальном PDF виден связный русский абзац,
+исходный английский абзац отсутствует, расположение сохранено, русский текст находится, выделяется
+и копируется из text layer.
 
-- Source safety: compare SHA-256/size before and after every success and failure.
-- Failure safety: confirm no partial output is published when translation fails.
-- Reports: inspect JSON/Markdown schema 1.0, per-stage timing/status, logs, OCR/cache/resume fields,
-  manual checklist, and defect mapping.
-- Resource lifetime: confirm one model/cache runtime per corpus and complete stage reuse on resume.
-- Scope: verify the harness remains opt-in and tests never load/download NLLB or invoke OCR tools.
+## Что изменено
 
-## Automated evidence
+- Защищённые токены переведены с Unicode sentinel на collision-safe ASCII placeholder.
+- Фрагменты одного абзаца консервативно объединяются и корректно дедефисуются.
+- Saved-PDF validation нормализует Unicode-дефисы.
+- Pipeline identity получил behavior revision, исключающую resume со старыми extracted artifacts.
+- Добавлены regression tests и ужесточены правила real-PDF evidence в документации.
+- `Tasks/` исключён из итогового Git diff; временные файлы находятся только в `./temp`.
 
-- Full gate: 129 passed, 1 opt-in OCR integration skipped, 86.78% coverage.
-- Ruff format/lint and strict mypy passed.
-- Focused pipeline/OCR/batch/validation regression: 40 passed.
-- Source checksums remained unchanged in all controlled real scenarios.
+## Проверяемый артефакт
 
-## Real evidence to inspect
+Финальный PDF:
+`temp/pdftr8-correction/page7-final-revision/outputs/The_Sword_And_The_Shield_The_Mitrokhin_Archive_And_The_Secret_History_1.ru.pdf`
 
-- Positive report: `C:\tmp\pdftr8-real-success\validation-summary.md`
-- Positive output:
-  `C:\tmp\pdftr8-real-success\outputs\The_Sword_And_The_Shield_The_Mitrokhin_Archive_And_The_Secret_History_1.ru.pdf`
-- Defect report: `C:\tmp\pdftr8-real-full\validation-summary.md`
-- Dry-run matrix: `C:\tmp\pdftr8-real-dry-run\validation-summary.md`
+Визуальный render страницы 7:
+`temp/pdftr8-correction/page7-final-revision-render/page-07.png`
 
-The successful run covered one mixed/image page and one text page, reopened as a 10-page PDF,
-contained searchable/extractable Russian text, preserved the page-3 image count, and reused all six
-stages in 0.49 seconds. The failure run did not publish a PDF and reproduced the same protected-token
-failure after resume.
+Автоматический validation report:
+`temp/pdftr8-correction/page7-final-revision/validation-summary.md`
 
-## Known defect
+## Фактические результаты
 
-- Severity: major
-- Stage: translation
-- Reproducibility: deterministic
-- Root cause evidence: NLLB output did not preserve protected token `1900-1`
-- Follow-up: PDFTR-9 — Translation quality benchmark
+- Source: 10 pages, 73,160 bytes, SHA-256 неизменён.
+- Output: 10 pages, 681,968 bytes, reopens successfully.
+- Page 7 paragraph bbox: `(40.30, 382.97, 350.73, 419.29)`.
+- Русские поисковые фразы: три из трёх найдены, по одному совпадению.
+- Английские контрольные фразы: четыре из четырёх отсутствуют.
+- Цельный русский абзац копируется из text layer.
+- Page geometry unchanged; image count on page 7 = 1.
+- Fresh run: all six stages passed; 0 cache hits / 10 misses.
+- Resume: 0.59 s; all six stages reused.
+- Full gate: Ruff clean, mypy clean, 134 passed, 1 skipped, coverage 86.93%.
 
-## Manual review required
+## Отдельный дефект страницы 3
 
-Open the positive output in PDF-XChange Editor and complete
-`C:\tmp\pdftr8-real-success\manual-review-template.json`. Automated checks establish PDF reopening,
-page count, extracted/searchable Russian text, image count, cache/resume, output safety, and source
-integrity; they do not replace human judgments about visual layout, column/table usability,
-selection, or clipboard behavior.
+- Severity: major.
+- Stage: rendering / block mapping.
+- Reproducibility: deterministic on the inspected source.
+- Наблюдение: перевод вставлен короткими фрагментами, исходный `SWORD/SHIELD` остаётся частью
+  оформления; результат не является корректной заменой исходного блока.
+- Решение для PDFTR-8: исключить страницу 3 из положительного evidence.
+- Follow-up: отдельный сфокусированный тикет по graphical-title/block-mapping rendering.
 
-## All remarks
+## Все замечания
 
-1. Pages 3-7 expose a deterministic major translation defect: NLLB does not preserve protected
-   token `1900-1`. Resume reproduces it; the follow-up is PDFTR-9.
-2. The positive real run intentionally covers only pages 3 and 5 (text plus mixed/image), not the
-   failing pages or the entire document.
-3. PDF-XChange Editor is installed, but visual layout, selection, clipboard, columns, and tables
-   require a human and remain `not_checked` in the manual-review template.
-4. The positive output passed automated reopen, 10/10 page count, searchable/extractable Russian
-   text, page-3 image count 1->1, output-size, source-checksum, and resume checks.
-5. Real pages 1, 2, and 8 require OCR. OCRmyPDF, Tesseract, Ghostscript, and English OCR data are
-   unavailable, accounting for the one skipped opt-in integration test.
-6. An RTX 4080 is present, but Torch is CPU-only (`2.13.0+cpu`), so CUDA was not validated.
-7. The available real corpus is one pre-existing 10-page, 73,160-byte PDF; it does not cover the
-   full private 100-300-page/table/two-column matrix. PDFTR-8 added no PDF.
-8. NLLB ran offline from the existing Hugging Face cache through temporary junction
-   `C:\tmp\pdftr8-real-cache\models`; no model/cache artifact was added to the repository.
-9. Transformers warned that `max_new_tokens=1024` overrode default `max_length=200`, and Hugging
-   Face printed an unauthenticated-request warning in the cache-backed run. Neither blocked the
-   successful pages 3/5 run.
-10. CRG rebuilt, but it ignores untracked new files until stage/commit and its Windows brief panel
-    hit a cp1251 `UnicodeEncodeError`; Graphify and source/executable evidence filled that gap.
-11. Graphify refreshed the structural graph and only warned that two non-code JSON files
-    (`hooks.json` and the example corpus manifest) yielded zero nodes.
-12. `git diff --check` passed; Git emitted only expected LF/CRLF conversion warnings for
-    `.gitignore`, README, and CHANGELOG.
-13. User-owned untracked `Tasks/` files were preserved. Nothing was staged, committed, pushed,
-    installed, or started for the next ticket.
-14. Every automated quality gate passed: 129 tests passed, 1 environment-dependent OCR test was
-    skipped, coverage is 86.78%, Ruff is clean, and strict mypy is clean.
+1. Страницы 3 и 5 не являются доказательством успешного real-world перевода.
+2. Положительное доказательство относится к полноценному абзацу страницы 7, а не ко всему
+   10-страничному документу.
+3. Программная и визуальная проверки подтверждают отсутствие исходного английского абзаца,
+   размещение, поиск и text-layer copy/select. Ручной PDF-XChange checklist остаётся `not_checked`.
+4. Реальный OCR не проверен из-за отсутствующих OCRmyPDF/Tesseract/Ghostscript/English data;
+   соответствующий opt-in test — единственный skipped.
+5. CUDA не проверена из-за CPU-only Torch.
+6. Корпус ограничен одним 10-страничным PDF и не покрывает длинные, табличные и two-column cases.
+7. NLLB работал offline из существующего model cache; модель и generated PDF не входят в Git.
+8. Сохраняются runtime warnings Transformers о `max_new_tokens`/`max_length` и Hugging Face об
+   unauthenticated requests; на результат они не повлияли.
+9. Потеря protected token исправлена и больше не считается открытым дефектом PDFTR-9.
+10. Локальные `Tasks/` сохранены, но удалены из tracked tree ветки и не должны попасть в PR diff.
+11. Следующий тикет не начат.
 
-## Recommendation
+## Рекомендация
 
-Move PDFTR-8 to In Review, complete the PDF-XChange checklist, and review the implementation report
-and real result folders before starting PDFTR-9.
+Рассматривать PDFTR-8 только по исправленному page-7 артефакту и настоящим результатам проверок.
+Не закрывать отдельный дефект страницы 3 этим тикетом. После просмотра отчёта и PDF можно принять
+решение по PDFTR-8; к следующему тикету до этого не переходить.

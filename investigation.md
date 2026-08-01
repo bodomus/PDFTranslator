@@ -96,3 +96,21 @@ execution evidence, integrity checks, manual observations, and defects across a 
   download; real-model execution only if the existing cache can be consumed safely.
 - `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src`, full pytest, CLI/script
   smoke tests, and final `.\scripts\check.ps1`.
+
+## Review correction: real-world proof
+
+- The pages 3/5 output is not positive translation evidence. Page 3 contains only two extracted
+  text fragments over a graphical title, so rendering inserted isolated Russian fragments while
+  leaving the source title design intact. Page 5 contains only an intentional-blank-page label.
+- Page 7 is the first available page with a full English paragraph. Its paragraph is split across
+  three adjacent extraction blocks, ending one block with `infor-` and starting the next with
+  `mation`; translating the final fragment independently produces degenerate NLLB output.
+- The current Unicode protected-token sentinel is also stripped by NLLB. A real-model probe
+  confirmed that collision-safe ASCII sentinels are preserved.
+- The smallest coherent correction is to use ASCII protected-token sentinels and conservatively
+  merge only vertically adjacent, similarly aligned/width text blocks into a single paragraph,
+  including deterministic dehyphenation. Page 3 does not satisfy the merge heuristic and remains
+  a separately reported mapping/rendering defect.
+- Positive evidence requires a rendered page 7 with a coherent Russian paragraph, no visible or
+  extractable English source beneath it, correct placement, searchable/selectable/copyable Russian
+  text, unchanged source checksum, and a reopened valid PDF.

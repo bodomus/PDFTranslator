@@ -20,9 +20,14 @@ from pdftranslate.rendering import (
     SourceMismatchError,
     validate_font,
 )
+from pdftranslate.rendering.renderer import _normalize_validation_text
 from pdftranslate.serialization import write_document_json
 
 runner = CliRunner()
+
+
+def test_saved_pdf_text_validation_normalizes_embedded_font_hyphens() -> None:
+    assert _normalize_validation_text("каким‐либо\n10022‑5299") == ("каким-либо 10022-5299")
 
 
 def _source_pdf(path: Path, *, image: bool = False, background: bool = False) -> Path:

@@ -76,6 +76,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Typed environment-based settings and centralized Rich logging.
 - Tests, Ruff, mypy, pre-commit, PowerShell helpers, and cross-platform CI.
 
+### Fixed
+
+- NLLB protected-token restoration now uses collision-safe ASCII placeholders that the real model
+  preserves, instead of Unicode sentinels that were stripped during inference.
+
 ### Security
 
 - The one-command workflow renders only to its cache workspace, validates a temporary destination

@@ -36,6 +36,7 @@ validation-results/
 *_validation/
 
 # Temporary and operating-system files
+/temp/
 *.tmp
 *.temp
 ~$*
@@ -49,3 +50,6 @@ desktop.ini
 # Repository intelligence output
 .code-review-graph/
 graphify-out/
+
+# Tasks
+Tasks/

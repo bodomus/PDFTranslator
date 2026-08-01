@@ -234,6 +234,18 @@ def test_protected_token_loss_is_not_silent() -> None:
         protected.restore("translated without the sentinel")
 
 
+def test_protected_tokens_use_ascii_placeholders_and_avoid_source_collisions() -> None:
+    protected = protect_text("Copyright 1999; literal __PDFTR_0000__ remains source text.")
+
+    placeholder, original = protected.replacements[0]
+    assert placeholder == "___PDFTR_0000___"
+    assert placeholder.isascii()
+    assert original == "1999"
+    assert protected.restore(protected.value) == (
+        "Copyright 1999; literal __PDFTR_0000__ remains source text."
+    )
+
+
 def test_segmentation_retains_paragraph_breaks() -> None:
     result = segment_text(
         "First very short sentence.\n\nSecond very short sentence.",

@@ -74,6 +74,12 @@ The harness hashes every source again after success or failure. A mismatch is a 
 causes the validation summary to fail. The production pipeline continues to prevent source/output
 aliases and publishes only a separately reopened, validated final PDF.
 
+Do not count isolated title fragments, page numbers, or intentional blank-page labels as a
+successful real-world translation. Positive evidence requires at least one complete English
+paragraph translated into coherent Russian. Render that page and verify that the source English
+paragraph is not visible or extractable underneath, the Russian text remains in the intended area,
+and a searched rectangle can be selected and copied from the PDF text layer.
+
 ## PDF-XChange manual review
 
 Open each generated output in PDF-XChange Editor and fill the matching entry in

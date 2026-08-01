@@ -11,6 +11,9 @@
 - Update README and CHANGELOG for user-visible behavior changes.
 - Never download large models during unit tests or CI.
 - Never commit generated PDFs, model weights, virtual environments, caches, or logs.
+- Create all temporary files and directories under the repository-local `./temp/` directory.
+  Do not use system temporary directories for project work unless an external tool cannot be
+  configured otherwise.
 
 ## Repository intelligence
 

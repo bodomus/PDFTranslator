@@ -16,4 +16,10 @@
 7. Update README, CHANGELOG, ignore rules, and reproduction instructions.
 8. Run focused tests, controlled representative-PDF validation, full quality checks, post-change
    Graphify/CRG impact review, and create `implementation-report.md` plus
-   `review-PDFTR-8.md` before moving the ticket to `In Review`.
+   `reviews/review-PDFTR-8.md` before moving the ticket to `In Review`.
+9. Correct the rejected real-world proof: replace the NLLB-fragile Unicode protected-token
+   sentinel, conservatively coalesce split paragraph blocks with dehyphenation, add regression
+   tests, and validate a full English paragraph on real page 7.
+10. Render and visually inspect page 7, verify Russian search/extraction/selectability/copyability
+    and absence of the source English paragraph, record page 3 as a mapping/rendering defect, then
+    remove all `Tasks/` paths from Git tracking while preserving the local files.

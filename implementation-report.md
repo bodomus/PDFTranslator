@@ -1,245 +1,136 @@
-# Implementation Report
+# Implementation Report — PDFTR-8
 
-## Ticket
+## Итог
 
-PDFTR-8 — Real PDF end-to-end validation
+PDFTR-8 исправлен после отклонения первоначального real-world доказательства. Страницы 3 и 5
+не считаются подтверждением успешного перевода. Финальное положительное доказательство получено
+на странице 7, содержащей полноценный английский абзац: создан PDF со связным русским текстом,
+без исходного английского абзаца под переводом, с сохранённым размещением, поиском, выделением и
+копированием русского текста.
 
-## Workflow
+Ветка: `codex/PDFTR-8-real-pdf-end-to-end-validation`, создана от `master`.
 
-- Level: 2
-- Branch: `codex/PDFTR-8-real-pdf-end-to-end-validation`, created from local `master` at
-  `1ddd6bc3596aa13947cd44789b164b5590ed0227`
-- Graphify: used for preflight; structural code graph refreshed post-change to 1,349 nodes,
-  2,746 edges, and 78 communities
-- CRG: rebuilt preflight at 562 nodes / 4,282 edges / 68 tracked files; post-change limitation
-  recorded below
-- Working tree before changes: dirty only because of preserved user-owned untracked files under
-  `Tasks/`
-- Ticket preparation: `Tickets/PDFTR-8-real-pdf-end-to-end-validation.md` created and attached;
-  YouTrack state moved from Open to In Progress
+## Исправление ошибочного вывода
 
-## Scope
+- Предыдущий результат на страницах 3 и 5 отклонён.
+- Страница 5 содержит только `This Page Intentionally Left Blank` и не является содержательным
+  примером перевода.
+- Страница 3 содержит графический титул. Перевод вставился отдельными фрагментами поверх страницы,
+  а исходное оформление `SWORD/SHIELD` осталось. Это отдельный воспроизводимый дефект рендеринга
+  или сопоставления блоков, а не успешный перевод.
+- Формулировки о подтверждённом real-world переводе по страницам 3/5 удалены из отчёта и review.
 
-- Modules: new `pdftranslate.validation` models, runner, reporting, stdlib CLI, and module entry point
-- Pipeline stages: existing inspect, OCR, extract, translate, render, validate stages reused without
-  algorithm changes
-- Dependency impact: none; `pyproject.toml` and `uv.lock` unchanged
-- Model/device impact: opt-in only; one existing shared translation runtime per corpus; no model
-  downloads in tests/CI
-- OCR impact: existing OCR boundary reused; no installation or subprocess behavior changed
-- CLI/public contract impact: new opt-in `scripts/validate-real-pdfs.ps1` and
-  `python -m pdftranslate.validation`; existing Typer commands and exit codes unchanged
-- PDF/output integrity impact: sources are SHA-256/size checked before and after every attempt;
-  existing atomic output publication remains authoritative
+## Выявленные причины и изменения
 
-## Investigation
+1. NLLB удалял Unicode-маркеры защищённых токенов. Маркеры заменены на collision-safe ASCII
+   placeholders вида `__PDFTR_0000__`; добавлена проверка восстановления и коллизий.
+2. Полноценный абзац страницы 7 извлекался тремя блоками, включая перенос `infor-` / `mation`.
+   Добавлено консервативное объединение только явно продолжающихся соседних блоков с
+   детерминированной дедефисацией. Титульные блоки страницы 3 не объединяются.
+3. Проверка сохранённого PDF ошибочно различала ASCII hyphen и Unicode PDF hyphen. Валидация
+   текста теперь выполняет NFKC-нормализацию, унифицирует дефисы и пробелы.
+4. В identity workspace добавлена `PIPELINE_BEHAVIOR_REVISION = 2`, чтобы resume не использовал
+   артефакты, извлечённые до изменения поведения.
+5. README и `docs/real-pdf-validation.md` теперь прямо запрещают считать титульные фрагменты,
+   номера страниц и blank-page labels положительным real-world доказательством.
+6. В `.gitignore` закреплены `/temp/` и `Tasks/`; все временные артефакты создавались в `./temp`.
+7. Лишние файлы `Tasks/` удалены из итогового diff ветки и сохранены локально как ignored files.
 
-- Current behavior: the single-document pipeline and PDFTR-7 shared runtime already provided safe
-  execution, resume, cache, and atomic publication, but no corpus validation schema or evidence
-  coordinator existed.
-- Expected behavior: reproducible private-corpus discovery/manifest, dry-run, subset selection,
-  continue-on-error, per-stage timing, JSON/Markdown results, copied logs, manual review, defects,
-  and source preservation.
-- Root cause or implementation gap: evidence existed across pipeline objects/workspaces but was not
-  normalized or published as one validation result.
-- Main symbols: `ValidationOptions`, `CorpusManifest`, `ManualReview`, `ValidationSummary`,
-  `DocumentValidationResult`, `run_validation()`, `_validate_document()`, `write_json()`, and
-  `write_markdown()`.
-- Configuration/schema: new validation schema 1.0; optional corpus manifest and manual-review
-  manifest 1.0; existing extracted/translated/workspace schemas unchanged.
-- Expected blast radius: isolated validation package, script, tests, docs, changelog, ignore rules,
-  ticket artifacts, and reports.
+Зависимости не добавлялись; `pyproject.toml` и `uv.lock` не изменены.
 
-## Changes
+## Архитектурная и blast-radius проверка
 
-- Added deterministic manifest or recursive PDF discovery with `.ru.pdf` and results-tree
-  exclusions, relative-path safety, unique document IDs, and category/ID/glob subset selection.
-- Added model-free dry-run that records classifications, OCR planning, checksums, and complete report
-  structure without loading NLLB, invoking OCR, or creating pipeline workspaces.
-- Added sequential full validation using one shared `TranslationRuntime`, continue-on-error by
-  default, explicit fail-fast, cache/resume evidence, stage status/timing, diagnostics copying, and
-  source identity verification after both success and failure.
-- Added atomic `validation-summary.json`, `validation-summary.md`,
-  `document-results/<document-id>.json`, `logs/<document-id>.log`, outputs, and
-  `manual-review-template.json`.
-- Added strict PDF-XChange checklist fields and automatic defect mapping for failed manual checks.
-- Added deterministic failure defects with severity, stage, reproducibility, root cause, and
-  recommended follow-up; translation failures map to PDFTR-9.
-- Added PowerShell and Python CLIs with explicit dry-run, subset, model, CPU/CUDA, OCR, offline,
-  resume, overwrite, cache, font, and page controls.
-- Added 11 harness tests covering text/image success, corrupt/extraction failure, translation,
-  rendering, OCR, final validation, continuation, Unicode paths, reports, source checksums, model
-  lifetime/cache reuse, resume, manual failure mapping, and CLI validation.
-- Updated README, CHANGELOG, ignore rules, and detailed reproduction/manual-review documentation.
+- Graphify использован для ориентации по цепочке extraction → translation → rendering →
+  validation; важные связи перепроверены по исходникам.
+- CRG post-change update: 51 files updated, 77 nodes и 849 edges пересчитаны; FTS index содержит
+  647 rows.
+- `detect-changes` оценил risk как 0.60 и указал затронутые extraction helpers, protected-token
+  handling, saved-PDF validation и pipeline identity.
+- CRG эвристически отметил paragraph-merge helpers как test gaps, однако их положительный,
+  dehyphenation и page-3 non-merge сценарии прямо покрыты в `tests/test_pdf_extraction.py`; исходные
+  тесты и полный executable gate приняты как авторитетные.
+- Схемы extracted/translated JSON не изменены. Намеренное compatibility-изменение — старые
+  pipeline workspaces считаются несовместимыми из-за behavior revision.
+- Новых архитектурных слоёв и зависимостей от Typer в domain/translation коде не появилось.
 
-## Graph and source validation
+## Автоматические проверки
 
-- Graphify preflight identified `run_pipeline()`, `PipelineWorkspace`, `TranslationCache`,
-  `OcrProcessor`, `PdfRenderer`, batch reporting, and end-to-end tests as adjacent boundaries.
-- Post-change Graphify query found the isolated validation community and confirmed
-  `run_validation()` links to `plan_pipeline()`, `run_pipeline()`, the shared cache/runtime, OCR,
-  renderer, report models, and focused tests.
-- CRG preflight found 17 callers/tests around `run_pipeline()` and five callers/tests around
-  `run_batch()`; source inspection verified all important relationships.
-- CRG post-change limitation: this version indexes tracked files only. Full/incremental rebuilds
-  stayed at 68 files and therefore cannot analyze the new untracked files until they are staged or
-  committed. No staging was performed solely to satisfy the tool. Graphify, source, focused tests,
-  full tests, and runtime evidence provide the post-change verification.
-- CRG `detect-changes --brief` also reaches its analysis result but fails printing the final Windows
-  panel under cp1251 (`UnicodeEncodeError`); graph database builds completed.
-- Discrepancies: Graphify represents the new code; CRG does not yet. Current source and executable
-  evidence are authoritative.
+- Целевой набор: 64 теста прошли; отдельный неполный запуск вернул exit 1 только из-за глобального
+  порога coverage, что ожидаемо для выборочного набора.
+- `./scripts/check.ps1`: успешно.
+  - Ruff format: 87 files already formatted.
+  - Ruff lint: passed.
+  - mypy: no issues in 54 source files.
+  - pytest: 134 passed, 1 skipped.
+  - coverage: 86.93% при требовании 80%.
+- Пропущен только opt-in OCR integration test: системные OCR-зависимости недоступны.
 
-## Post-change impact
+## Финальное real-PDF доказательство
 
-- CRG updated: attempted with both incremental and full confirmed commands; limitation above
-- Blast radius: new opt-in package/script/docs/tests only; no existing production function changed
-- Unexpected dependants: none found by Graphify, source imports, or full regression tests
-- Compatibility or migration concerns: none; validation schema is new and versioned 1.0
-
-## Validation
-
-### Focused and regression tests
-
-- `uv run pytest tests/test_validation_harness.py -q --no-cov`: 11 passed
-- Pipeline/OCR/batch/validation focused regression: 40 passed
-- `git diff --check`: passed; only line-ending conversion warnings were reported
-
-### Full quality gates
-
-- `.\scripts\check.ps1`: passed
-  - Ruff format: 85 files already formatted
-  - Ruff lint: passed
-  - mypy: no issues in 54 source files
-  - pytest: 129 passed, 1 skipped
-  - coverage: 86.78% (required 80%)
-- `.\scripts\test.ps1`: passed with the same 129 passed / 1 skipped / 86.78%
-- `uv run pdftranslate --version`: `PDFTranslate 0.1.0`
-- `uv run pdftranslate doctor`: Status OK; OCR dependencies unavailable; CUDA unavailable to the
-  installed CPU-only Torch build
-- `uv run python -m pdftranslate.validation --help`: passed
-
-### Real-PDF dry-run
-
-Source:
+Источник:
 `tests/The_Sword_And_The_Shield_The_Mitrokhin_Archive_And_The_Secret_History_1.pdf`
 
-- 10 pages, 73,160 bytes, SHA-256
-  `801d700f6aaf4dbc27774b4a857c56db42ede309e3bea15d051156f02f65dfce`
-- Classifications: 3 scanned (pages 1, 2, 8), 5 mixed, 2 text
-- OCR plan: would run for pages 1, 2, 8
-- Source checksum/size after dry-run: unchanged
-- Result: `C:\tmp\pdftr8-real-dry-run`
+- Размер: 73,160 bytes; страниц: 10.
+- SHA-256 до и после:
+  `801d700f6aaf4dbc27774b4a857c56db42ede309e3bea15d051156f02f65dfce`.
+- Выбрана страница 7 (`mixed`), содержащая полноценный copyright-абзац.
+- NLLB: offline, CPU, OCR off, `MaxInputTokens=64`, свежий translation cache.
+- Первый запуск: все шесть стадий прошли примерно за 12.78 s; translate занял примерно 12.24 s;
+  0 cache hits / 10 misses.
+- Resume: 0.59 s по result JSON; inspect, OCR, extract, translate, render и validate переиспользованы.
+- Выходной PDF: 681,968 bytes, 10 страниц, успешно переоткрывается.
+- Итоговый абзац копируется из text layer целиком:
 
-### Real-model deterministic failure
+  > Все права защищены. Издан в Соединенных Штатах Америки. Ни одна часть этой книги не может
+  > быть воспроизведена каким-либо образом без письменного разрешения, кроме случаев кратких
+  > цитат, содержащихся в критических статьях и обзорах. Для получения информации, обратитесь к
+  > адресу Basic Books, 10 East 53rd Street, Нью-Йорк, Нью-Йорк 10022-5299.
 
-Pages 3–7, CPU, OCR off, offline, existing local NLLB cache:
+- Русский поиск: `Все права защищены`, `письменного разрешения`,
+  `критических статьях и обзорах` — по одному совпадению.
+- Английские фразы `All rights reserved`, `No part of this book`, `written permission` и
+  `brief quotations` отсутствуют в extracted text итоговой страницы.
+- Bounding box абзаца: `(40.30, 382.97, 350.73, 419.29)`; визуально русский текст остаётся в
+  исходной области, не выходит за страницу и не перекрывает соседние блоки.
+- Изображение страницы сохранено: image count = 1; геометрия страницы совпадает с источником.
+- Рендер для визуальной проверки:
+  `temp/pdftr8-correction/page7-final-revision-render/page-07.png`.
+- Финальный PDF:
+  `temp/pdftr8-correction/page7-final-revision/outputs/The_Sword_And_The_Shield_The_Mitrokhin_Archive_And_The_Secret_History_1.ru.pdf`.
 
-- First run: 76.62 s; inspect/OCR/extract passed; translate failed deterministically because NLLB
-  did not preserve protected token `1900-1`
-- Cache at failure: 2 hits / 38 misses; effective device CPU
-- Render/validate did not run; no final/partial PDF was published
-- Source checksum/size remained unchanged
-- Resume run: 8.16 s; inspect/OCR/extract reused; translation failed on the same token; OCR correctly
-  reported skipped
-- Defect: major, translation, deterministic, mapped to PDFTR-9 — Translation quality benchmark
-- Result: `C:\tmp\pdftr8-real-full`
+## Все замечания и ограничения
 
-### Real-model successful text + image run
-
-Pages 3 and 5, CPU, OCR off, offline, existing local NLLB cache:
-
-- Page 3: mixed with an image; page 5: text
-- All six stages passed in 5.05 s
-- Effective device CPU; cache 2 hits / 1 miss
-- Output: 682,136 bytes; reopens as PDF; 10 output pages match 10 source pages
-- Russian text: 41 extractable Cyrillic characters; search for `страница` and `пустой` each returns
-  one hit
-- Image preservation: source page 3 image count 1; output page 3 image count 1
-- Source checksum/size remained unchanged
-- Resume run: 0.49 s; all six stages reused; output remained valid
-- Result: `C:\tmp\pdftr8-real-success`
-
-### Environment-specific validation
-
-- Real-model validation: executed from an existing local cache; no model was downloaded for this
-  ticket
-- CUDA validation: not run; NVIDIA RTX 4080 is present, but installed Torch is `2.13.0+cpu` and
-  reports CUDA unavailable
-- OCR integration validation: not run; OCRmyPDF, Tesseract, Ghostscript, and English OCR data are
-  unavailable. Generated/mock OCR tests passed; dry-run recorded the real document's OCR need.
-- PDF-XChange manual validation: pending human review. PDF-XChange Editor is installed, the template
-  is generated, and automated reopen/page-count/text-search/image/checksum evidence passed, but
-  visual usability/select/copy judgments were not falsely claimed.
-
-## Documentation
-
-- Updated: `README.md`, `CHANGELOG.md`, `.gitignore`, `docs/real-pdf-validation.md`, and
-  `docs/validation-corpus.example.json`
-- CLI help: new stdlib validation CLI documented and smoke-tested
-- Existing main CLI/config/schema docs: unchanged because existing contracts were not modified
+1. Страница 3 зафиксирована как отдельный дефект рендеринга/сопоставления блоков: перевод
+   вставляется фрагментами и не заменяет исходный графический титул. Она исключена из acceptance
+   evidence PDFTR-8 и требует отдельного сфокусированного тикета.
+2. Страница 5 — intentional blank-page label; она исключена из acceptance evidence.
+3. Программно проверены поиск, извлечение/копирование text layer, отсутствие английского текста,
+   геометрия и визуальный PNG. Ручной checklist непосредственно в PDF-XChange Editor всё ещё имеет
+   состояние `not_checked`; человеческая проверка UI не заявляется как выполненная.
+4. OCR не проверялся на реальных scanned pages: OCRmyPDF, Tesseract, Ghostscript и English OCR data
+   недоступны. Страницы 1, 2 и 8 требуют отдельной OCR-среды.
+5. CUDA не проверялась: установлен CPU-only Torch, хотя на машине имеется RTX 4080.
+6. Реальный корпус пока состоит из одного 10-страничного документа; 100–300-страничные,
+   table-heavy и two-column документы этим прогоном не покрыты.
+7. Модель использована из существующего локального Hugging Face cache через junction внутри
+   `./temp`; веса и generated PDFs не добавлены в Git.
+8. Transformers предупреждает, что `max_new_tokens=128` имеет приоритет над `max_length=200`.
+   Hugging Face также печатает предупреждение об unauthenticated requests даже в offline/cache
+   режиме. Эти предупреждения не помешали успешному прогону.
+9. Старый дефект потери protected token больше не переносится в PDFTR-9 как нерешённый: он исправлен
+   ASCII placeholder и подтверждён real-model прогоном с адресом `10022-5299`.
+10. Локальные файлы `Tasks/` не удалены с диска, но удалены из отслеживаемого дерева ветки; ZIP и
+    Markdown из `Tasks/` не входят в итоговый diff относительно `master`.
+11. Следующий тикет не начат.
 
 ## Acceptance status
 
-- Reusable validation harness: complete
-- JSON and Markdown reports: complete
-- Real text PDF end to end: complete (page 5 in successful run)
-- Real image-containing PDF: complete (mixed page 3; image count preserved 1→1)
-- Scanned/OCR-required behavior: evaluated; real dependencies unavailable and recorded
-- PDF-XChange manual result: template/result state recorded as pending human review
-- Search/copy/cache/resume: automated extract/search, cache, and resume complete; PDF-XChange copy
-  judgment pending
-- Source files unchanged: complete across dry-run, failure, success, and resume
-- Defects mapped: real protected-token failure mapped to PDFTR-9
-- All automated checks: passed
-
-## Consolidated remarks
-
-1. A real deterministic translation defect was found: pages 3–7 fail because NLLB does not
-   preserve protected token `1900-1`. It reproduces after resume, is classified major, and is
-   mapped to PDFTR-9.
-2. The positive real run is intentionally narrower (pages 3 and 5) and proves text + mixed/image
-   E2E behavior, not correctness of the failing pages 3–7 or the whole document.
-3. PDF-XChange Editor is installed, but its visual, selection, clipboard, column, and table checks
-   still require a human. They remain explicitly `not_checked` in the generated template.
-4. Automated PDF evidence passed for the positive output: reopen, 10/10 page count, extractable and
-   searchable Russian text, page-3 image count 1→1, valid output size, source checksum, and resume.
-5. OCR is required for real pages 1, 2, and 8, but OCRmyPDF, Tesseract, Ghostscript, and English OCR
-   data are unavailable. The opt-in OCR integration test is the single skipped test.
-6. The machine has an NVIDIA RTX 4080, but the installed Torch build is CPU-only
-   (`2.13.0+cpu`), so CUDA validation was not possible.
-7. The current real corpus is one pre-existing 10-page, 73,160-byte document. It does not cover a
-   full private 100–300-page, table-heavy, and two-column matrix. No new copyrighted or large PDF
-   was added by PDFTR-8.
-8. The real model was loaded offline from an existing Hugging Face cache through the temporary
-   junction `C:\tmp\pdftr8-real-cache\models`; no model weights or cache artifacts were added to
-   the repository.
-9. Transformers printed that both `max_new_tokens=1024` and its default `max_length=200` were set;
-   `max_new_tokens` took precedence. Hugging Face also printed an unauthenticated-request warning
-   even in the offline/cache-backed run. These warnings did not prevent the successful pages 3/5
-   run, but are retained as runtime observations.
-10. CRG rebuilt successfully but ignores new untracked files, so it cannot provide post-change
-    symbol reachability until the work is staged/committed. Its Windows brief panel also has a
-    cp1251 `UnicodeEncodeError`. Graphify and executable/source evidence were used instead.
-11. Graphify refreshed the structural code graph successfully. It warned that two non-code JSON
-    files (`hooks.json` and the example corpus manifest) produced zero graph nodes; this does not
-    affect runtime validation.
-12. `git diff --check` passed, while Git reported expected LF/CRLF conversion warnings for
-    `.gitignore`, README, and CHANGELOG. No whitespace errors were reported.
-13. User-owned untracked `Tasks/` files and archive were preserved unchanged. No staging, commit,
-    push, ticket creation, dependency installation, OCR installation, or next-ticket work was
-    performed.
-14. All automated quality gates passed: 129 passed, 1 environment-dependent OCR integration test
-    skipped, 86.78% coverage, Ruff clean, and strict mypy clean.
-
-## Remaining risks
-
-- Human PDF-XChange review remains necessary for visual layout, usability, selection, and clipboard
-  behavior.
-- Full scanned-page OCR cannot be validated until system dependencies are installed.
-- CUDA cannot be validated with the current CPU-only Torch environment.
-- The real document exposed a deterministic protected-token failure on pages 3–7; this is evidence
-  for PDFTR-9, not silently fixed outside PDFTR-8 scope.
-- The current local corpus has one 10-page representative document, not the complete 100–300 page,
-  tables, two-column, and diverse private corpus described by the target matrix. The manifest and
-  harness are ready for those inputs when supplied.
+- Полноценный английский абзац → связный русский абзац: **passed (page 7)**.
+- Английский текст не остаётся под переводом: **passed programmatically and visually**.
+- Размещение: **passed visual render and geometry checks**.
+- Выделение/копирование: **passed through PDF text-layer extraction**.
+- Поиск русского текста: **passed**.
+- Изображение на mixed page сохранено: **passed**.
+- Source unchanged и resume: **passed**.
+- Human PDF-XChange checklist: **not_checked**.
+- Page 3 title rendering/mapping: **separate known defect, not acceptance evidence**.

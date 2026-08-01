@@ -66,6 +66,8 @@ The version 1.0 JSON schema includes the absolute source path, byte size and SHA
 PDF metadata, total and selected pages, page dimensions and rotation, classification, actual image
 placements, extraction warnings, and text blocks with bounding boxes, original/normalized order,
 and span typography. Coordinates are numeric values in PyMuPDF's effective page coordinate system.
+Vertically adjacent, similarly aligned line fragments are conservatively coalesced when lowercase
+continuation text proves they belong to one paragraph; split-word hyphenation is removed.
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 
@@ -386,6 +388,10 @@ after every success or failure, stage timing and cache/resume evidence are recor
 become severity/stage/root-cause/follow-up defect entries. See
 [`docs/real-pdf-validation.md`](docs/real-pdf-validation.md) for the private-corpus manifest,
 manual checklist, opt-in OCR/model workflow, and reproduction commands.
+
+A title fragment or intentional blank-page label is not positive translation evidence. A real-model
+proof must include at least one coherent source paragraph and verify the rendered Russian text,
+absence of the source English paragraph, placement, search, selection, and copy behavior.
 
 ## Quality and tests
 

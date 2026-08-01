@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import statistics
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -25,6 +26,16 @@ from pdftranslate.rendering.models import BlockRenderResult, RenderOptions, Rend
 
 _FONT_NAME = "PDFTranslateFont"
 _COORDINATE_TOLERANCE = 0.5
+_PDF_HYPHENS = str.maketrans(
+    {
+        "‐": "-",
+        "‑": "-",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "−": "-",
+    }
+)
 
 
 @dataclass
@@ -445,15 +456,19 @@ def _validate_saved_pdf(
             extracted = str(
                 document[page_number - 1].get_text("text")  # type: ignore[no-untyped-call]
             )
-            normalized_extracted = " ".join(extracted.split())
+            normalized_extracted = _normalize_validation_text(extracted)
             for expected in expected_values:
-                normalized_expected = " ".join(expected.split())
+                normalized_expected = _normalize_validation_text(expected)
                 if normalized_expected not in normalized_extracted:
                     raise OutputPdfError(
                         f"generated PDF is missing inserted Cyrillic text on page {page_number}"
                     )
     finally:
         document.close()  # type: ignore[no-untyped-call]
+
+
+def _normalize_validation_text(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).translate(_PDF_HYPHENS).split())
 
 
 def _open_source(path: Path) -> pymupdf.Document:

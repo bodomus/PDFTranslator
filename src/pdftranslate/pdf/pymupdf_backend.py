@@ -128,6 +128,64 @@ def _text_block_from_dict(
     )
 
 
+def _merge_adjacent_text_blocks(blocks: list[TextBlock], page_number: int) -> list[TextBlock]:
+    """Coalesce line fragments that are clearly one paragraph."""
+    merged: list[TextBlock] = []
+    for block in blocks:
+        if merged and _is_paragraph_continuation(merged[-1], block):
+            previous = merged[-1]
+            merged[-1] = previous.model_copy(
+                update={
+                    "text": _join_paragraph_text(previous.text, block.text),
+                    "bbox": BoundingBox(
+                        x0=min(previous.bbox.x0, block.bbox.x0),
+                        y0=min(previous.bbox.y0, block.bbox.y0),
+                        x1=max(previous.bbox.x1, block.bbox.x1),
+                        y1=max(previous.bbox.y1, block.bbox.y1),
+                    ),
+                    "spans": previous.spans + block.spans,
+                }
+            )
+        else:
+            merged.append(block)
+    return [
+        block.model_copy(
+            update={
+                "id": f"p{page_number:04d}-b{index + 1:04d}",
+                "normalized_order": index,
+            }
+        )
+        for index, block in enumerate(merged)
+    ]
+
+
+def _is_paragraph_continuation(previous: TextBlock, current: TextBlock) -> bool:
+    previous_text = previous.text.rstrip()
+    current_text = current.text.lstrip()
+    if not previous_text or not current_text or not current_text[0].islower():
+        return False
+    previous_width = max(previous.bbox.x1 - previous.bbox.x0, 1.0)
+    current_width = max(current.bbox.x1 - current.bbox.x0, 1.0)
+    width_ratio = min(previous_width, current_width) / max(previous_width, current_width)
+    left_aligned = abs(previous.bbox.x0 - current.bbox.x0) <= 8.0
+    vertical_gap = current.bbox.y0 - previous.bbox.y1
+    line_height = min(
+        max(previous.bbox.y1 - previous.bbox.y0, 1.0),
+        max(current.bbox.y1 - current.bbox.y0, 1.0),
+    )
+    close_vertically = -line_height * 0.25 <= vertical_gap <= line_height * 0.5
+    source_continues = previous_text.endswith("-") or previous_text[-1] not in ".?!:;"
+    return left_aligned and width_ratio >= 0.8 and close_vertically and source_continues
+
+
+def _join_paragraph_text(previous: str, current: str) -> str:
+    left = previous.rstrip()
+    right = current.lstrip()
+    if left.endswith("-") and right and right[0].islower():
+        return left[:-1] + right
+    return f"{left} {right}"
+
+
 def _probable_language(texts: Iterable[str]) -> str | None:
     latin = 0
     cyrillic = 0
@@ -260,6 +318,8 @@ class PyMuPdfBackend:
                     text_blocks.append(text_block)
             elif block_type == 1:
                 image_boxes.append(_bbox(block["bbox"]))
+
+        text_blocks = _merge_adjacent_text_blocks(text_blocks, page_number)
 
         page_area = max(float(page.rect.width * page.rect.height), 1.0)
         image_area_ratio = min(sum(box.area for box in image_boxes) / page_area, 1.0)

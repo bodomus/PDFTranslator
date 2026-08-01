@@ -11,6 +11,7 @@ from pdftranslate.domain.document import InspectionReport, TranslationStatistics
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 OcrMode = Literal["auto", "on", "off"]
+PIPELINE_BEHAVIOR_REVISION = 2
 
 
 class PipelineStage(StrEnum):
@@ -95,6 +96,7 @@ class PipelineOptions:
         """Return canonical values that determine artifact compatibility."""
         font = self.font_path.expanduser().resolve() if self.font_path is not None else None
         return {
+            "pipeline_behavior_revision": PIPELINE_BEHAVIOR_REVISION,
             "output_path": str(self.output_path.expanduser().resolve()),
             "pages": self.pages,
             "backend": self.backend,
