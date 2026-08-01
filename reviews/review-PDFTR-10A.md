@@ -17,8 +17,9 @@ PDFTR-10A changes only the fragile Typer/Rich help-output test. Inspection confi
 9. Post-change code-review-graph analysis found one changed test function, no affected production flow, no test gap, and risk score `0.30`.
 10. `apply_patch` could not enforce the split Windows writable-root sandbox. A narrow UTF-8/no-BOM replacement with exact single-anchor checks was used instead; `git diff --check` passed.
 11. A YouTrack attachment/state update could not be performed because no distinct PDFTR-10A issue URL or issue identifier was supplied. The ticket text is preserved locally under `Tickets/`.
-12. GitHub Actions status is pending the initial push and will be recorded here after completion.
+12. GitHub Actions [run 30701770322](https://github.com/bodomus/PDFTranslator/actions/runs/30701770322) passed for fix commit `84f3bd3` on both Ubuntu and Windows. Each job reported `161 passed, 1 skipped`, coverage `87.68%`, and Python 3.12.8.
+13. GitHub emitted a non-blocking warning that Node 20 actions are being forced onto Node 24. This is upstream workflow-action maintenance and did not affect the Python checks or PDFTR-10A result.
 
 ## Verdict
 
-Pending GitHub Actions. The local implementation and full quality gate are successful.
+Ready to merge PDFTR-10. The local and GitHub Actions quality gates are successful.

@@ -28,8 +28,8 @@
 - Exact narrow pytest commands: all selected tests passed, but the repository-wide `--cov-fail-under=80` intentionally makes narrow selections exit non-zero at 26–27% partial-suite coverage. No coverage setting was weakened.
 - Direct help command: exited 0 and displayed every required option.
 - Full `check.ps1`: passed; formatter, Ruff, mypy, `161 passed, 1 skipped`, total coverage `87.78%`.
-- GitHub Actions: pending initial push.
+- GitHub Actions: [run 30701770322](https://github.com/bodomus/PDFTranslator/actions/runs/30701770322) passed on Ubuntu and Windows for fix commit `84f3bd3`; each job reported `161 passed, 1 skipped` and `87.68%` coverage.
 
 ## Final status
 
-- Not ready to merge PDFTR-10 until GitHub Actions completes successfully.
+- Ready to merge PDFTR-10.
