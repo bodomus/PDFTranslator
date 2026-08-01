@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pdftranslate import __version__
-from pdftranslate.benchmark.checks import analyze_sample_output, analyze_stage_trace
+from pdftranslate.benchmark.checks import (
+    analyze_human_review,
+    analyze_sample_output,
+    analyze_stage_trace,
+)
 from pdftranslate.benchmark.models import (
     BenchmarkDataset,
     BenchmarkFinding,
@@ -45,11 +49,14 @@ _DEFAULT_OPTIONS = BenchmarkOptions()
 
 
 @dataclass(frozen=True)
-class _CachedResult:
+class _CachedTranslation:
     output: str | None
     segments: tuple[SegmentEvidence, ...]
-    findings: tuple[BenchmarkFinding, ...]
-    status: SampleStatus
+    source_segment_count: int
+    output_segment_count: int
+    segmentation_warning: bool
+    protection_error: str | None
+    runtime_error: str | None
 
 
 def run_benchmark(
@@ -62,7 +69,7 @@ def run_benchmark(
     """Run every sample through one loaded translator and retain stage evidence."""
     started_at = datetime.now(UTC)
     started = time.perf_counter()
-    cache: dict[str, _CachedResult] = {}
+    cache: dict[str, _CachedTranslation] = {}
     results: list[SampleBenchmarkResult] = []
     cache_hits = 0
     cache_misses = 0
@@ -74,92 +81,95 @@ def run_benchmark(
             if sample.stage_trace is not None and sample.stage_trace.extracted_text is not None
             else sample.source
         )
-        cached = cache.get(effective_source)
-        if cached is not None:
+        cached_translation = cache.get(effective_source)
+        cache_hit = cached_translation is not None
+        if cache_hit:
             cache_hits += 1
-            trace_findings = analyze_stage_trace(sample)
-            findings = _merge_findings((*cached.findings, *trace_findings))
-            results.append(
-                SampleBenchmarkResult(
-                    sample_id=sample.id,
-                    category=sample.category,
-                    status=cached.status,
-                    source=sample.source,
-                    effective_source=effective_source,
-                    reference=sample.reference,
-                    output=cached.output,
-                    segments=cached.segments,
-                    findings=findings,
-                    human_review=sample.human_review,
-                    elapsed_seconds=time.perf_counter() - sample_started,
-                    cache_hit=True,
-                )
-            )
-            continue
-
-        cache_misses += 1
-        output: str | None = None
-        evidence: list[SegmentEvidence] = []
-        had_runtime_error = False
-        try:
-            protected = protect_text(effective_source)
-            segmentation = segment_text(
-                protected.value,
-                count_tokens=translator.count_tokens,
-                max_tokens=options.max_input_tokens,
-            )
-            source_segments = [segment.text for segment in segmentation.segments]
-            translated_segments: list[str] = []
-            for offset in range(0, len(source_segments), options.batch_size):
-                translated_segments.extend(
-                    translator.translate_batch(
-                        source_segments[offset : offset + options.batch_size]
-                    )
-                )
-            for index, source_segment in enumerate(source_segments):
-                model_output = (
-                    translated_segments[index] if index < len(translated_segments) else ""
-                )
-                evidence.append(
-                    SegmentEvidence(
-                        source=segmentation.segments[index].text,
-                        protected_source=source_segment,
-                        model_output=model_output,
-                    )
-                )
+            assert cached_translation is not None
+        else:
+            cache_misses += 1
+            output: str | None = None
+            evidence: list[SegmentEvidence] = []
+            source_segment_count = 0
+            output_segment_count = 0
+            segmentation_warning = False
             protection_error: str | None = None
-            if len(translated_segments) == len(segmentation.segments):
-                combined = recombine_segments(segmentation.segments, translated_segments)
-                try:
-                    output = protected.restore(combined)
-                except ProtectedTokenError as error:
-                    protection_error = str(error)
-                    output = combined
-            else:
-                output = " ".join(translated_segments)
-            findings = analyze_sample_output(
-                sample,
-                effective_source,
-                output,
-                source_segment_count=len(segmentation.segments),
-                output_segment_count=len(translated_segments),
-                segmentation_warning=segmentation.quality_warning,
+            runtime_error: str | None = None
+            try:
+                protected = protect_text(effective_source)
+                segmentation = segment_text(
+                    protected.value,
+                    count_tokens=translator.count_tokens,
+                    max_tokens=options.max_input_tokens,
+                )
+                source_segments = [segment.text for segment in segmentation.segments]
+                translated_segments: list[str] = []
+                for offset in range(0, len(source_segments), options.batch_size):
+                    translated_segments.extend(
+                        translator.translate_batch(
+                            source_segments[offset : offset + options.batch_size]
+                        )
+                    )
+                for index, source_segment in enumerate(source_segments):
+                    model_output = (
+                        translated_segments[index] if index < len(translated_segments) else ""
+                    )
+                    evidence.append(
+                        SegmentEvidence(
+                            source=segmentation.segments[index].text,
+                            protected_source=source_segment,
+                            model_output=model_output,
+                        )
+                    )
+                source_segment_count = len(segmentation.segments)
+                output_segment_count = len(translated_segments)
+                segmentation_warning = segmentation.quality_warning
+                if output_segment_count == source_segment_count:
+                    combined = recombine_segments(segmentation.segments, translated_segments)
+                    try:
+                        output = protected.restore(combined)
+                    except ProtectedTokenError as error:
+                        protection_error = str(error)
+                        output = combined
+                else:
+                    output = " ".join(translated_segments)
+            except (TranslationError, ValueError) as error:
+                runtime_error = str(error)
+            cached_translation = _CachedTranslation(
+                output=output,
+                segments=tuple(evidence),
+                source_segment_count=source_segment_count,
+                output_segment_count=output_segment_count,
+                segmentation_warning=segmentation_warning,
                 protection_error=protection_error,
+                runtime_error=runtime_error,
             )
-        except (TranslationError, ValueError) as error:
-            had_runtime_error = True
-            findings = (
+            cache[effective_source] = cached_translation
+
+        current_findings: tuple[BenchmarkFinding, ...]
+        if cached_translation.runtime_error is not None:
+            current_findings = (
                 BenchmarkFinding(
                     code="benchmark-execution-error",
                     stage="model",
                     severity="error",
-                    message=str(error),
+                    message=cached_translation.runtime_error,
                 ),
+                *analyze_human_review(sample.human_review),
             )
-        current_findings = _merge_findings(findings)
-        status = _status(current_findings, had_runtime_error)
-        cached_result = _CachedResult(output, tuple(evidence), current_findings, status)
-        cache[effective_source] = cached_result
+        else:
+            assert cached_translation.output is not None
+            current_findings = analyze_sample_output(
+                sample,
+                effective_source,
+                cached_translation.output,
+                source_segment_count=cached_translation.source_segment_count,
+                output_segment_count=cached_translation.output_segment_count,
+                segmentation_warning=cached_translation.segmentation_warning,
+                protection_error=cached_translation.protection_error,
+            )
+        current_findings = _merge_findings(current_findings)
+        status = _status(current_findings, cached_translation.runtime_error is not None)
         findings = _merge_findings((*current_findings, *analyze_stage_trace(sample)))
         results.append(
             SampleBenchmarkResult(
@@ -169,12 +179,12 @@ def run_benchmark(
                 source=sample.source,
                 effective_source=effective_source,
                 reference=sample.reference,
-                output=output,
-                segments=tuple(evidence),
+                output=cached_translation.output,
+                segments=cached_translation.segments,
                 findings=findings,
                 human_review=sample.human_review,
                 elapsed_seconds=time.perf_counter() - sample_started,
-                cache_hit=False,
+                cache_hit=cache_hit,
             )
         )
 

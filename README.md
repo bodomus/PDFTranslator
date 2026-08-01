@@ -276,8 +276,11 @@ Useful runtime options:
 --ocr-force
 ```
 
-Normal mode may download missing model files and reports this before loading. `--offline` uses
-local files only and fails clearly when they are absent. The upstream model repository was
+Normal mode may download missing model files and reports this before loading. `--offline` resolves
+the model to an existing local directory or Hugging Face cache snapshot before importing
+Transformers, loads configuration/tokenizer/model with `local_files_only=True`, and scopes the Hub
+offline environment to component loading. It never falls back to the remote model ID and fails with
+the checked cache path and recovery guidance when local files are absent. The upstream model repository was
 approximately 2.5 GB when this documentation was written; cache size, RAM, and VRAM requirements
 vary by revision and precision. The [NLLB model card](https://huggingface.co/facebook/nllb-200-distilled-600M) identifies
 the checkpoint as CC-BY-NC-4.0, so
@@ -314,7 +317,9 @@ Use `--baseline <prior.json>` to compare sample status and finding identities wi
 The JSON and sibling Markdown report record the application version, commit, dataset version,
 backend, model/tokenizer identity, effective device, segmentation settings, elapsed time, and
 in-run exact-source cache hits/misses. One translator instance is reused for the whole dataset.
-Normal tests substitute a fake translator and never download NLLB.
+The in-run cache stores only model-execution artifacts; protected-token declarations, human scores,
+historical traces, findings, and status are recalculated independently for every sample, including
+cache hits. Normal tests substitute a fake translator and never download NLLB.
 
 The versioned dataset contains prose, technical text, headings, captions, lists, warnings, labels,
 long sentences, abbreviations, units, URLs, paths, commands, code, product names, repeated terms,

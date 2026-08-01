@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -82,6 +84,39 @@ class FakeModel:
         return ["перевод"]
 
 
+class RecordingFactory:
+    def __init__(self, value: object, *, failure: OSError | None = None) -> None:
+        self.value = value
+        self.failure = failure
+        self.calls: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def from_pretrained(self, model: str, **kwargs: object) -> object:
+        self.calls.append(
+            (
+                model,
+                kwargs,
+                os.environ.get("HF_HUB_OFFLINE"),
+                os.environ.get("TRANSFORMERS_OFFLINE"),
+            )
+        )
+        if self.failure is not None:
+            raise self.failure
+        return self.value
+
+
+class FakeTransformers:
+    def __init__(
+        self,
+        *,
+        config: RecordingFactory,
+        tokenizer: RecordingFactory,
+        model: RecordingFactory,
+    ) -> None:
+        self.AutoConfig = config
+        self.AutoTokenizer = tokenizer
+        self.AutoModelForSeq2SeqLM = model
+
+
 def test_device_selection_supports_cpu_cuda_and_auto() -> None:
     unavailable = FakeTorch(False)
     assert resolve_device("cpu", unavailable) == "cpu"
@@ -130,6 +165,123 @@ def test_offline_missing_model_has_clear_error(tmp_path: Path) -> None:
             loader=missing,
             torch_runtime=FakeTorch(False),
         )
+
+
+def test_offline_loads_config_tokenizer_and_model_from_local_snapshot(tmp_path: Path) -> None:
+    cache = tmp_path / "models"
+    repository = cache / "models--example--model"
+    revision = "abc123"
+    snapshot = repository / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    (repository / "refs").mkdir()
+    (repository / "refs" / "main").write_text(revision, encoding="utf-8")
+    config_value = object()
+    config = RecordingFactory(config_value)
+    tokenizer = RecordingFactory(FakeTokenizer())
+    model = RecordingFactory(FakeModel())
+    runtime = FakeTransformers(config=config, tokenizer=tokenizer, model=model)
+
+    with (
+        patch.dict(
+            os.environ,
+            {"HF_HUB_OFFLINE": "previous-hf", "TRANSFORMERS_OFFLINE": "previous-transformers"},
+        ),
+        patch("pdftranslate.translation.nllb.importlib.import_module", return_value=runtime),
+    ):
+        NllbTranslator(
+            model_name="example/model",
+            cache_dir=cache,
+            device="cpu",
+            offline=True,
+            torch_runtime=FakeTorch(False),
+        )
+        assert os.environ["HF_HUB_OFFLINE"] == "previous-hf"
+        assert os.environ["TRANSFORMERS_OFFLINE"] == "previous-transformers"
+
+    expected = str(snapshot.resolve())
+    for factory in (config, tokenizer, model):
+        assert factory.calls[0][0] == expected
+        assert factory.calls[0][1]["local_files_only"] is True
+        assert factory.calls[0][2:] == ("1", "1")
+    assert tokenizer.calls[0][1]["src_lang"] == "eng_Latn"
+    assert model.calls[0][1]["config"] is config_value
+
+
+def test_offline_missing_cache_fails_before_transformers_import(tmp_path: Path) -> None:
+    with (
+        patch("pdftranslate.translation.nllb.importlib.import_module") as importer,
+        pytest.raises(TranslationBackendError) as caught,
+    ):
+        NllbTranslator(
+            model_name="missing/model",
+            cache_dir=tmp_path / "empty-cache",
+            device="cpu",
+            offline=True,
+            torch_runtime=FakeTorch(False),
+        )
+
+    importer.assert_not_called()
+    message = str(caught.value)
+    assert "offline mode" in message
+    assert "missing/model" in message
+    assert str((tmp_path / "empty-cache").resolve()) in message
+    assert "rerun without --offline" in message
+
+
+def test_offline_environment_is_restored_when_loader_fails(tmp_path: Path) -> None:
+    local_model = tmp_path / "local-model"
+    local_model.mkdir()
+    runtime = FakeTransformers(
+        config=RecordingFactory(object()),
+        tokenizer=RecordingFactory(FakeTokenizer(), failure=OSError("broken tokenizer")),
+        model=RecordingFactory(FakeModel()),
+    )
+
+    with (
+        patch.dict(os.environ, {}, clear=False),
+        patch("pdftranslate.translation.nllb.importlib.import_module", return_value=runtime),
+    ):
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        with pytest.raises(TranslationBackendError, match="offline mode"):
+            NllbTranslator(
+                model_name=str(local_model),
+                cache_dir=tmp_path / "cache",
+                device="cpu",
+                offline=True,
+                torch_runtime=FakeTorch(False),
+            )
+        assert "HF_HUB_OFFLINE" not in os.environ
+        assert "TRANSFORMERS_OFFLINE" not in os.environ
+
+
+def test_online_loading_keeps_remote_model_and_does_not_force_offline_environment(
+    tmp_path: Path,
+) -> None:
+    config_value = object()
+    config = RecordingFactory(config_value)
+    tokenizer = RecordingFactory(FakeTokenizer())
+    model = RecordingFactory(FakeModel())
+    runtime = FakeTransformers(config=config, tokenizer=tokenizer, model=model)
+
+    with (
+        patch.dict(os.environ, {}, clear=False),
+        patch("pdftranslate.translation.nllb.importlib.import_module", return_value=runtime),
+    ):
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        NllbTranslator(
+            model_name="example/model",
+            cache_dir=tmp_path / "cache",
+            device="cpu",
+            offline=False,
+            torch_runtime=FakeTorch(False),
+        )
+
+    for factory in (config, tokenizer, model):
+        assert factory.calls[0][0] == "example/model"
+        assert factory.calls[0][1]["local_files_only"] is False
+        assert factory.calls[0][2:] == (None, None)
 
 
 def test_requested_input_limit_cannot_exceed_tokenizer_limit(tmp_path: Path) -> None:

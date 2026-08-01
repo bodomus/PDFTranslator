@@ -23,8 +23,10 @@ command tokens.
 ## Замечания review
 
 1. Human review отсутствует; automated result нельзя трактовать как оценку adequacy/fluency.
-2. CLI `--offline` не обеспечил абсолютное отсутствие сети: Hugging Face сделал metadata requests,
-   хотя веса модели использовались локально. Это отдельный follow-up defect.
+2. Историческое замечание об HTTP metadata requests при `--offline` исправлено в PDFTR-9A:
+   model ID теперь до импорта Transformers разрешается в локальный snapshot, а config/tokenizer/model
+   загружаются local-only под scoped offline environment. Реальный прогон с заблокированными proxy
+   прошёл без HTTP request lines.
 3. Transformers печатает предупреждение о приоритете `max_new_tokens` над `max_length`.
 4. CUDA, OCR и реальный rendering не входят в этот прогон и не проверены.
 5. Graphify incremental refresh завис после timeout и был остановлен без изменения graph output;
@@ -41,3 +43,13 @@ command tokens.
 - `reviews/review-PDFTR-9.md`
 - `temp/pdftr9-benchmark/nllb.json`
 - `temp/pdftr9-benchmark/nllb.md`
+
+## PDFTR-9A corrective check-in
+
+- Cache больше не переносит findings/status между samples с одинаковым source.
+- Protected-token, human-review и historical-trace проверки выполняются для каждого sample.
+- Strict offline real benchmark: 61 samples, 60 passed, 1 failed, 0 errors; 44.183 seconds;
+  0 cache hits / 61 misses; network blocked through invalid proxies.
+- Единственный прежний `command-01` defect остаётся отдельным и не исправлялся.
+- Полный gate после correction: 152 passed, 1 skipped, coverage 87.70%.
+- Подробный review: `reviews/review-PDFTR-9A.md`.
