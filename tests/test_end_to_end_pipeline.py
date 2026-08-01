@@ -21,6 +21,7 @@ from pdftranslate.pipeline import (
     plan_pipeline,
     run_pipeline,
 )
+from pdftranslate.pipeline.models import PIPELINE_BEHAVIOR_REVISION
 from pdftranslate.rendering import OutputPdfError, PdfRenderer, validate_output_pdf
 from pdftranslate.translation import TranslationBackendError
 from tests.conftest import PdfFactory
@@ -110,6 +111,15 @@ def test_default_output_name_is_documented_sibling() -> None:
     assert default_output_path(Path("folder/report.final.PDF")) == Path(
         "folder/report.final.ru.pdf"
     )
+
+
+def test_pipeline_identity_includes_behavior_revision(tmp_path: Path) -> None:
+    options = PipelineOptions(
+        input_path=tmp_path / "source.pdf",
+        output_path=tmp_path / "output.pdf",
+    )
+
+    assert options.identity_values()["pipeline_behavior_revision"] == PIPELINE_BEHAVIOR_REVISION
 
 
 def test_complete_pipeline_uses_cache_workspace_and_unicode_paths(

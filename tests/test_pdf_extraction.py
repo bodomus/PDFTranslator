@@ -10,6 +10,7 @@ from _pytest.monkeypatch import MonkeyPatch
 
 from pdftranslate.config import Settings
 from pdftranslate.domain.page import PageClassification
+from pdftranslate.domain.text_block import BoundingBox, TextBlock
 from pdftranslate.pdf import (
     InvalidPageRangeError,
     PdfAnalyzer,
@@ -19,7 +20,7 @@ from pdftranslate.pdf import (
     PdfExtractor,
 )
 from pdftranslate.pdf.page_ranges import parse_page_range
-from pdftranslate.pdf.pymupdf_backend import PyMuPdfBackend
+from pdftranslate.pdf.pymupdf_backend import PyMuPdfBackend, _merge_adjacent_text_blocks
 from tests.conftest import PdfFactory
 
 
@@ -184,6 +185,62 @@ def test_extraction_order_is_stable_and_preserves_backend_order(
     assert [block.id for block in first_blocks] == [
         f"p0001-b{number:04d}" for number in range(1, len(first_blocks) + 1)
     ]
+
+
+def test_adjacent_paragraph_fragments_are_merged_and_dehyphenated() -> None:
+    blocks = [
+        TextBlock(
+            id="p0007-b0001",
+            text="No part of this book",
+            bbox=BoundingBox(x0=40, y0=380, x1=346, y1=392),
+            original_order=4,
+            normalized_order=0,
+        ),
+        TextBlock(
+            id="p0007-b0002",
+            text="may be reproduced. For infor-",
+            bbox=BoundingBox(x0=41, y0=394, x1=354, y1=414),
+            original_order=5,
+            normalized_order=1,
+        ),
+        TextBlock(
+            id="p0007-b0003",
+            text="mation, address Basic Books.",
+            bbox=BoundingBox(x0=47, y0=414, x1=323, y1=427),
+            original_order=6,
+            normalized_order=2,
+        ),
+    ]
+
+    merged = _merge_adjacent_text_blocks(blocks, 7)
+
+    assert len(merged) == 1
+    assert merged[0].id == "p0007-b0001"
+    assert merged[0].text == (
+        "No part of this book may be reproduced. For information, address Basic Books."
+    )
+    assert merged[0].bbox == BoundingBox(x0=40, y0=380, x1=354, y1=427)
+
+
+def test_adjacent_blocks_with_separate_title_content_are_not_merged() -> None:
+    blocks = [
+        TextBlock(
+            id="p0003-b0001",
+            text="THE",
+            bbox=BoundingBox(x0=175, y0=65, x1=195, y1=75),
+            original_order=0,
+            normalized_order=0,
+        ),
+        TextBlock(
+            id="p0003-b0002",
+            text="AND THE",
+            bbox=BoundingBox(x0=160, y0=145, x1=215, y1=155),
+            original_order=1,
+            normalized_order=1,
+        ),
+    ]
+
+    assert _merge_adjacent_text_blocks(blocks, 3) == blocks
 
 
 def test_paths_with_spaces_and_cyrillic_are_supported(

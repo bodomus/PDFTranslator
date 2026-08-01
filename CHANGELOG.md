@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Opt-in `scripts/validate-real-pdfs.ps1` corpus harness with dry-run, manifest/category/path
+  subset selection, continue-on-error/fail-fast policies, one shared model/cache runtime, and
+  explicit real-model, device, OCR, offline, resume, and overwrite controls.
+- Versioned real-PDF evidence: atomic JSON and Markdown summaries, per-document results, copied
+  logs, anonymized relative paths, stage timing, page classifications, source checksums, OCR and
+  cache/resume metrics, manual PDF-XChange observations, and mapped deterministic defects.
+- Generated-PDF/fake-backed validation tests covering text/image success, scanned OCR dependency,
+  translation/render/output-validation failures, continuation, Unicode paths, source preservation,
+  report generation, cache reuse, resume, and manual compatibility failures without model downloads.
 - Recursive and non-recursive `pdftranslate batch INPUT_DIR` processing with deterministic
   case-insensitive PDF discovery, glob/exclude filters, `.ru.pdf` and output-tree protection,
   preserved relative output structure, and Unicode/spaced-path support.
@@ -66,6 +75,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `pdftranslate --version` and `pdftranslate doctor` commands.
 - Typed environment-based settings and centralized Rich logging.
 - Tests, Ruff, mypy, pre-commit, PowerShell helpers, and cross-platform CI.
+
+### Fixed
+
+- NLLB protected-token restoration now uses collision-safe ASCII placeholders that the real model
+  preserves, instead of Unicode sentinels that were stripped during inference.
 
 ### Security
 

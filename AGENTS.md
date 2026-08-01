@@ -11,6 +11,9 @@
 - Update README and CHANGELOG for user-visible behavior changes.
 - Never download large models during unit tests or CI.
 - Never commit generated PDFs, model weights, virtual environments, caches, or logs.
+- Create all temporary files and directories under the repository-local `./temp/` directory.
+  Do not use system temporary directories for project work unless an external tool cannot be
+  configured otherwise.
 
 ## Repository intelligence
 
@@ -32,6 +35,6 @@
 - Before starting a YouTrack or other application ticket, save its Markdown text under
   `Tickets/<ticket-name>.md` and attach that file to the ticket.
 - Update ticket fields and workflow state while work progresses whenever possible.
-- When a ticket is complete, create `review-<TICKET-ID>.md` describing the completed work and
-  attach it to the ticket.
+- When a ticket is complete, create `reviews/review-<TICKET-ID>.md` describing the completed work
+  and attach it to the ticket. Store all ticket review files under `reviews/`.
 - Stop and ask the user before resolving ambiguous or conflicting requirements.

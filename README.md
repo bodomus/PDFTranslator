@@ -66,6 +66,8 @@ The version 1.0 JSON schema includes the absolute source path, byte size and SHA
 PDF metadata, total and selected pages, page dimensions and rotation, classification, actual image
 placements, extraction warnings, and text blocks with bounding boxes, original/normalized order,
 and span typography. Coordinates are numeric values in PyMuPDF's effective page coordinate system.
+Vertically adjacent, similarly aligned line fragments are conservatively coalesced when lowercase
+continuation text proves they belong to one paragraph; split-word hyphenation is removed.
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 
@@ -362,6 +364,34 @@ Extraction preserves PyMuPDF's `sort=False` block order, removes empty blocks, n
 whitespace, and exposes both original and normalized indexes. It deliberately does not merge or
 geometrically reorder unrelated columns. Complex multi-column reading order may therefore need a
 later, document-specific stage.
+
+## Real-PDF validation
+
+Run the opt-in, source-preserving compatibility harness against a private local corpus:
+
+```powershell
+.\scripts\validate-real-pdfs.ps1 `
+  -CorpusRoot "J:\PdfTestCorpus" `
+  -OutputRoot "J:\PdfValidationResults" `
+  -DryRun
+```
+
+Dry-run classifies pages, plans OCR, hashes every source before and after inspection, and generates
+the complete JSON/Markdown report structure without loading a model or invoking OCR. Remove
+`-DryRun` only for an explicit real-model run; use `-Offline` when the required model is already
+cached. Manifest categories and `-Subset` support text-heavy books, technical manuals, columns,
+tables, images/captions, scanned/mixed files, long PDFs, and paths with spaces or Cyrillic text.
+
+Results include `validation-summary.json`, `validation-summary.md`, per-document JSON, copied logs,
+translated outputs, and a PDF-XChange manual-review template. Source SHA-256 and size are verified
+after every success or failure, stage timing and cache/resume evidence are recorded, and failures
+become severity/stage/root-cause/follow-up defect entries. See
+[`docs/real-pdf-validation.md`](docs/real-pdf-validation.md) for the private-corpus manifest,
+manual checklist, opt-in OCR/model workflow, and reproduction commands.
+
+A title fragment or intentional blank-page label is not positive translation evidence. A real-model
+proof must include at least one coherent source paragraph and verify the rendered Russian text,
+absence of the source English paragraph, placement, search, selection, and copy behavior.
 
 ## Quality and tests
 

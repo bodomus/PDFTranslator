@@ -94,7 +94,9 @@ def protect_text(text: str) -> ProtectedText:
     replacements: list[tuple[str, str]] = []
 
     def replace(match: re.Match[str]) -> str:
-        placeholder = f"⟪PDFTR{len(replacements):04d}⟫"
+        placeholder = f"__PDFTR_{len(replacements):04d}__"
+        while placeholder in text:
+            placeholder = f"_{placeholder}_"
         replacements.append((placeholder, match.group(0)))
         return placeholder
 
