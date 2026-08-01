@@ -36,7 +36,7 @@ An explicitly requested report must be JSON, self-contained offline HTML, or bot
 - No dependency additions are required; HTML uses the standard library and escaped content.
 - Existing output PDF publication, source immutability, document schema and cache keys remain unchanged.
 - Machine-readable reports contain plain strings only.
-- Per-block `segmentation_count` and `cache_status` can only be `unknown` with the current callback contract; aggregate values remain exact. Inventing evidence would be incorrect.
+- Before implementation, per-block `segmentation_count` and `cache_status` were unavailable. PDFTR-10 extends the translation progress contract so fresh stages now report exact values; reused historical stages remain explicitly `null`/`unknown` rather than inventing evidence.
 - Peak RAM can be measured with `tracemalloc`; peak VRAM is nullable unless reliably exposed without a dependency.
 - Resume may lack historical block fitting evidence; unavailable values must remain explicit.
 

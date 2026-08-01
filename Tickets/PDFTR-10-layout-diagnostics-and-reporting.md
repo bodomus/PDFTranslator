@@ -35,15 +35,15 @@ Cover success and failure reports, overflow, cache hits, OCR status, warning-cod
 
 ## Acceptance criteria
 
-- [ ] JSON reports exist for success and failure when possible.
-- [ ] Offline HTML report works.
-- [ ] Stable warning/error codes exist.
-- [ ] Page/block diagnostics are available.
-- [ ] Debug PDF marks problem blocks.
-- [ ] Text is excluded by default.
-- [ ] Cache/OCR/fitting/overflow/validation data is included.
-- [ ] Existing CLI remains compatible.
-- [ ] All checks pass.
+- [x] JSON reports exist for success and failure when possible.
+- [x] Offline HTML report works.
+- [x] Stable warning/error codes exist.
+- [x] Page/block diagnostics are available.
+- [x] Debug PDF marks problem blocks.
+- [x] Text is excluded by default.
+- [x] Cache/OCR/fitting/overflow/validation data is included.
+- [x] Existing CLI remains compatible.
+- [x] All checks pass.
 
 ## Non-goals
 
