@@ -1,75 +1,55 @@
-# Investigation — PDFTR-9
+# Investigation — PDFTR-10
+
 ## Baseline
 
-- Workflow level: 2.
-- Branch: `codex/PDFTR-9-translation-quality-benchmark` from PDFTR-8 commit `d16ed0e`.
-- Working tree was clean before the ticket file was added.
-- Python: 3.12 through uv; no dependency change is required.
-- PDFTR-9 is In Progress and its augmented Markdown ticket is attached in YouTrack.
+- Branch: `codex/PDFTR-10-layout-diagnostics-and-reporting`.
+- Base: `b490ff3` (`master` at branch creation).
+- Workflow: Level 2.
+- Working tree before ticket files: clean; Git emits a permission warning for ignored `.temppytest-cache/`.
+- PDFTR-9A commit `a6027c4` is not in `master` and was not transplanted, per the explicit request to branch from `master`.
 
 ## Current behavior
 
-PDFTranslate can protect tokens, segment blocks, run NLLB, cache completed block translations and
-render PDFs. It has no versioned quality dataset, benchmark runner, deterministic diagnostic model,
-human scoring schema, baseline comparison, or JSON/Markdown benchmark report.
-
-The production translation path combines protection, segmentation, inference and recombination.
-Consequently, a bad final PDF does not by itself prove whether a defect originated in extraction,
-segmentation, the model, token restoration, terminology, or rendering.
-
-## Mandatory PDFTR-8 inputs
-
-1. Historical NLLB output damaged protected token `1900-1`.
-2. A page-7 observation damaged numbers/dates and introduced junk such as `F￾`.
-
-Both must remain explicit regression cases. The current ASCII placeholder mitigation does not
-remove their value as benchmark inputs.
+- `run_pipeline()` owns inspect → OCR → extract → translate → render → validate orchestration.
+- `PdfRenderer.render()` already returns block-level source/final boxes, initial/final font sizes, expansion and overflow, plus aggregate warnings and an optional separate debug PDF.
+- The pipeline currently discards `RenderResult` and does not enable renderer debug output.
+- `TranslationMetadata.statistics` exposes aggregate block, cache and segment counters, but not per-block segment/cache evidence.
+- OCR exposes processed pages and warnings; extracted pages expose classification, dimensions, blocks and stable block IDs.
+- Batch and validation have separate reports, but there is no privacy-safe per-translation JSON/HTML report or centralized stable diagnostic-code vocabulary.
+- CLI `run` exposes no report options.
 
 ## Expected behavior
 
-- Validate a safe, versioned 50–100 sample dataset.
-- Run a reusable `Translator` once over the dataset without requiring PDF rendering.
-- Preserve raw protected/segmented/model outputs in evidence.
-- Detect token, numeric, unit, URL, path, option, segment-count, untranslated, length-ratio and
-  suspicious-character problems deterministically.
-- Attribute findings to extraction, segmentation, protected-token, model, terminology, or
-  rendering stages.
-- Record version/commit/backend/model/tokenizer/device/settings/timing/cache counters.
-- Accept documented human review fields and compare a current report with a prior baseline.
-- Produce atomic JSON and Markdown reports.
+An explicitly requested report must be JSON, self-contained offline HTML, or both. It must combine available inspect/OCR/translation/render/validation evidence, omit text by default, optionally include it, and retain a best-effort failure report when a stage fails after report initialization. `--debug-layout` must publish a separate annotated PDF without changing normal output.
 
 ## Smallest coherent design
 
-Create an isolated `pdftranslate.benchmark` package composed of:
+1. Add a focused `diagnostics` package with stable codes, immutable report models, a builder, and atomic JSON/HTML writers.
+2. Extend `PipelineOptions` with report/debug settings; keep them out of artifact identity because they do not change translation output.
+3. Preserve and return `RenderResult` from the render stage; use it for block diagnostics.
+4. Build success/failure reports in pipeline orchestration, where all stage evidence and errors are visible. Reporting failures must not replace the primary pipeline error.
+5. Reuse renderer debug-layout support and atomically copy its validated artifact to the requested report directory.
+6. Keep Typer limited to parsing options and printing artifact paths.
 
-- Pydantic models for dataset, trace observations, findings, reviews and reports;
-- pure diagnostic functions for stage-aware checks;
-- a runner using the existing `Translator`, `protect_text()` and `segment_text()` contracts;
-- atomic JSON/Markdown reporting and baseline comparison;
-- one thin Typer `benchmark-translation` command;
-- a 60-sample synthetic dataset and fake-backed tests.
+## Boundaries and compatibility
 
-No renderer or extraction algorithm is changed. Optional stage observations in the dataset are
-diagnostic evidence, not instructions to alter production output.
+- No dependency additions are required; HTML uses the standard library and escaped content.
+- Existing output PDF publication, source immutability, document schema and cache keys remain unchanged.
+- Machine-readable reports contain plain strings only.
+- Per-block `segmentation_count` and `cache_status` can only be `unknown` with the current callback contract; aggregate values remain exact. Inventing evidence would be incorrect.
+- Peak RAM can be measured with `tracemalloc`; peak VRAM is nullable unless reliably exposed without a dependency.
+- Resume may lack historical block fitting evidence; unavailable values must remain explicit.
 
 ## Graph and source evidence
 
-- Graphify connected `NllbTranslator`, `ProtectedText`, `segment_text()`, `TranslationCache`,
-  `translate_document()`, CLI and report patterns. Source inspection confirmed these boundaries.
-- CRG is current at 647 nodes / 5,067 edges / 76 files on `d16ed0e`.
-- CRG found production caller `translate_document()` plus direct tests for `protect_text()` and
-  `segment_text()`. A new benchmark runner will be a deliberate second caller.
-- Graphify still contains ignored historical `Tasks/PDFTR-9...` nodes; current YouTrack text,
-  `Tickets/PDFTR-9...`, source and tests are authoritative.
+- Graphify BFS connected `run_pipeline`, `PipelineOptions`, `PipelineWorkspace`, `PdfRenderer`, `TranslationStatistics`, `OcrProcessor`, validation and tests.
+- CRG refreshed at `4797ab7` with 705 FTS rows. Exact symbol searches confirmed the same owners; multi-term searches returned no matches.
+- CRG's decorative console panel fails under Windows CP1251 after emitting valid counts; source and tests remain authoritative.
 
-## Contracts and risks
+## Test areas
 
-- CLI: adds one command; existing commands and exit codes remain unchanged.
-- Dataset/report schemas: new, versioned 1.0 contracts.
-- Cache: benchmark uses an in-run exact-source cache for deterministic hit/miss reporting; it does
-  not mutate production translation memory.
-- Model: one loaded translator per run; fake backend in tests; NLLB only in explicit runs.
-- PDF integrity: no PDF is opened, written or rendered by benchmark execution.
-- OCR/CUDA: unaffected; device metadata is recorded when a real translator is used.
-- Main risk: deterministic checks cannot decide semantic adequacy or fluency. Those remain explicit
-  human scores and must not be inferred from token preservation alone.
+- Diagnostics models/writers/builders: privacy, opt-in Cyrillic text, stable codes, offline HTML, success and failure.
+- Rendering: annotated IDs/rectangles and normal-output separation.
+- Pipeline: report production, cache/OCR/overflow data and failure best effort.
+- CLI: option propagation and help.
+- Full gate plus generated PDF validation; no model, CUDA or OCR downloads.
