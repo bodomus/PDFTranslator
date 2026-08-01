@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from pdftranslate.batch import (
@@ -61,9 +62,17 @@ def _result(root: Path, *, failed: bool = False) -> BatchResult:
 
 
 def test_batch_help_lists_required_options() -> None:
-    result = runner.invoke(app, ["batch", "--help"])
+    result = runner.invoke(
+        app,
+        ["batch", "--help"],
+        color=False,
+        terminal_width=160,
+    )
 
     assert result.exit_code == 0
+
+    help_text = unstyle(result.stdout)
+
     for option in (
         "--output-dir",
         "--recursive",
@@ -76,7 +85,7 @@ def test_batch_help_lists_required_options() -> None:
         "--device",
         "--report",
     ):
-        assert option in result.stdout
+        assert option in help_text
 
 
 def test_batch_cli_builds_options_and_returns_partial_failure_code(tmp_path: Path) -> None:
