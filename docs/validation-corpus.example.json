@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "documents": [
+    {
+      "document_id": "text-book",
+      "path": "books/text-heavy-book.pdf",
+      "categories": [
+        "text-heavy",
+        "long-100-300-pages"
+      ],
+      "notes": "Private local corpus item; do not commit the PDF."
+    },
+    {
+      "document_id": "technical-layout",
+      "path": "manuals/technical manual.pdf",
+      "categories": [
+        "technical-manual",
+        "two-column",
+        "tables",
+        "images-and-captions"
+      ]
+    },
+    {
+      "document_id": "mixed-scan",
+      "path": "Сканированные документы/mixed.pdf",
+      "categories": [
+        "scanned",
+        "mixed-text-scanned",
+        "spaces-and-cyrillic-path"
+      ]
+    }
+  ]
+}

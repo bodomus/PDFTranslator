@@ -32,6 +32,8 @@ translated/
 logs/
 .cache/
 models/
+validation-results/
+*_validation/
 
 # Temporary and operating-system files
 *.tmp

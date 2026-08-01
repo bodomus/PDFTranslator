@@ -363,6 +363,30 @@ whitespace, and exposes both original and normalized indexes. It deliberately do
 geometrically reorder unrelated columns. Complex multi-column reading order may therefore need a
 later, document-specific stage.
 
+## Real-PDF validation
+
+Run the opt-in, source-preserving compatibility harness against a private local corpus:
+
+```powershell
+.\scripts\validate-real-pdfs.ps1 `
+  -CorpusRoot "J:\PdfTestCorpus" `
+  -OutputRoot "J:\PdfValidationResults" `
+  -DryRun
+```
+
+Dry-run classifies pages, plans OCR, hashes every source before and after inspection, and generates
+the complete JSON/Markdown report structure without loading a model or invoking OCR. Remove
+`-DryRun` only for an explicit real-model run; use `-Offline` when the required model is already
+cached. Manifest categories and `-Subset` support text-heavy books, technical manuals, columns,
+tables, images/captions, scanned/mixed files, long PDFs, and paths with spaces or Cyrillic text.
+
+Results include `validation-summary.json`, `validation-summary.md`, per-document JSON, copied logs,
+translated outputs, and a PDF-XChange manual-review template. Source SHA-256 and size are verified
+after every success or failure, stage timing and cache/resume evidence are recorded, and failures
+become severity/stage/root-cause/follow-up defect entries. See
+[`docs/real-pdf-validation.md`](docs/real-pdf-validation.md) for the private-corpus manifest,
+manual checklist, opt-in OCR/model workflow, and reproduction commands.
+
 ## Quality and tests
 
 Run the complete local quality gate:
