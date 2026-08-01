@@ -494,11 +494,22 @@ def test_root_cli_runs_complete_pipeline_with_fake_backend(
                 "--model",
                 "fake-nllb",
                 "--offline",
+                "--report",
+                "--report-format",
+                "both",
+                "--report-dir",
+                str(tmp_path / "cli-report"),
+                "--debug-layout",
             ],
         )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert output.is_file()
+    assert (tmp_path / "cli-report" / "translation-report.json").is_file()
+    assert (tmp_path / "cli-report" / "translation-report.html").is_file()
+    assert (tmp_path / "cli-report" / "debug-layout.pdf").is_file()
+    assert "Report:" in result.stdout
+    assert "Debug layout:" in result.stdout
     assert "1/6 Inspect" in result.stdout
     assert "6/6 Validate" in result.stdout
     assert "Translated 1/1 block(s)" in result.stdout
@@ -519,3 +530,109 @@ def test_root_cli_dry_run_does_not_load_model(
     assert "Expected stages" in result.stdout
     assert not default_output_path(source).exists()
     loader.assert_not_called()
+
+
+def test_pipeline_writes_private_reports_and_annotated_debug_pdf(
+    tmp_path: Path,
+    pdf_factory: PdfFactory,
+    cyrillic_font_path: Path,
+) -> None:
+    source = pdf_factory(tmp_path / "diagnostic-source.pdf", page_specs=("text",))
+    output = tmp_path / "diagnostic-output.pdf"
+    report_dir = tmp_path / "reports"
+
+    result = run_pipeline(
+        _options(
+            source,
+            output,
+            tmp_path / "cache",
+            cyrillic_font_path,
+            report=True,
+            report_dir=report_dir,
+            report_format="both",
+            debug_layout=True,
+        ),
+        services=_services(FakeTranslator()),
+    )
+
+    assert {path.name for path in result.report_paths} == {
+        "translation-report.json",
+        "translation-report.html",
+    }
+    assert result.debug_layout_path == report_dir / "debug-layout.pdf"
+    assert result.debug_layout_path.is_file()
+    payload = __import__("json").loads((report_dir / "translation-report.json").read_text("utf-8"))
+    assert payload["status"] == "success"
+    assert payload["text_included"] is False
+    assert payload["pages"][0]["blocks"][0]["source_text"] is None
+    assert payload["pages"][0]["blocks"][0]["translated_text"] is None
+    assert payload["pages"][0]["blocks"][0]["cache_status"] == "miss"
+    assert payload["pages"][0]["blocks"][0]["segmentation_count"] >= 1
+    assert payload["pages"][0]["blocks"][0]["fitting_attempts"] >= 1
+    assert payload["summary"]["selected_font"] == str(cyrillic_font_path)
+    debug_document = pymupdf.open(result.debug_layout_path)
+    try:
+        assert payload["pages"][0]["blocks"][0]["block_id"] in debug_document[0].get_text("text")
+    finally:
+        debug_document.close()
+    html = (report_dir / "translation-report.html").read_text("utf-8")
+    assert "<script src=" not in html
+    assert "<link rel=" not in html
+
+
+def test_pipeline_writes_failure_report_without_hiding_primary_error(
+    tmp_path: Path,
+    pdf_factory: PdfFactory,
+    cyrillic_font_path: Path,
+) -> None:
+    source = pdf_factory(tmp_path / "failure-source.pdf", page_specs=("text",))
+    report_dir = tmp_path / "failure-report"
+    options = _options(
+        source,
+        tmp_path / "failure-output.pdf",
+        tmp_path / "failure-cache",
+        cyrillic_font_path,
+        report=True,
+        report_dir=report_dir,
+        report_format="json",
+    )
+
+    with pytest.raises(PipelineExecutionError) as caught:
+        run_pipeline(
+            options,
+            services=_services(FakeTranslator(), renderer=FailingRenderer()),
+        )
+
+    assert caught.value.stage is PipelineStage.RENDER
+    payload = __import__("json").loads((report_dir / "translation-report.json").read_text("utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["failed_stage"] == "render"
+    assert payload["findings"][0]["code"] == "PIPELINE_STAGE_FAILED"
+
+
+def test_pipeline_report_text_is_explicit_opt_in_and_preserves_cyrillic(
+    tmp_path: Path,
+    pdf_factory: PdfFactory,
+    cyrillic_font_path: Path,
+) -> None:
+    source = pdf_factory(tmp_path / "opt-in-source.pdf", page_specs=("text",))
+    report_dir = tmp_path / "opt-in-report"
+    run_pipeline(
+        _options(
+            source,
+            tmp_path / "opt-in-output.pdf",
+            tmp_path / "opt-in-cache",
+            cyrillic_font_path,
+            report=True,
+            report_dir=report_dir,
+            report_format="json",
+            include_report_text=True,
+        ),
+        services=_services(FakeTranslator()),
+    )
+
+    payload = __import__("json").loads((report_dir / "translation-report.json").read_text("utf-8"))
+    block = payload["pages"][0]["blocks"][0]
+    assert payload["text_included"] is True
+    assert "English" in block["source_text"]
+    assert RUSSIAN_TRANSLATION in block["translated_text"]

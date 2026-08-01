@@ -11,6 +11,7 @@ from pdftranslate.domain.document import InspectionReport, TranslationStatistics
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 OcrMode = Literal["auto", "on", "off"]
+ReportFormat = Literal["json", "html", "both"]
 PIPELINE_BEHAVIOR_REVISION = 2
 
 
@@ -63,6 +64,11 @@ class PipelineOptions:
     ocr_clean: bool = False
     ocr_rotate_pages: bool = False
     ocr_force: bool = False
+    report: bool = False
+    report_format: ReportFormat = "both"
+    report_dir: Path | None = None
+    debug_layout: bool = False
+    include_report_text: bool = False
 
     def __post_init__(self) -> None:
         if self.backend != "nllb":
@@ -91,6 +97,10 @@ class PipelineOptions:
             raise ValueError("OCR processing options cannot be used with --ocr off")
         if self.ocr_force and self.ocr != "on":
             raise ValueError("--ocr-force requires --ocr on")
+        if self.report_format not in {"json", "html", "both"}:
+            raise ValueError("report format must be one of: json, html, both")
+        if self.include_report_text and not self.report:
+            raise ValueError("--include-report-text requires --report")
 
     def identity_values(self) -> dict[str, str | int | float | bool | None]:
         """Return canonical values that determine artifact compatibility."""
@@ -144,6 +154,8 @@ class PipelineResult:
     ocr_pages: tuple[int, ...] = ()
     ocr_warnings: tuple[str, ...] = ()
     pages_processed: int = 0
+    report_paths: tuple[Path, ...] = ()
+    debug_layout_path: Path | None = None
 
 
 @dataclass(frozen=True)

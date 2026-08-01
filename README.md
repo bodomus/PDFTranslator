@@ -434,6 +434,26 @@ A title fragment or intentional blank-page label is not positive translation evi
 proof must include at least one coherent source paragraph and verify the rendered Russian text,
 absence of the source English paragraph, placement, search, selection, and copy behavior.
 
+## Translation diagnostics
+
+Request structured diagnostics on the normal end-to-end command:
+
+```powershell
+uv run pdftranslate input.pdf --report --report-format both --report-dir .\reports --debug-layout
+```
+
+This writes `translation-report.json`, a self-contained `translation-report.html`, and optionally
+`debug-layout.pdf`. Reports contain run/page/block IDs, classifications, bounding boxes, cache and
+OCR status, font fitting, expansion/overflow, validation findings, elapsed time, file sizes, and
+measurable Python peak memory. Fresh translation stages record exact per-block segmentation counts
+and cache status; reused historical stages and unavailable VRAM remain `null`/`unknown`, never guessed.
+The report also records the renderer's selected font and promotes renderer warnings to stable
+`RENDER_WARNING` findings.
+
+Source and translated text are excluded by default. Use `--include-report-text` only for explicit
+local debugging; it requires `--report`. The HTML file embeds its CSS and uses no network assets.
+Failure reports are written when the workspace was initialized and reporting remains possible,
+without replacing the primary pipeline error.
 ## Quality and tests
 
 Run the complete local quality gate:

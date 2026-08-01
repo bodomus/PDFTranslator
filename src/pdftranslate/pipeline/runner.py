@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 import traceback
+import tracemalloc
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 
 from pdftranslate.config import Settings
+from pdftranslate.diagnostics.builder import build_failure_report, build_success_report
+from pdftranslate.diagnostics.reporting import write_report
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.ocr import OcrError, OcrOptions, OcrProcessor, validate_ocr_output
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
@@ -38,6 +43,7 @@ from pdftranslate.rendering import (
     PdfRenderer,
     RenderingError,
     RenderOptions,
+    RenderResult,
     validate_output_pdf,
 )
 from pdftranslate.serialization import OutputExistsError
@@ -193,6 +199,11 @@ def run_pipeline(
     translation_progress: TranslationCallback | None = None,
 ) -> PipelineResult:
     """Run or resume all stages and publish only a separately validated final PDF."""
+    started_at = datetime.now(UTC)
+    started_perf = time.perf_counter()
+    owns_memory_trace = options.report and not tracemalloc.is_tracing()
+    if owns_memory_trace:
+        tracemalloc.start()
     selected_services = services or default_services()
     try:
         _validate_paths(options, allow_existing_output=options.resume or options.overwrite)
@@ -201,18 +212,31 @@ def run_pipeline(
         cache_root = (options.cache_dir or settings.cache_dir).expanduser().resolve()
         workspace = PipelineWorkspace.prepare(cache_root, source, options)
     except (PdfInputError, OSError) as error:
+        if owns_memory_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
         raise PipelineExecutionError(
             str(error),
             exit_code=ExitCode.PDF_INPUT_ERROR,
             stage=PipelineStage.INSPECT,
         ) from error
     except (PipelineStateError, ValueError) as error:
+        if owns_memory_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
         raise PipelineExecutionError(
             str(error),
             exit_code=ExitCode.INVALID_ARGUMENTS,
         ) from error
 
     current_stage = PipelineStage.INSPECT
+    stage_durations: dict[str, float] = {}
+    block_evidence: dict[str, tuple[int | None, str]] = {}
+
+    def capture_translation_progress(event: TranslationProgress) -> None:
+        block_evidence[event.block_id] = (event.segmentation_count, event.cache_status)
+        if translation_progress is not None:
+            translation_progress(event)
+
+    stage_started = time.perf_counter()
     reused: list[PipelineStage] = []
     try:
         _inspect(
@@ -222,7 +246,9 @@ def run_pipeline(
             reused,
             stage_progress,
         )
+        stage_durations[PipelineStage.INSPECT.value] = time.perf_counter() - stage_started
         current_stage = PipelineStage.OCR
+        stage_started = time.perf_counter()
         working_pdf, pre_extracted, ocr_status, ocr_pages, ocr_warnings = _ocr(
             options,
             workspace,
@@ -230,7 +256,9 @@ def run_pipeline(
             reused,
             stage_progress,
         )
+        stage_durations[PipelineStage.OCR.value] = time.perf_counter() - stage_started
         current_stage = PipelineStage.EXTRACT
+        stage_started = time.perf_counter()
         extracted = _extract(
             options,
             working_pdf,
@@ -241,7 +269,9 @@ def run_pipeline(
             stage_progress,
         )
 
+        stage_durations[PipelineStage.EXTRACT.value] = time.perf_counter() - stage_started
         current_stage = PipelineStage.TRANSLATE
+        stage_started = time.perf_counter()
         translated = _translate(
             options,
             workspace,
@@ -250,10 +280,12 @@ def run_pipeline(
             translation_runtime,
             reused,
             stage_progress,
-            translation_progress,
+            capture_translation_progress,
         )
+        stage_durations[PipelineStage.TRANSLATE.value] = time.perf_counter() - stage_started
         current_stage = PipelineStage.RENDER
-        _render(
+        stage_started = time.perf_counter()
+        render_result = _render(
             options,
             workspace,
             translated,
@@ -262,7 +294,9 @@ def run_pipeline(
             reused,
             stage_progress,
         )
+        stage_durations[PipelineStage.RENDER.value] = time.perf_counter() - stage_started
         current_stage = PipelineStage.VALIDATE
+        stage_started = time.perf_counter()
         file_size = _validate_and_publish(
             options,
             workspace,
@@ -271,7 +305,20 @@ def run_pipeline(
             reused,
             stage_progress,
         )
+        stage_durations[PipelineStage.VALIDATE.value] = time.perf_counter() - stage_started
     except (KeyboardInterrupt, TranslationInterruptedError) as error:
+        stage_durations.setdefault(current_stage.value, time.perf_counter() - stage_started)
+        _write_failure_diagnostics(
+            options,
+            workspace,
+            current_stage,
+            error,
+            started_at,
+            started_perf,
+            owns_memory_trace,
+            stage_durations,
+            interrupted=True,
+        )
         _record_and_raise(
             workspace,
             current_stage,
@@ -280,6 +327,18 @@ def run_pipeline(
             interrupted=True,
         )
     except Exception as error:
+        stage_durations.setdefault(current_stage.value, time.perf_counter() - stage_started)
+        _write_failure_diagnostics(
+            options,
+            workspace,
+            current_stage,
+            error,
+            started_at,
+            started_perf,
+            owns_memory_trace,
+            stage_durations,
+            interrupted=False,
+        )
         _record_and_raise(
             workspace,
             current_stage,
@@ -291,6 +350,36 @@ def run_pipeline(
     metadata = translated.translation
     assert metadata is not None
     workspace.log(f"pipeline completed: {options.output_path.expanduser().resolve()}")
+    report_paths: tuple[Path, ...] = ()
+    debug_layout_path: Path | None = None
+    try:
+        report_directory = _report_directory(options)
+        if options.debug_layout:
+            debug_layout_path = _publish_debug_layout(render_result, report_directory)
+        if options.report:
+            report = build_success_report(
+                run_id=workspace.run_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                input_path=options.input_path.expanduser().resolve(),
+                output_path=options.output_path.expanduser().resolve(),
+                translated=translated,
+                render=render_result,
+                ocr_pages=ocr_pages,
+                ocr_warnings=ocr_warnings,
+                elapsed_seconds=time.perf_counter() - started_perf,
+                stage_durations=stage_durations,
+                peak_ram_bytes=_memory_peak(owns_memory_trace),
+                include_text=options.include_report_text,
+                debug_layout_path=debug_layout_path,
+                block_evidence=block_evidence,
+            )
+            report_paths = write_report(
+                report, report_directory, report_format=options.report_format
+            )
+    finally:
+        if owns_memory_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
     return PipelineResult(
         output_path=options.output_path.expanduser().resolve(),
         workspace_path=workspace.path,
@@ -302,7 +391,75 @@ def run_pipeline(
         ocr_pages=ocr_pages,
         ocr_warnings=ocr_warnings,
         pages_processed=len(translated.selected_pages),
+        report_paths=report_paths,
+        debug_layout_path=debug_layout_path,
     )
+
+
+def _report_directory(options: PipelineOptions) -> Path:
+    selected = options.report_dir or options.output_path.expanduser().resolve().parent
+    return selected.expanduser().resolve()
+
+
+def _memory_peak(owns_trace: bool) -> int | None:
+    if not owns_trace or not tracemalloc.is_tracing():
+        return None
+    return tracemalloc.get_traced_memory()[1]
+
+
+def _publish_debug_layout(render: RenderResult | None, directory: Path) -> Path | None:
+    if render is None or render.debug_output_path is None:
+        return None
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "debug-layout.pdf"
+    temporary = directory / ".debug-layout.tmp.pdf"
+    try:
+        shutil.copy2(render.debug_output_path, temporary)
+        temporary.replace(target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return target
+
+
+def _write_failure_diagnostics(
+    options: PipelineOptions,
+    workspace: PipelineWorkspace,
+    stage: PipelineStage,
+    error: BaseException,
+    started_at: datetime,
+    started_perf: float,
+    owns_memory_trace: bool,
+    stage_durations: dict[str, float],
+    *,
+    interrupted: bool,
+) -> None:
+    if not options.report:
+        if owns_memory_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
+        return
+    try:
+        source_size = options.input_path.expanduser().resolve().stat().st_size
+        report = build_failure_report(
+            run_id=workspace.run_id,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            input_path=options.input_path.expanduser().resolve(),
+            output_path=options.output_path.expanduser().resolve(),
+            failed_stage=stage.value,
+            message=str(error),
+            input_size=source_size,
+            elapsed_seconds=time.perf_counter() - started_perf,
+            stage_durations=stage_durations,
+            peak_ram_bytes=_memory_peak(owns_memory_trace),
+            interrupted=interrupted,
+        )
+        write_report(report, _report_directory(options), report_format=options.report_format)
+    except Exception as report_error:
+        workspace.log(f"diagnostic report publication failed: {report_error}")
+    finally:
+        if owns_memory_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
 
 
 def _inspect(
@@ -551,14 +708,18 @@ def _render(
     services: PipelineServices,
     reused: list[PipelineStage],
     callback: StageCallback | None,
-) -> None:
+) -> RenderResult | None:
     stage = PipelineStage.RENDER
-    if options.resume and workspace.can_reuse(stage):
+    if (
+        options.resume
+        and workspace.can_reuse(stage)
+        and not (options.debug_layout or options.report)
+    ):
         services.validator(workspace.rendered_path, translated.page_count)
         _announce(stage, True, reused, callback, workspace)
-        return
+        return None
     _announce(stage, False, reused, callback, workspace)
-    services.renderer.render(
+    result = services.renderer.render(
         working_pdf,
         translated,
         workspace.rendered_path,
@@ -570,9 +731,11 @@ def _render(
             redaction_padding=options.redaction_padding,
             allow_expand=options.allow_expand,
             overwrite=True,
+            debug_layout=options.debug_layout,
         ),
     )
     workspace.mark_completed(stage, workspace.rendered_path)
+    return result
 
 
 def _validate_and_publish(
