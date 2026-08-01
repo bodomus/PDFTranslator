@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
+from uuid import uuid4
 
 from pdftranslate.config import Settings
 from pdftranslate.diagnostics.builder import build_failure_report, build_success_report
@@ -227,6 +228,23 @@ def run_pipeline(
             exit_code=ExitCode.INVALID_ARGUMENTS,
         ) from error
 
+    diagnostic_directory: Path | None = None
+    if options.report or options.debug_layout:
+        try:
+            diagnostic_directory = _reserve_diagnostic_directory(
+                options, started_at, workspace.run_id
+            )
+        except OSError as error:
+            if owns_memory_trace and tracemalloc.is_tracing():
+                tracemalloc.stop()
+            message = f"cannot reserve diagnostic output directory: {error}"
+            workspace.log(message)
+            raise PipelineExecutionError(
+                message,
+                exit_code=ExitCode.DIAGNOSTIC_PUBLICATION_FAILED,
+                log_path=workspace.log_path,
+            ) from error
+
     current_stage = PipelineStage.INSPECT
     stage_durations: dict[str, float] = {}
     block_evidence: dict[str, tuple[int | None, str]] = {}
@@ -317,6 +335,7 @@ def run_pipeline(
             started_perf,
             owns_memory_trace,
             stage_durations,
+            diagnostic_directory,
             interrupted=True,
         )
         _record_and_raise(
@@ -337,6 +356,7 @@ def run_pipeline(
             started_perf,
             owns_memory_trace,
             stage_durations,
+            diagnostic_directory,
             interrupted=False,
         )
         _record_and_raise(
@@ -353,10 +373,13 @@ def run_pipeline(
     report_paths: tuple[Path, ...] = ()
     debug_layout_path: Path | None = None
     try:
-        report_directory = _report_directory(options)
+        if options.report or options.debug_layout:
+            assert diagnostic_directory is not None
         if options.debug_layout:
-            debug_layout_path = _publish_debug_layout(render_result, report_directory)
+            assert diagnostic_directory is not None
+            debug_layout_path = _publish_debug_layout(render_result, diagnostic_directory)
         if options.report:
+            assert diagnostic_directory is not None
             report = build_success_report(
                 run_id=workspace.run_id,
                 started_at=started_at,
@@ -375,8 +398,20 @@ def run_pipeline(
                 block_evidence=block_evidence,
             )
             report_paths = write_report(
-                report, report_directory, report_format=options.report_format
+                report, diagnostic_directory, report_format=options.report_format
             )
+    except Exception as report_error:
+        message = (
+            "diagnostic publication failed after the translated PDF was published; "
+            f"the translated PDF remains available at "
+            f"{options.output_path.expanduser().resolve()}: {report_error}"
+        )
+        workspace.log(message)
+        raise PipelineExecutionError(
+            message,
+            exit_code=ExitCode.DIAGNOSTIC_PUBLICATION_FAILED,
+            log_path=workspace.log_path,
+        ) from report_error
     finally:
         if owns_memory_trace and tracemalloc.is_tracing():
             tracemalloc.stop()
@@ -401,6 +436,17 @@ def _report_directory(options: PipelineOptions) -> Path:
     return selected.expanduser().resolve()
 
 
+def _reserve_diagnostic_directory(
+    options: PipelineOptions, started_at: datetime, workspace_run_id: str
+) -> Path:
+    root = _report_directory(options)
+    execution_id = uuid4().hex
+    timestamp = started_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    directory = root / f"run-{timestamp}-{workspace_run_id[:12]}-{execution_id}"
+    directory.mkdir(parents=True, exist_ok=False)
+    return directory
+
+
 def _memory_peak(owns_trace: bool) -> int | None:
     if not owns_trace or not tracemalloc.is_tracing():
         return None
@@ -412,12 +458,18 @@ def _publish_debug_layout(render: RenderResult | None, directory: Path) -> Path 
         return None
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / "debug-layout.pdf"
-    temporary = directory / ".debug-layout.tmp.pdf"
+    if target.exists():
+        raise FileExistsError(f"diagnostic artifact already exists: {target}")
+    temporary: Path | None = None
     try:
+        with NamedTemporaryFile(
+            prefix=".debug-layout.", suffix=".tmp.pdf", dir=directory, delete=False
+        ) as temporary_file:
+            temporary = Path(temporary_file.name)
         shutil.copy2(render.debug_output_path, temporary)
-        temporary.replace(target)
+        os.link(temporary, target)
     finally:
-        if temporary.exists():
+        if temporary is not None and temporary.exists():
             temporary.unlink()
     return target
 
@@ -431,6 +483,7 @@ def _write_failure_diagnostics(
     started_perf: float,
     owns_memory_trace: bool,
     stage_durations: dict[str, float],
+    diagnostic_directory: Path | None,
     *,
     interrupted: bool,
 ) -> None:
@@ -454,7 +507,8 @@ def _write_failure_diagnostics(
             peak_ram_bytes=_memory_peak(owns_memory_trace),
             interrupted=interrupted,
         )
-        write_report(report, _report_directory(options), report_format=options.report_format)
+        assert diagnostic_directory is not None
+        write_report(report, diagnostic_directory, report_format=options.report_format)
     except Exception as report_error:
         workspace.log(f"diagnostic report publication failed: {report_error}")
     finally:

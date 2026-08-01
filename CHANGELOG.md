@@ -91,6 +91,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Typed environment-based settings and centralized Rich logging.
 - Tests, Ruff, mypy, pre-commit, PowerShell helpers, and cross-platform CI.
 
+### Changed
+
+- Translation diagnostics now publish into a unique per-execution directory and reject existing
+  JSON, HTML, or debug-PDF targets instead of silently replacing them.
+- A success-report/debug publication failure now returns dedicated exit code 11 while preserving and
+  naming the already validated translated PDF.
+
 ### Fixed
 
 - Benchmark exact-source cache hits now reuse only inference artifacts and independently recompute

@@ -1,4 +1,4 @@
-"""Atomic JSON and self-contained offline HTML diagnostic reports."""
+"""Atomic no-replace JSON and self-contained offline HTML diagnostic reports."""
 
 from __future__ import annotations
 
@@ -19,26 +19,29 @@ def write_report(
     *,
     report_format: ReportFormat = "both",
 ) -> tuple[Path, ...]:
-    """Atomically publish selected report formats below one directory."""
+    """Atomically publish selected formats without replacing existing artifacts."""
     if report_format not in {"json", "html", "both"}:
         raise ValueError("report format must be one of: json, html, both")
     root = directory.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
+    publications: list[tuple[Path, str]] = []
     if report_format in {"json", "both"}:
-        target = root / "translation-report.json"
-        _atomic_write(target, report.model_dump_json(indent=2) + "\n")
-        written.append(target)
+        publications.append(
+            (root / "translation-report.json", report.model_dump_json(indent=2) + "\n")
+        )
     if report_format in {"html", "both"}:
-        target = root / "translation-report.html"
-        _atomic_write(target, _render_html(report))
-        written.append(target)
-    return tuple(written)
+        publications.append((root / "translation-report.html", _render_html(report)))
+    existing = next((path for path, _payload in publications if path.exists()), None)
+    if existing is not None:
+        raise FileExistsError(f"diagnostic artifact already exists: {existing}")
+    for target, payload in publications:
+        _atomic_write_new(target, payload)
+    return tuple(path for path, _payload in publications)
 
 
 def _render_html(report: TranslationReport) -> str:
     payload = html.escape(report.model_dump_json(indent=2))
-    title = html.escape(f"PDFTranslate report — {report.status}")
+    title = html.escape(f"PDFTranslate report - {report.status}")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{title}</title><style>
@@ -47,7 +50,7 @@ h1{{margin-bottom:.25rem}} .status{{font-weight:700}} pre{{white-space:pre-wrap;
 padding:1rem;border-radius:.5rem;overflow:auto}} table{{border-collapse:collapse}}
 td,th{{border:1px solid #ccd3db;padding:.4rem .65rem;text-align:left}}
 </style></head><body><h1>{title}</h1>
-<p class="status">Run {html.escape(report.run_id)} · {html.escape(report.status)}</p>
+<p class="status">Run {html.escape(report.run_id)} - {html.escape(report.status)}</p>
 <table><tr><th>Pages</th><td>{report.summary.page_count}</td></tr>
 <tr><th>Blocks</th><td>{report.summary.blocks_translated}/{report.summary.blocks_extracted}</td></tr>
 <tr><th>Cache</th><td>{report.summary.cache_hits} hit / {report.summary.cache_misses} miss</td></tr>
@@ -56,7 +59,8 @@ td,th{{border:1px solid #ccd3db;padding:.4rem .65rem;text-align:left}}
 """
 
 
-def _atomic_write(path: Path, payload: str) -> None:
+def _atomic_write_new(path: Path, payload: str) -> None:
+    """Publish through a same-directory hard link that cannot replace a target."""
     temporary_path: Path | None = None
     try:
         with NamedTemporaryFile(
@@ -72,7 +76,7 @@ def _atomic_write(path: Path, payload: str) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
             temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
+        os.link(temporary_path, path)
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()

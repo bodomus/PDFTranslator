@@ -53,3 +53,15 @@ An explicitly requested report must be JSON, self-contained offline HTML, or bot
 - Pipeline: report production, cache/OCR/overflow data and failure best effort.
 - CLI: option propagation and help.
 - Full gate plus generated PDF validation; no model, CUDA or OCR downloads.
+
+## PDFTR-10 follow-up after PDFTR-9A merge
+
+- Updated master `cb7cde8` (including PDFTR-9A `a6027c4`) was merged into this branch as `f8c43a9`.
+- Current diagnostics use fixed filenames directly below `report_dir`; `Path.replace()` silently
+  replaces artifacts from an earlier execution.
+- A success-report write happens after the translated PDF has already passed validation and been
+  published. Its `OSError` currently escapes without a stable exit code or an explicit statement
+  that the translated PDF remains valid and available.
+- The smallest compatible change is a newly reserved per-execution directory, no-replace atomic
+  publication, and a dedicated diagnostic-publication failure contract. Cache/workspace identity,
+  PDF rendering, translation, OCR and model loading remain unchanged.

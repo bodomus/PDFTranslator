@@ -10,3 +10,11 @@
 8. Update README, CHANGELOG and CLI help.
 9. Run focused tests, full pytest, Ruff, mypy and `scripts/check.ps1`; inspect generated artifacts and report unavailable real-model/CUDA/OCR checks honestly.
 10. Refresh CRG and Graphify, inspect blast radius, then write `implementation-report.md` and `reviews/review-PDFTR-10.md`.
+11. After merging PDFTR-9A through master, reserve a unique diagnostic directory for every pipeline
+    execution and publish JSON, HTML and debug PDF only inside it.
+12. Make diagnostic file publication fail if a target already exists; never use replace semantics
+    for diagnostic artifacts.
+13. Convert success-report/debug publication errors into a stable pipeline error while retaining the
+    already validated translated PDF, then cover the contract with focused tests.
+14. Repeat focused and full gates and update the PDFTR-10 report/review with the combined PDFTR-9A
+    test count.

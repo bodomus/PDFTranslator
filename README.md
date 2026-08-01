@@ -236,6 +236,7 @@ The root pipeline command uses centralized stable categories:
 | 8 | Output validation/publication failure |
 | 9 | OCR dependency, subprocess, timeout, or output-validation failure |
 | 10 | One or more batch files failed |
+| 11 | Requested diagnostic artifacts could not be published |
 | 130 | Ctrl+C or simulated interruption |
 
 ## Local translation
@@ -447,8 +448,11 @@ Request structured diagnostics on the normal end-to-end command:
 uv run pdftranslate input.pdf --report --report-format both --report-dir .\reports --debug-layout
 ```
 
-This writes `translation-report.json`, a self-contained `translation-report.html`, and optionally
-`debug-layout.pdf`. Reports contain run/page/block IDs, classifications, bounding boxes, cache and
+Each execution reserves a unique `run-<UTC timestamp>-<workspace prefix>-<execution id>` directory
+below `--report-dir` (or the output PDF directory), then writes `translation-report.json`, a
+self-contained `translation-report.html`, and optionally `debug-layout.pdf` inside it. Existing
+diagnostic files are never replaced. Reports contain run/page/block IDs, classifications, bounding
+boxes, cache and
 OCR status, font fitting, expansion/overflow, validation findings, elapsed time, file sizes, and
 measurable Python peak memory. Fresh translation stages record exact per-block segmentation counts
 and cache status; reused historical stages and unavailable VRAM remain `null`/`unknown`, never guessed.
@@ -458,7 +462,10 @@ The report also records the renderer's selected font and promotes renderer warni
 Source and translated text are excluded by default. Use `--include-report-text` only for explicit
 local debugging; it requires `--report`. The HTML file embeds its CSS and uses no network assets.
 Failure reports are written when the workspace was initialized and reporting remains possible,
-without replacing the primary pipeline error.
+without replacing the primary pipeline error. If success-report or debug-layout publication fails
+after the normal PDF was validated and published, the command returns exit code 11 and explicitly
+reports that the translated PDF remains available; it never relabels that PDF as invalid.
+
 ## Quality and tests
 
 Run the complete local quality gate:
