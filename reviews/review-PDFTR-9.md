@@ -29,8 +29,8 @@ command tokens.
 4. CUDA, OCR и реальный rendering не входят в этот прогон и не проверены.
 5. Graphify incremental refresh завис после timeout и был остановлен без изменения graph output;
    pre-ticket graph analysis и source verification выполнены, CRG обновлён.
-6. CRG эвристически отметил CLI handler как test gap, хотя он покрыт end-to-end CLI unit test с
-   fake backend; git-based detect также не полностью учитывает untracked файлы до commit.
+6. Финальный CRG audit проанализировал все 15 файлов и эвристически отметил CLI handler как test
+   gap, хотя он покрыт end-to-end CLI unit test с fake backend.
 7. Baseline comparison протестировано, но исторического real-model JSON baseline нет.
 8. Ветка продолжена от текущего PDFTR-8 HEAD по прямому указанию пользователя, не от master.
 9. Следующий тикет до check-in не начат.

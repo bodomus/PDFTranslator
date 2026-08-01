@@ -73,10 +73,10 @@ segmentation или rendering.
 - Ruff format/lint: passed; mypy: no issues in 59 source files.
 - pytest: 144 passed, 1 skipped; coverage 87.27% при пороге 80%.
 - Пропущен только существующий opt-in OCR integration test.
-- CRG index обновлён: 648 FTS rows. `detect-changes --base HEAD` дал risk 0.30 и эвристически
+- CRG index обновлён: 648 FTS rows. Финальный post-commit `detect-changes --base HEAD~1`
+  проанализировал все 15 изменённых файлов, дал risk 0.30 и эвристически
   отметил Typer entry point `benchmark_translation` как test gap; фактически CLI покрыт тестом с
-  fake translator, а все 144 теста прошли. Untracked новые файлы ограничивают точность git-based
-  CRG detect до commit.
+  fake translator, а все 144 теста прошли.
 - Graphify использован для pre-ticket архитектурной ориентации. Обязательные связи проверены по
   source. Инкрементальный refresh после изменения module boundary завис и был остановлен после
   внешнего timeout; graph output не изменился. Это замечание не скрывается и не влияет на runtime.
