@@ -62,7 +62,7 @@ def analyze_sample_output(
             )
         )
     findings.extend(_text_integrity_findings(sample, source, output, "model"))
-    findings.extend(_human_review_findings(sample.human_review))
+    findings.extend(analyze_human_review(sample.human_review))
     return _deduplicate(findings)
 
 
@@ -208,9 +208,10 @@ def _text_integrity_findings(
     return findings
 
 
-def _human_review_findings(review: HumanReview | None) -> list[BenchmarkFinding]:
+def analyze_human_review(review: HumanReview | None) -> tuple[BenchmarkFinding, ...]:
+    """Convert the current sample's explicit human scores into stage findings."""
     if review is None:
-        return []
+        return ()
     findings: list[BenchmarkFinding] = []
     for name, stage in (
         ("adequacy", "model"),
@@ -230,7 +231,7 @@ def _human_review_findings(review: HumanReview | None) -> list[BenchmarkFinding]
                     f"Human reviewer scored {name.replace('_', ' ')} {score}/5.",
                 )
             )
-    return findings
+    return tuple(findings)
 
 
 def _missing_values(pattern: re.Pattern[str], source: str, output: str) -> tuple[str, ...]:

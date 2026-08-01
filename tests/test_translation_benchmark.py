@@ -26,6 +26,7 @@ from pdftranslate.benchmark.models import (
     StageTrace,
 )
 from pdftranslate.cli import app
+from pdftranslate.translation.errors import TranslationBackendError
 
 
 class FakeTranslator:
@@ -52,6 +53,18 @@ class TokenDroppingTranslator(FakeTranslator):
 class MissingSegmentTranslator(FakeTranslator):
     def translate_batch(self, texts: Sequence[str]) -> list[str]:
         return []
+
+
+class FilenameDamagingTranslator(FakeTranslator):
+    def translate_batch(self, texts: Sequence[str]) -> list[str]:
+        self.batches.append(list(texts))
+        return [text.replace("data.json", "данные.json") for text in texts]
+
+
+class FailingTranslator(FakeTranslator):
+    def translate_batch(self, texts: Sequence[str]) -> list[str]:
+        self.batches.append(list(texts))
+        raise TranslationBackendError("model unavailable")
 
 
 def _sample(index: int, *, source: str | None = None) -> BenchmarkSample:
@@ -124,6 +137,147 @@ def test_runner_reuses_one_translator_and_reports_exact_cache_hits(tmp_path: Pat
     assert report.metadata.cache_misses == 1
     assert len(translator.batches) == 1
     assert all(result.status == "passed" for result in report.results)
+
+
+def test_cache_hit_reanalyzes_sample_specific_protected_tokens() -> None:
+    samples = list(_dataset().samples)
+    shared_source = "Run data.json now."
+    samples[0] = _sample(0, source=shared_source)
+    samples[1] = BenchmarkSample(
+        id="sample-01",
+        category="synthetic",
+        source=shared_source,
+        reference="Запустите data.json сейчас.",
+        protected_tokens=("data.json",),
+        provenance="synthetic:test",
+    )
+    translator = FilenameDamagingTranslator()
+
+    report = run_benchmark(
+        _dataset().model_copy(update={"samples": tuple(samples)}),
+        translator=translator,
+    )
+
+    first, second = report.results[:2]
+    assert report.metadata.cache_hits == 1
+    assert report.metadata.cache_misses == 49
+    assert first.status == "passed"
+    assert first.findings == ()
+    assert second.cache_hit is True
+    assert second.status == "failed"
+    assert any(finding.code == "protected-token-damaged" for finding in second.findings)
+
+
+def test_cache_hit_reanalyzes_sample_specific_human_review() -> None:
+    samples = list(_dataset().samples)
+    shared_source = "Review this sentence."
+    samples[0] = _sample(0, source=shared_source)
+    samples[1] = BenchmarkSample(
+        id="sample-01",
+        category="synthetic",
+        source=shared_source,
+        reference="Проверьте это предложение.",
+        provenance="synthetic:test",
+        human_review=HumanReview(
+            reviewer="reviewer",
+            adequacy=1,
+            fluency=5,
+            terminology=5,
+            token_preservation=5,
+            segmentation=5,
+            overall_acceptability=2,
+        ),
+    )
+    translator = FakeTranslator()
+
+    report = run_benchmark(
+        _dataset().model_copy(update={"samples": tuple(samples)}),
+        translator=translator,
+    )
+
+    first, second = report.results[:2]
+    assert report.metadata.cache_hits == 1
+    assert report.metadata.cache_misses == 49
+    assert first.status == "passed"
+    assert second.cache_hit is True
+    assert second.status == "failed"
+    assert {finding.code for finding in second.findings} >= {
+        "human-adequacy",
+        "human-overall-acceptability",
+    }
+
+
+def test_cache_hit_applies_human_review_after_reused_runtime_error() -> None:
+    samples = list(_dataset().samples)
+    shared_source = "Review this failed translation."
+    samples[0] = _sample(0, source=shared_source)
+    samples[1] = BenchmarkSample(
+        id="sample-01",
+        category="synthetic",
+        source=shared_source,
+        reference="Проверьте этот неудачный перевод.",
+        provenance="synthetic:test",
+        human_review=HumanReview(
+            reviewer="reviewer",
+            adequacy=1,
+            fluency=5,
+            terminology=5,
+            token_preservation=5,
+            segmentation=5,
+            overall_acceptability=2,
+        ),
+    )
+
+    report = run_benchmark(
+        _dataset().model_copy(update={"samples": tuple(samples)}),
+        translator=FailingTranslator(),
+    )
+
+    first, second = report.results[:2]
+    assert first.status == "error"
+    assert {finding.code for finding in first.findings} == {"benchmark-execution-error"}
+    assert second.cache_hit is True
+    assert second.status == "error"
+    assert {finding.code for finding in second.findings} >= {
+        "benchmark-execution-error",
+        "human-adequacy",
+        "human-overall-acceptability",
+    }
+
+
+def test_cache_hit_keeps_historical_stage_trace_sample_specific() -> None:
+    samples = list(_dataset().samples)
+    shared_source = "Value 1900-1 remains clean."
+    samples[0] = BenchmarkSample(
+        id="sample-00",
+        category="synthetic",
+        source=shared_source,
+        reference="Значение 1900-1 не повреждено.",
+        protected_tokens=("1900-1",),
+        provenance="synthetic:test",
+        stage_trace=StageTrace(observed_translation="Значение 1900 1 повреждено."),
+    )
+    samples[1] = BenchmarkSample(
+        id="sample-01",
+        category="synthetic",
+        source=shared_source,
+        reference="Значение 1900-1 не повреждено.",
+        protected_tokens=("1900-1",),
+        provenance="synthetic:test",
+    )
+    translator = FakeTranslator()
+
+    report = run_benchmark(
+        _dataset().model_copy(update={"samples": tuple(samples)}),
+        translator=translator,
+    )
+
+    first, second = report.results[:2]
+    assert report.metadata.cache_hits == 1
+    assert report.metadata.cache_misses == 49
+    assert any(finding.origin == "historical_trace" for finding in first.findings)
+    assert second.cache_hit is True
+    assert all(finding.origin != "historical_trace" for finding in second.findings)
 
 
 def test_stage_trace_separates_extraction_segmentation_tokens_model_and_rendering() -> None:
@@ -244,7 +398,7 @@ def test_cli_benchmark_uses_fake_backend_and_writes_both_reports(tmp_path: Path)
     output = tmp_path / "results.json"
     runner = CliRunner()
 
-    with patch("pdftranslate.cli.NllbTranslator", FakeTranslator):
+    with patch("pdftranslate.cli.NllbTranslator", side_effect=FakeTranslator) as loader:
         result = runner.invoke(
             app,
             [
@@ -262,3 +416,4 @@ def test_cli_benchmark_uses_fake_backend_and_writes_both_reports(tmp_path: Path)
     assert output.is_file()
     assert output.with_suffix(".md").is_file()
     assert "Benchmarked 50 sample(s)" in result.output
+    assert loader.call_args.kwargs["offline"] is True
