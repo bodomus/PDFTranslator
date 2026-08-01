@@ -46,6 +46,7 @@ class _BlockPlan:
     final_rect: pymupdf.Rect
     initial_size: float
     font_size: float | None
+    fitting_attempts: int
     color: tuple[float, float, float]
     background: tuple[float, float, float]
     expanded: bool
@@ -244,7 +245,9 @@ def _plan_page(
         start_size = initial_font_size(block, options.default_font_size)
         color = _block_color(block)
         background = _sample_background(page, source_rect)
-        chosen_size = _fit(page, source_rect, text, font_path, start_size, options, color)
+        chosen_size, fitting_attempts = _fit(
+            page, source_rect, text, font_path, start_size, options, color
+        )
         final_rect = source_rect
         expanded = False
         if chosen_size is None and options.allow_expand:
@@ -257,7 +260,7 @@ def _plan_page(
             expanded_rect = _rect(expanded_bbox)
             if expanded_rect.height > source_rect.height + 1e-6:
                 final_rect = expanded_rect
-                chosen_size = _fit(
+                chosen_size, expansion_attempts = _fit(
                     page,
                     final_rect,
                     text,
@@ -266,6 +269,7 @@ def _plan_page(
                     options,
                     color,
                 )
+                fitting_attempts += expansion_attempts
                 expanded = chosen_size is not None
         overflow = chosen_size is None
         if overflow:
@@ -283,6 +287,7 @@ def _plan_page(
                 final_rect=final_rect,
                 initial_size=start_size,
                 font_size=chosen_size,
+                fitting_attempts=fitting_attempts,
                 color=color,
                 background=background,
                 expanded=expanded,
@@ -300,8 +305,10 @@ def _fit(
     start_size: float,
     options: RenderOptions,
     color: tuple[float, float, float],
-) -> float | None:
+) -> tuple[float | None, int]:
+    attempts = 0
     for size in font_size_candidates(start_size, options.min_font_size, options.font_size_step):
+        attempts += 1
         shape = page.new_shape()  # type: ignore[no-untyped-call]
         remaining = shape.insert_textbox(
             rect,
@@ -313,8 +320,8 @@ def _fit(
             color=color,
         )
         if remaining >= -1e-6:
-            return size
-    return None
+            return size, attempts
+    return None, attempts
 
 
 def _redact_page(
@@ -435,6 +442,14 @@ def _write_debug_pdf(source: Path, output: Path, plans: list[_BlockPlan]) -> Non
             if plan.expanded:
                 final_color = (1.0, 0.55, 0.0)
             page.draw_rect(plan.final_rect, color=final_color, width=1.2, overlay=True)
+            state = "overflow" if plan.overflow else "expanded" if plan.expanded else "rendered"
+            page.insert_text(
+                (plan.final_rect.x0, max(6.0, plan.final_rect.y0 - 2.0)),
+                f"{plan.block.id} [{state}]",
+                fontsize=6.0,
+                color=final_color,
+                overlay=True,
+            )
         document.save(str(output), garbage=4, deflate=True)  # type: ignore[no-untyped-call]
     finally:
         document.close()  # type: ignore[no-untyped-call]
@@ -505,6 +520,7 @@ def _result_from_plan(plan: _BlockPlan) -> BlockRenderResult:
         final_bbox=_bbox(plan.final_rect),
         initial_font_size=plan.initial_size,
         font_size=plan.font_size,
+        fitting_attempts=plan.fitting_attempts,
         expanded=plan.expanded,
         overflow=plan.overflow,
     )

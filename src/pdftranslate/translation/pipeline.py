@@ -64,6 +64,8 @@ class TranslationProgress:
     cache_misses: int
     page_number: int
     block_id: str
+    cache_status: Literal["hit", "miss", "skipped", "unknown"] = "unknown"
+    segmentation_count: int | None = None
 
 
 @dataclass
@@ -91,7 +93,7 @@ class _Work:
     source_text: str
     protected: ProtectedText
     segments: tuple[Segment, ...]
-    targets: list[tuple[int, int]] = field(default_factory=list)
+    targets: list[tuple[int, int, Literal["hit", "miss"]]] = field(default_factory=list)
     translated: list[str] = field(default_factory=list)
 
 
@@ -178,7 +180,14 @@ def translate_document(
                     )
                     counters.completed_blocks += 1
                     counters.skipped_blocks += 1
-                    _notify(progress, counters, page.page_number, block.id)
+                    _notify(
+                        progress,
+                        counters,
+                        page.page_number,
+                        block.id,
+                        cache_status="skipped",
+                        segmentation_count=0,
+                    )
                     save_checkpoint()
                     continue
 
@@ -196,13 +205,19 @@ def translate_document(
                     )
                     counters.completed_blocks += 1
                     counters.cache_hits += 1
-                    _notify(progress, counters, page.page_number, block.id)
+                    _notify(
+                        progress,
+                        counters,
+                        page.page_number,
+                        block.id,
+                        cache_status="hit",
+                    )
                     save_checkpoint()
                     continue
 
                 existing = work_by_text.get(normalized)
                 if existing is not None:
-                    existing.targets.append((page_index, block_index))
+                    existing.targets.append((page_index, block_index, "hit"))
                     counters.cache_hits += 1
                     continue
 
@@ -220,7 +235,7 @@ def translate_document(
                     source_text=normalized,
                     protected=protected,
                     segments=segmentation.segments,
-                    targets=[(page_index, block_index)],
+                    targets=[(page_index, block_index, "miss")],
                 )
                 counters.cache_misses += 1
 
@@ -248,7 +263,7 @@ def translate_document(
                     source_text=work.source_text,
                     translated_text=translated_text,
                 )
-                for page_index, block_index in work.targets:
+                for page_index, block_index, cache_status in work.targets:
                     source_block = document.pages[page_index].text_blocks[block_index]
                     pages[page_index][block_index] = source_block.model_copy(
                         update={"translated_text": translated_text}
@@ -259,6 +274,8 @@ def translate_document(
                         counters,
                         document.pages[page_index].page_number,
                         source_block.id,
+                        cache_status=cache_status,
+                        segmentation_count=len(work.segments),
                     )
                 save_checkpoint()
     except KeyboardInterrupt as error:
@@ -336,6 +353,9 @@ def _notify(
     counters: _Counters,
     page_number: int,
     block_id: str,
+    *,
+    cache_status: Literal["hit", "miss", "skipped", "unknown"] = "unknown",
+    segmentation_count: int | None = None,
 ) -> None:
     if callback is not None:
         callback(
@@ -346,5 +366,7 @@ def _notify(
                 cache_misses=counters.cache_misses,
                 page_number=page_number,
                 block_id=block_id,
+                cache_status=cache_status,
+                segmentation_count=segmentation_count,
             )
         )

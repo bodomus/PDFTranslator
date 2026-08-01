@@ -1,133 +1,146 @@
-# Implementation Report — PDFTR-9A
+# Implementation report — PDFTR-10
 
-## Git state
+## Итог
 
-- Branch: `codex/PDFTR-9-translation-quality-benchmark` (required by the corrective ticket).
-- Base commit: `411bc72b51d19701d201f6440cf68688d39b79a4`.
-- Working tree before changes: clean; repository was on merged `master`, then switched to the
-  explicitly required existing PDFTR-9 branch without rebase or merge.
-- Workflow: Level 2 because model lifecycle/offline behavior changed.
+PDFTR-10 реализован в ветке `codex/PDFTR-10-layout-diagnostics-and-reporting`. Исходная реализация — `5e82e21`; PDFTR-9A (`a6027c4`) сначала влит в `master` merge-коммитом `cb7cde8`, затем новый master влит в PDFTR-10 как `f8c43a9`. Follow-up исправления diagnostics находятся в `43dac4b`. Зависимости не добавлялись.
 
-## Issue 1 — Cache isolation
+## Follow-up после merge PDFTR-9A
 
-- Root cause: `_CachedResult` cached output/evidence together with sample-specific `findings` and
-  `status`, keyed only by `effective_source`. A later sample with equal source inherited the first
-  sample's protected-token/human-review evaluation.
-- Design change: `_CachedTranslation` stores only output, segment evidence, input/output segment
-  counts, segmentation warning, protected-placeholder restore error and runtime error. Every sample,
-  including cache hits, independently runs `analyze_sample_output()`, `analyze_stage_trace()` and
-  `_status()`.
-- Tests added: equal source with different protected tokens, human-review scores and historical
-  stage traces. Each scenario proves one cache hit/49 misses for the 50-sample fixture and no
-  cross-sample finding/status leakage.
-- Result: translator work remains deduplicated; sample evaluation is isolated. Benchmark focused
-  suite: 14 passed, including sample-specific human findings after a reused runtime error.
+- Каждый запуск резервирует уникальный каталог `run-<UTC timestamp>-<workspace prefix>-<execution UUID>` под `--report-dir` или рядом с output PDF.
+- JSON, HTML и debug PDF публикуются только внутри каталога запуска; предыдущие артефакты не переиспользуются и не заменяются.
+- `write_report()` заранее отклоняет существующие targets, а финальная публикация использует same-directory temporary file и атомарный hard link, который не умеет заменять destination.
+- Debug PDF использует ту же no-replace схему.
+- Ошибка success-report/debug publication после успешной валидации PDF преобразуется в `PipelineExecutionError` с отдельным `ExitCode.DIAGNOSTIC_PUBLICATION_FAILED = 11`. Сообщение и log явно указывают, что валидный переведённый PDF уже опубликован и остаётся доступен.
+- Ошибка публикации failure report остаётся best-effort и не маскирует исходную stage error.
 
-## Issue 2 — Offline behavior
+## Новые файлы diagnostics
 
-- Root cause: `local_files_only=True` was passed with a remote repository ID. Transformers/
-  huggingface-hub could still perform metadata/revision requests because strict Hub offline state
-  and local snapshot resolution were absent.
-- Loader changes:
-  - offline mode resolves an explicit local directory or Hugging Face cache `refs/main` snapshot
-    before importing Transformers;
-  - missing/ambiguous local files fail before a network-capable loader is imported;
-  - `AutoConfig`, `AutoTokenizer` and `AutoModelForSeq2SeqLM` all receive the resolved local path,
-    cache directory and `local_files_only=True`; the loaded config is passed into the model loader;
-  - `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are scoped to component loading and previous
-    values are restored in `finally` after success or failure;
-  - `offline=False` keeps the remote model identifier and does not force offline environment.
-- Error behavior: the offline-specific error names the model, checked local/cache paths, and tells
-  the user to populate the cache or rerun without `--offline`. No online fallback is attempted.
-- Network-access verification: the real benchmark completed with `HTTP_PROXY`, `HTTPS_PROXY` and
-  `ALL_PROXY` pointed at non-listening `127.0.0.1:9` and empty `NO_PROXY`. No HTTP request appeared in
-  the output. This is controlled process-level blocking/log verification, not packet capture.
-- Result: strict offline real-model run succeeded entirely from the existing local cache.
+- `src/pdftranslate/diagnostics/__init__.py` — публичный диагностический API.
+- `src/pdftranslate/diagnostics/models.py` — версия схемы `1.0`, модели run/summary/page/block/finding и стабильные коды.
+- `src/pdftranslate/diagnostics/builder.py` — сбор success/failure отчётов из фактических данных pipeline, translation, OCR и renderer.
+- `src/pdftranslate/diagnostics/reporting.py` — атомарная запись UTF-8 JSON и автономного HTML без внешних ресурсов.
+- `tests/test_diagnostics.py` — стабильность кодов, валидация CLI-настроек и неизменность identity переводимого артефакта.
 
-## Real benchmark
+Стабильные коды: `READING_ORDER_AMBIGUOUS`, `TRANSLATION_TOKEN_MISMATCH`, `FONT_REDUCED`, `BLOCK_EXPANDED`, `BLOCK_OVERFLOW`, `OCR_LOW_TEXT_GAIN`, `OUTPUT_VALIDATION_FAILED`, `PIPELINE_STAGE_FAILED`, `RENDER_WARNING`.
 
-Command used the repository dataset, CPU, `--offline`, max input tokens 64, the existing local model
-cache and output under `./temp`. Network proxies were deliberately invalid.
+## Pipeline и translation
 
-- Dataset/model: `1.0.0`, 61 samples, `facebook/nllb-200-distilled-600M`.
-- Result: 60 passed, 1 failed, 0 execution errors.
-- Cache: 0 hits, 61 misses.
-- Model elapsed: 44.183 seconds; CLI elapsed: 48.47 seconds.
-- Output: `temp/pdftr9-benchmark/nllb-offline.json` and sibling Markdown.
-- No HTTP request lines occurred; the earlier Hugging Face metadata traffic did not recur.
-- The existing `command-01` failure remains: `data.json`, `--device` and `--offline` are translated.
-  Its production fix is explicitly outside PDFTR-9A.
-- Transformers still warns that `max_new_tokens=128` takes priority over `max_length=200`.
+`PipelineOptions` и `PipelineResult` расширены настройками/путями diagnostics. Параметры отчёта намеренно исключены из `identity_values()`, поскольку не меняют содержимое переводимого PDF.
 
-## Files changed
+`run_pipeline()` теперь:
 
-- `src/pdftranslate/benchmark/runner.py`
-- `src/pdftranslate/benchmark/checks.py`
-- `src/pdftranslate/translation/nllb.py`
-- `tests/test_translation_benchmark.py`
-- `tests/test_nllb.py`
-- `README.md`, `CHANGELOG.md`
-- `Tickets/PDFTR-9A-fix-benchmark-cache-and-offline.md`
-- `investigation.md`, `implementation-plan.md`
-- `implementation-report.md`
-- `reviews/review-PDFTR-9.md`, `reviews/review-PDFTR-9A.md`
+- измеряет общую длительность и длительности всех шести стадий;
+- собирает измеримый peak RAM через `tracemalloc` только при запросе отчёта и гарантированно останавливает tracing;
+- сохраняет `RenderResult` вместо потери block-level данных;
+- связывает `TranslationProgress` с block ID, точным `segmentation_count` и `cache_status` для свежей стадии перевода;
+- формирует success report после успешной валидации;
+- формирует best-effort failure report и не заменяет им исходную pipeline-ошибку;
+- при `--resume` повторяет render, если требуются report/debug evidence, вместо выдачи отчёта без layout-данных;
+- атомарно публикует `debug-layout.pdf` в уникальный каталог текущего запуска.
 
-No dependencies, schemas, persistent TranslationCache formats, PDF stages or CLI option names were
-changed.
+Translation progress различает `hit`, `miss`, `skipped`, `unknown`. Для исторически переиспользованной стадии, у которой block-level события уже отсутствуют, значения остаются честно `null`/`unknown`.
 
-## Graph and source validation
+## Renderer
 
-- Graphify existing graph was queried with repository vocabulary and connected benchmark runner,
-  `NllbTranslator`, CLI and tests. Conclusions were verified in source. The saved interpreter path
-  was stale (`No module named graphify`), but the installed CLI successfully saved the result to
-  Graphify memory. Required incremental refresh completed at 1339 nodes/2947 edges and reclustered
-  to 92 communities. Ollama's 8192-token context caused several oversized semantic Markdown chunks
-  to be dropped and three JSON inputs produced zero nodes; code AST extraction, source and CRG are
-  used as authority. Community labeling remains partially stale (78 saved labels for 92 communities).
-- CRG final post-commit audit: 705 FTS rows; 13 changed files, 26 symbols, risk 0.40, no affected flow.
-  The audit completed before its decorative panel hit a Windows CP1251 console encoding error; the
-  reported analysis counts were already emitted and remain valid.
-  Its heuristic listed `_CachedTranslation`, `run_benchmark`, `_TransformersRuntime`,
-  `_load_components` and `_resolve_model_source` as gaps, but direct source tests exercise their
-  cache-hit, loader, missing-cache, environment restoration and online paths. Source/tests prevail.
-- No full Graphify rebuild was performed; the required incremental refresh and cluster-only report
-  regeneration completed.
+Renderer теперь сохраняет точное число попыток fitting для каждого блока. Отдельный debug PDF содержит:
 
-## Validation
+- исходный и финальный прямоугольники;
+- цветовое состояние rendered/expanded/overflow/skipped;
+- извлекаемую подпись со стабильным block ID, например `p0001-b0001 [rendered]`;
+- отметки OCR pages.
 
-- Focused benchmark tests: 14 passed (`--no-cov`; focused-only runs otherwise trip the global
-  repository coverage threshold).
-- Translation tests: 9 passed.
-- Combined benchmark/NLLB/translation tests: 32 passed.
-- Full pytest: 152 passed, 1 skipped.
-- Coverage: 87.70% (required 80%).
-- Ruff format check: 95 files already formatted.
-- Ruff lint: passed.
-- mypy: no issues in 59 source files.
-- `scripts/check.ps1`: passed with the same 152/1 result and 87.70% coverage.
-- Skipped test: existing opt-in OCR integration dependency check.
-- CLI propagation of `--offline`: covered by a mocked benchmark CLI assertion.
+Обычный PDF создаётся и валидируется отдельно; debug overlay в него не попадает. В summary также записывается выбранный renderer font, а общие renderer warnings получают код `RENDER_WARNING`.
 
-## Remaining risks and remarks
+## JSON- и HTML-отчёты
 
-1. The scoped environment uses process-global variables during synchronous model construction.
-   Local snapshot resolution remains the primary no-network boundary, but concurrent model loading
-   in multiple threads is not a supported/tested scenario.
-2. Online-capable loading is tested with mocked Transformers factories; no real online download was
-   performed because that would violate the controlled test scope and is unnecessary for this fix.
-3. The offline proof used blocked proxies and logs, not an OS-level packet capture.
-4. CUDA, OCR, extraction, rendering and PDF output were not exercised because PDFTR-9A changes none
-   of those boundaries.
-5. The real benchmark metadata records base commit `411bc72` because the corrective work was not yet
-   committed when the evidence was generated. Source diff and exact command are recorded here.
-6. `command-01` token protection remains a separate follow-up; it was not silently broadened into
-   this ticket.
-7. The supplied PDFTR-9A Markdown did not identify a numeric YouTrack issue, so no separate issue
-   fields or attachments could be updated. The ticket copy is committed under `Tickets/`.
-8. All runtime artifacts and caches were kept under `./temp`; reviews are under `reviews/`.
-9. PDFTR-10 was not started.
+`translation-report.json` содержит статус, run ID, пути входа/выхода, стадии, размеры, page types, OCR/cache/translation/render counters, fitting/geometry/final state по блокам, findings, измеримый RAM и nullable VRAM.
 
-## Recommendation
+`translation-report.html` строится из той же версии модели, экранирует значения, содержит встроенный CSS и не использует скрипты, ссылки, CDN или сетевые assets.
 
-Ready for PDFTR-9A check-in and merge after review. PDFTR-9 cache isolation and strict offline
-contracts are now implemented, tested and verified with the real local model cache.
+Исходный и переведённый текст по умолчанию равны `null`. Поля заполняются только при явном `--include-report-text` вместе с `--report`.
+
+## CLI
+
+Добавлены опции основного end-to-end запуска:
+
+- `--report`;
+- `--report-format json|html|both`;
+- `--report-dir PATH`;
+- `--debug-layout`;
+- `--include-report-text`.
+
+CLI печатает пути созданных report/debug artifacts. Typer остаётся только boundary для разбора аргументов; domain, translation, renderer и diagnostics от него не зависят.
+
+## Focused tests
+
+Команда:
+
+```powershell
+uv run pytest tests/test_diagnostics.py tests/test_end_to_end_pipeline.py tests/test_rendering.py tests/test_cli.py tests/test_nllb.py tests/test_translation_benchmark.py --no-cov --basetemp temp/pdftr10-followup-focused2 -o cache_dir=temp/pdftr10-followup-focused2-cache
+```
+
+Результат после merge PDFTR-9A: `68 passed in 4.24s`. Перед тестами также прошли Ruff и mypy (`63 source files`).
+
+Покрыты success/failure reports, no-replace writer, два независимых run-specific каталога, exit code 11 с сохранением normal PDF, сохранение исходной stage error, privacy default, opt-in Cyrillic, offline HTML, block IDs в debug PDF, cache/segmentation/fitting evidence, selected font, CLI propagation и создание всех трёх диагностических артефактов.
+
+## Full tests
+
+Обязательный `./scripts/check.ps1` повторён после всех изменений с `TEMP`, `TMP`, uv cache и pytest cache/basetemp под `./temp`.
+
+Результат:
+
+- formatter: `101 files already formatted`;
+- Ruff: passed;
+- mypy: `63 source files`, no issues;
+- pytest: `161 passed, 1 skipped in 10.89s`;
+- coverage: `87.78%` при требовании `80%`.
+
+Один skip — существующий opt-in integration path; unit/CI gate не скачивал model weights и не требовал CUDA/OCR tools.
+
+## Реально созданные диагностические артефакты
+
+Локальный end-to-end прогон с generated English paragraph и детерминированным fake translator (без скачивания модели) создал source/normal output в `temp/pdftr10-followup-validation/`, а JSON/HTML/debug PDF — в уникальном `temp/pdftr10-followup-validation/reports/run-20260801T125703.565212Z-9395d0524fee-5b7c0a19f0db47488c70d109f1f381ba/`:
+
+| Артефакт | Размер | Проверка |
+|---|---:|---|
+| `diagnostic-source.pdf` | 1,005 B | один полноценный английский абзац |
+| `diagnostic-output.pdf` | 586,129 B | английский абзац отсутствует; связный русский текст извлекается и ищется после нормализации NBSP |
+| `translation-report.json` | 2,965 B | schema `1.0`, status `success`, все 6 стадий |
+| `translation-report.html` | 4,679 B | нет `<script src>`, `<link rel>`, `http://`, `https://` |
+| `debug-layout.pdf` | 586,769 B | извлекается block ID `p0001-b0001`; normal output не изменён overlay-разметкой |
+
+Фактические значения блока: `cache_status=miss`, `segmentation_count=1`, `fitting_attempts=1`, `final_state=rendered`; summary: `1` text page, `1` block, `1` translated segment, `0` overflow, `0` OCR pages, peak RAM `1,822,099 B`, peak VRAM `null`, renderer выбрал `arial.ttf`.
+
+PDF extractor возвращает между русскими словами NBSP (`U+00A0`), поэтому точная автоматическая проверка поиска нормализует whitespace. Это не повреждение текста: извлечение, выделение/копирование и поиск после стандартной нормализации подтверждены. JSON прочитан Python как корректный UTF-8 с кириллицей; отображаемый PowerShell `Get-Content` без явного encoding может показывать mojibake и не является дефектом файла.
+
+Сгенерированные PDF/JSON/HTML, cache и validation helper scripts находятся только в `./temp` и не включены в Git.
+
+## Repository intelligence и blast radius
+
+- CRG post-change: `725` FTS rows; follow-up diff содержит `16` changed symbols, `0` affected flows, heuristic risk `0.40`, `8` heuristic test gaps. CRG пометил `write_report`, `_atomic_write_new`, `ExitCode` и `run_pipeline` как gaps, хотя они прямо покрыты no-replace, exit-code и E2E тестами; source/pytest являются авторитетными.
+- Graphify post-change: `1475 nodes`, `3163 edges`, `90 communities`. BFS нашёл новый run-directory → no-replace writer → explicit publication-error path и соответствующий тест; связность подтверждена исходниками и runtime.
+- Graphify сообщил три существующих source-файла с zero nodes (`hooks.json`, `translation-en-ru-v1.json`, `validation-corpus.example.json`); это ограничение индексатора, не runtime defect PDFTR-10.
+- Изменение пересекает CLI, orchestration, translation progress и renderer result, но не меняет cache key, document schema, model lifecycle, OCR subprocess или атомарную публикацию обычного PDF.
+
+## Все замечания и ограничения
+
+1. Реальный artifact run использовал локальный deterministic fake translator. Качество NLLB, CUDA/VRAM и реальный OCR этим тикетом не подтверждались; full tests намеренно не скачивают большие модели. Это диагностика pipeline/layout, а не заявление о качестве модели.
+2. Peak VRAM остаётся `null`, пока нет надёжного доступного измерителя без новой зависимости. Peak RAM отражает Python allocations `tracemalloc`, а не полный process RSS.
+3. Исторически reused translation stage не может восстановить per-block callbacks; поэтому её `segmentation_count/cache_status` остаются `null/unknown`. Свежая стадия даёт точные значения.
+4. Text inclusion — сознательный privacy opt-in. В validation example он включён для проверки кириллицы; production default исключает оба текста.
+5. Debug PDF предназначен для диагностики и заметно увеличивает размер за счёт встроенного шрифта/разметки; normal PDF остаётся отдельным артефактом.
+6. Failure report возможен только после успешной инициализации workspace/report path. Ошибки до этой точки возвращаются обычным `PipelineExecutionError` без ложного отчёта.
+7. Первые sandboxed pytest-запуски на Windows не могли читать автоматически созданные temp ACL. Проверки повторены с escalation и явными путями под `./temp`.
+8. Один промежуточный full-gate вызов с абсолютными Windows paths в `PYTEST_ADDOPTS` был разобран pytest как строки без backslashes и создал три cache-каталога в root. Их точные пути были проверены и каталоги удалены; финальный gate повторён с `temp/...` и прошёл.
+9. Встроенный `apply_patch` дважды отказал из-за Windows split writable-root sandbox. Применялись узкие проверяемые PowerShell replacements. Две ранние слишком широкие механические замены были обнаружены Ruff/mypy до тестов. Позднее encoding-sensitive редактирование Markdown временно дало mojibake; `git diff` обнаружил его, файлы восстановлены как UTF-8 без BOM. Ни одна из этих промежуточных ошибок не присутствует в итоговом diff.
+10. Graphify без escalation получил `WinError 5` при обходе sandbox ACL; повторный локальный update с доступом прошёл. CRG heuristic gaps не заменяют test evidence.
+11. Не добавлены зависимости, generated PDFs, model weights, caches, logs или user-specific absolute paths.
+12. PDFTR-9A присутствует в новом master и в текущей ветке; финальный gate учитывает оба набора тестов и составляет `161 passed, 1 skipped`.
+13. No-replace atomic publication использует hard links и требует файловую систему с их поддержкой. На неподдерживаемой filesystem diagnostics завершается явным exit code 11; уже опубликованный основной PDF не удаляется.
+14. При формате `both` JSON может быть уже опубликован, если последующая HTML publication падает. Это не скрывается: запуск возвращает exit code 11, существующий JSON не перезаписывается, partial evidence сохраняется для диагностики.
+15. При debug-only запуске, завершившемся до render publication, зарезервированный уникальный каталог может остаться пустым; он никогда не переиспользуется.
+16. Следующий тикет не начат; ветка готова к повторному check-in/review.
+
+## Acceptance criteria
+
+Все критерии PDFTR-10 выполнены: success/failure JSON, offline HTML, stable codes, page/block evidence, annotated debug PDF, privacy default, cache/OCR/fitting/overflow/validation data, run-specific paths, запрет silent overwrite, явная success-report failure semantics, совместимый CLI и зелёный combined gate `161 passed, 1 skipped`.

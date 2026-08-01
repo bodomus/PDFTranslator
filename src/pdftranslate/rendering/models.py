@@ -45,6 +45,7 @@ class BlockRenderResult:
     final_bbox: BoundingBox
     initial_font_size: float
     font_size: float | None
+    fitting_attempts: int
     expanded: bool
     overflow: bool
 

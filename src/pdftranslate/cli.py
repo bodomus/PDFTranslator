@@ -42,6 +42,7 @@ from pdftranslate.pipeline import (
     plan_pipeline,
     run_pipeline,
 )
+from pdftranslate.pipeline.models import ReportFormat
 from pdftranslate.rendering import PdfRenderer, RenderingError, RenderOptions
 from pdftranslate.serialization import (
     DocumentJsonError,
@@ -317,6 +318,24 @@ def translate_pdf(
         bool,
         typer.Option("--overwrite", help="Replace an existing final PDF after validation."),
     ] = False,
+    report: Annotated[
+        bool, typer.Option("--report", help="Write structured translation diagnostics.")
+    ] = False,
+    report_format: Annotated[
+        str, typer.Option("--report-format", help="Diagnostic format: json, html, or both.")
+    ] = "both",
+    report_dir: Annotated[
+        Path | None, typer.Option("--report-dir", help="Directory for diagnostic artifacts.")
+    ] = None,
+    debug_layout: Annotated[
+        bool, typer.Option("--debug-layout", help="Write a separate annotated layout PDF.")
+    ] = False,
+    include_report_text: Annotated[
+        bool,
+        typer.Option(
+            "--include-report-text", help="Include source and translated text in reports."
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Inspect and report the plan without loading a model."),
@@ -349,6 +368,11 @@ def translate_pdf(
             ocr_clean=ocr_clean,
             ocr_rotate_pages=ocr_rotate_pages,
             ocr_force=ocr_force,
+            report=report,
+            report_format=cast(ReportFormat, report_format),
+            report_dir=report_dir,
+            debug_layout=debug_layout,
+            include_report_text=include_report_text,
         )
     except ValueError as error:
         _print_pipeline_error(
@@ -385,6 +409,10 @@ def translate_pdf(
         _print_pipeline_error(error)
 
     elapsed = time.perf_counter() - started
+    for report_path in result.report_paths:
+        console.print(f"Report: [path]{report_path}[/path]")
+    if result.debug_layout_path is not None:
+        console.print(f"Debug layout: [path]{result.debug_layout_path}[/path]")
     statistics = result.statistics
     console.print(
         f"Translated {statistics.completed_blocks}/{statistics.total_blocks} block(s) to "

@@ -1,66 +1,67 @@
-# PDFTR-9A Investigation
+# Investigation — PDFTR-10
 
-## Workflow and baseline
+## Baseline
 
-- Level 2: model lifecycle/offline contract plus benchmark cache correctness.
-- Branch required by ticket: `codex/PDFTR-9-translation-quality-benchmark`.
-- Base commit: `411bc72b51d19701d201f6440cf68688d39b79a4`.
-- Working tree was clean before switching from merged `master` to the required branch.
-- Python 3.12.10, uv 0.5.26; no dependency change is required.
+- Branch: `codex/PDFTR-10-layout-diagnostics-and-reporting`.
+- Base: `b490ff3` (`master` at branch creation).
+- Workflow: Level 2.
+- Working tree before ticket files: clean; Git emits a permission warning for ignored `.temppytest-cache/`.
+- PDFTR-9A commit `a6027c4` is not in `master` and was not transplanted, per the explicit request to branch from `master`.
 
-## Graph and source findings
+## Current behavior
 
-- Graphify BFS connected benchmark, `NllbTranslator`, `Translator`, CLI and translation tests.
-  The result was source-verified and saved to Graphify work memory. The stored interpreter path was
-  stale, so the first module invocation failed; the installed `graphify save-result` CLI succeeded.
-- CRG refreshed to 648 FTS rows and reported no pre-existing working-tree changes.
-- Source is authoritative: `run_benchmark()` owns the in-run benchmark cache;
-  `NllbTranslator` owns third-party loading; Typer only propagates `offline` and cache paths.
+- `run_pipeline()` owns inspect → OCR → extract → translate → render → validate orchestration.
+- `PdfRenderer.render()` already returns block-level source/final boxes, initial/final font sizes, expansion and overflow, plus aggregate warnings and an optional separate debug PDF.
+- The pipeline currently discards `RenderResult` and does not enable renderer debug output.
+- `TranslationMetadata.statistics` exposes aggregate block, cache and segment counters, but not per-block segment/cache evidence.
+- OCR exposes processed pages and warnings; extracted pages expose classification, dimensions, blocks and stable block IDs.
+- Batch and validation have separate reports, but there is no privacy-safe per-translation JSON/HTML report or centralized stable diagnostic-code vocabulary.
+- CLI `run` exposes no report options.
 
-## Issue 1 — Cache isolation
+## Expected behavior
 
-Current behavior: `_CachedResult` stores output, segment evidence, findings and status. A hit keyed by
-`effective_source` copies `cached.findings` and `cached.status` into the next sample.
+An explicitly requested report must be JSON, self-contained offline HTML, or both. It must combine available inspect/OCR/translation/render/validation evidence, omit text by default, optionally include it, and retain a best-effort failure report when a stage fails after report initialization. `--debug-layout` must publish a separate annotated PDF without changing normal output.
 
-Root cause: inference artifacts and sample evaluation were combined in one cache value. Protected
-token declarations, human review and stage trace are sample-specific even when source text is equal.
+## Smallest coherent design
 
-Smallest correct change: cache only translation execution artifacts (output, evidence, segment
-counts, segmentation warning, restore error and runtime error). Analyze every sample after lookup and
-derive its status independently. Translator execution remains deduplicated by effective source.
+1. Add a focused `diagnostics` package with stable codes, immutable report models, a builder, and atomic JSON/HTML writers.
+2. Extend `PipelineOptions` with report/debug settings; keep them out of artifact identity because they do not change translation output.
+3. Preserve and return `RenderResult` from the render stage; use it for block diagnostics.
+4. Build success/failure reports in pipeline orchestration, where all stage evidence and errors are visible. Reporting failures must not replace the primary pipeline error.
+5. Reuse renderer debug-layout support and atomically copy its validated artifact to the requested report directory.
+6. Keep Typer limited to parsing options and printing artifact paths.
 
-## Issue 2 — Strict offline loading
+## Boundaries and compatibility
 
-Current behavior: tokenizer and model receive `local_files_only=offline`, but the remote model ID is
-still passed to Transformers. The PDFTR-9 real run showed Hugging Face API metadata requests.
+- No dependency additions are required; HTML uses the standard library and escaped content.
+- Existing output PDF publication, source immutability, document schema and cache keys remain unchanged.
+- Machine-readable reports contain plain strings only.
+- Before implementation, per-block `segmentation_count` and `cache_status` were unavailable. PDFTR-10 extends the translation progress contract so fresh stages now report exact values; reused historical stages remain explicitly `null`/`unknown` rather than inventing evidence.
+- Peak RAM can be measured with `tracemalloc`; peak VRAM is nullable unless reliably exposed without a dependency.
+- Resume may lack historical block fitting evidence; unavailable values must remain explicit.
 
-Official Hugging Face documentation confirms that `local_files_only=True` restricts file loading,
-while `HF_HUB_OFFLINE=1` explicitly prevents Hub HTTP calls. The current installed versions are
-Transformers 5.14.1 and huggingface-hub 1.26.0.
+## Graph and source evidence
 
-Root cause: no scoped Hub offline environment is applied, and remote repository identity is resolved
-inside third-party code. Environment flags are imported into Hub constants, so setting them after a
-prior Hub import alone is not a complete process-wide guarantee.
+- Graphify BFS connected `run_pipeline`, `PipelineOptions`, `PipelineWorkspace`, `PdfRenderer`, `TranslationStatistics`, `OcrProcessor`, validation and tests.
+- CRG refreshed at `4797ab7` with 705 FTS rows. Exact symbol searches confirmed the same owners; multi-term searches returned no matches.
+- CRG's decorative console panel fails under Windows CP1251 after emitting valid counts; source and tests remain authoritative.
 
-Smallest robust change:
+## Test areas
 
-1. in offline mode, resolve the requested model to an existing local directory or a Hugging Face
-   cache snapshot before importing Transformers;
-2. set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` only around component loading, restoring the
-   previous values in `finally`;
-3. load `AutoConfig`, `AutoTokenizer` and `AutoModelForSeq2SeqLM` from the resolved local path with
-   `local_files_only=True`; pass the loaded config to the model;
-4. fail before any third-party network-capable loader when the local snapshot is absent, including
-   model and checked cache path in the message;
-5. preserve remote-ID online behavior when `offline=False`.
+- Diagnostics models/writers/builders: privacy, opt-in Cyrillic text, stable codes, offline HTML, success and failure.
+- Rendering: annotated IDs/rectangles and normal-output separation.
+- Pipeline: report production, cache/OCR/overflow data and failure best effort.
+- CLI: option propagation and help.
+- Full gate plus generated PDF validation; no model, CUDA or OCR downloads.
 
-Resolving to a local filesystem path is the strict boundary even if Hugging Face was imported earlier;
-the scoped environment is defense in depth and follows the documented offline mechanism.
+## PDFTR-10 follow-up after PDFTR-9A merge
 
-## Boundaries and risks
-
-- Affected: benchmark runner, NLLB loader, focused tests, CLI help/docs/reports.
-- Unaffected: PDF extraction, rendering, OCR, schemas, persistent TranslationCache and CUDA logic.
-- No model download in tests; mocks verify loader arguments and environment restoration.
-- Real verification should use the existing local cache and inspect logs for absence of HTTP requests.
-- Production token-protection behavior for command filenames/options is explicitly out of scope.
+- Updated master `cb7cde8` (including PDFTR-9A `a6027c4`) was merged into this branch as `f8c43a9`.
+- Current diagnostics use fixed filenames directly below `report_dir`; `Path.replace()` silently
+  replaces artifacts from an earlier execution.
+- A success-report write happens after the translated PDF has already passed validation and been
+  published. Its `OSError` currently escapes without a stable exit code or an explicit statement
+  that the translated PDF remains valid and available.
+- The smallest compatible change is a newly reserved per-execution directory, no-replace atomic
+  publication, and a dedicated diagnostic-publication failure contract. Cache/workspace identity,
+  PDF rendering, translation, OCR and model loading remain unchanged.

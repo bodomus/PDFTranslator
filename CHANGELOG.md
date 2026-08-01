@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Opt-in per-translation diagnostics with versioned privacy-safe JSON and self-contained offline
+  HTML reports, stable warning codes, page/block geometry, cache/OCR/fitting/overflow/validation
+  evidence, durations, file sizes, and measurable Python peak memory.
+- `--debug-layout` publication with source/final rectangles plus selectable block IDs and final
+  states, kept separate from the validated normal output PDF.
+- `--report`, `--report-format`, `--report-dir`, `--debug-layout`, and
+  `--include-report-text` end-to-end CLI options; source/translated text remains excluded by default.
 - Versioned 61-sample synthetic English-to-Russian benchmark dataset with explicit PDFTR-8
   regressions for protected token `1900-1` and page-7 numeric/date corruption with `F￾`.
 - `pdftranslate benchmark-translation` with atomic JSON/Markdown reports, backend/model/tokenizer/
@@ -83,6 +90,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `pdftranslate --version` and `pdftranslate doctor` commands.
 - Typed environment-based settings and centralized Rich logging.
 - Tests, Ruff, mypy, pre-commit, PowerShell helpers, and cross-platform CI.
+
+### Changed
+
+- Translation diagnostics now publish into a unique per-execution directory and reject existing
+  JSON, HTML, or debug-PDF targets instead of silently replacing them.
+- A success-report/debug publication failure now returns dedicated exit code 11 while preserving and
+  naming the already validated translated PDF.
 
 ### Fixed
 
