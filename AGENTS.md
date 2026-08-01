@@ -32,6 +32,6 @@
 - Before starting a YouTrack or other application ticket, save its Markdown text under
   `Tickets/<ticket-name>.md` and attach that file to the ticket.
 - Update ticket fields and workflow state while work progresses whenever possible.
-- When a ticket is complete, create `review-<TICKET-ID>.md` describing the completed work and
-  attach it to the ticket.
+- When a ticket is complete, create `reviews/review-<TICKET-ID>.md` describing the completed work
+  and attach it to the ticket. Store all ticket review files under `reviews/`.
 - Stop and ask the user before resolving ambiguous or conflicting requirements.
