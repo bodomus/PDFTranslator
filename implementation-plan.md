@@ -1,25 +1,19 @@
-# Implementation plan — PDFTR-8
+# Implementation Plan — PDFTR-9
 
-1. Define versioned validation options, document/stage/integrity/manual/defect result models and
-   stable JSON serialization.
-2. Implement deterministic corpus manifest/discovery and subset selection while excluding result
-   trees and translated outputs.
-3. Implement sequential dry-run and full validation orchestration around `plan_pipeline()`,
-   `run_pipeline()`, and one shared translation runtime, capturing stage timing and source hashes.
-4. Implement atomic per-document JSON, summary JSON, summary Markdown, logs, and manual-review
-   template output.
-5. Add a stdlib validation CLI and `scripts/validate-real-pdfs.ps1` wrapper with explicit corpus,
-   output, subset, dry-run, model/device/OCR/cache/resume options.
-6. Add generated-PDF/fake-backed tests for success, text/image/scanned/mixed classification,
-   extraction/translation/render/OCR/validation failures, continuation, reports, Unicode paths,
-   cache/resume, and checksum preservation.
-7. Update README, CHANGELOG, ignore rules, and reproduction instructions.
-8. Run focused tests, controlled representative-PDF validation, full quality checks, post-change
-   Graphify/CRG impact review, and create `implementation-report.md` plus
-   `reviews/review-PDFTR-8.md` before moving the ticket to `In Review`.
-9. Correct the rejected real-world proof: replace the NLLB-fragile Unicode protected-token
-   sentinel, conservatively coalesce split paragraph blocks with dehyphenation, add regression
-   tests, and validate a full English paragraph on real page 7.
-10. Render and visually inspect page 7, verify Russian search/extraction/selectability/copyability
-    and absence of the source English paragraph, record page 3 as a mapping/rendering defect, then
-    remove all `Tasks/` paths from Git tracking while preserving the local files.
+1. Add versioned benchmark dataset/result/review/finding models with strict uniqueness and stage
+   trace validation.
+2. Add pure deterministic checks that classify extraction, segmentation, protected-token, model,
+   terminology and rendering findings.
+3. Add a reusable runner that protects, segments, batches, restores and records model outputs,
+   while loading no model itself.
+4. Add atomic JSON/Markdown reporting and baseline comparison.
+5. Add the thin `benchmark-translation` Typer command and expose only necessary package symbols.
+6. Add a 61-sample synthetic dataset including both PDFTR-8 regression cases and all required text
+   categories.
+7. Add fake-backed tests for validation, malformed data, checks, stage attribution, reports,
+   comparison, CLI behavior and no model download.
+8. Update README and CHANGELOG with schemas, scoring scale, command examples and interpretation.
+9. Run focused tests, CLI smoke/dataset validation, full `scripts/check.ps1`, post-change CRG and an
+   explicit offline real-NLLB benchmark when the existing local model cache is available.
+10. Write `implementation-report.md` and `reviews/review-PDFTR-9.md`, attach them and benchmark
+    results to YouTrack, commit and push the branch. Do not start the next ticket.
