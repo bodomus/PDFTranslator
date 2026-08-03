@@ -91,6 +91,7 @@ Branch: `codex/PDFTR-11-paragraph-reconstruction-and-reading-order`.
 - Focused reconstruction: `5 passed`.
 - Expanded focused extraction/translation/rendering/pipeline/batch suite: `83 passed`.
 - Full `scripts/check.ps1`: `166 passed, 1 skipped in 8.97s`; coverage `86.81%` (required 80%).
+- GitHub Actions run `30787940211` for commit `8f69024` completed successfully: Python 3.12 on `ubuntu-latest` and `windows-latest` both passed. Run: https://github.com/bodomus/PDFTranslator/actions/runs/30787940211
 - Ruff format: final check reported `110 files already formatted`.
 - Ruff lint: passed.
 - mypy: no issues in 67 source files.

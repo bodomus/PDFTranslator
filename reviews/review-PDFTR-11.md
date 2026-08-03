@@ -34,23 +34,24 @@ behavior is covered by generated fixtures, and no real-model/CUDA/OCR dependency
     rendering/pipeline/batch tests.
 14. Full `scripts/check.ps1` passed with 166 tests, 1 expected skip, 86.81% coverage, Ruff, and
     mypy over 67 source files.
-15. Generated end-to-end output under `temp/pytest-pdftr11d/` reopened successfully, contains
+15. GitHub Actions run `30787940211` passed for commit `8f69024` on both Python 3.12 / Ubuntu and Python 3.12 / Windows jobs.
+16. Generated end-to-end output under `temp/pytest-pdftr11d/` reopened successfully, contains
     searchable/extractable `Русский перевод`, and does not contain `English source paragraph`.
-16. Synthetic benchmark result for 1,000 blocks: 999 decisions, deterministic repeated result,
+17. Synthetic benchmark result for 1,000 blocks: 999 decisions, deterministic repeated result,
     0.011996 seconds, 83,357.65 blocks/s. The result is stored only in
     `temp/PDFTR-11-benchmark.json` and is not a model/rendering benchmark.
-17. Graphify preflight conclusions were source-verified; the post-change graph was rebuilt to
+18. Graphify preflight conclusions were source-verified; the post-change graph was rebuilt to
     1,576 nodes, 3,467 edges, and 112 communities.
-18. CRG post-change reported risk 0.60 and 39 heuristic test gaps. Its test-gap detector does not
+19. CRG post-change reported risk 0.60 and 39 heuristic test gaps. Its test-gap detector does not
     reliably connect fixture-driven pytest, dynamic Typer registration, or Pydantic paths; direct
     source inspection and the successful test suite are authoritative. No unexpected dependant
     or disconnected production path was found.
-19. The first Graphify update was denied by the restricted Windows sandbox and then succeeded with
+20. The first Graphify update was denied by the restricted Windows sandbox and then succeeded with
     approved local graph writes. The first CRG panel hit CP1251 output encoding after updating;
     rerunning with UTF-8 completed cleanly.
-20. The generated fixture is valid automated evidence, but this review does not claim new
+21. The generated fixture is valid automated evidence, but this review does not claim new
     real-model, CUDA, OCR, or representative real-world PDF visual validation.
-21. Remaining risk is conservative under-merging on unusual producer geometry and normal renderer
+22. Remaining risk is conservative under-merging on unusual producer geometry and normal renderer
     fitting/overflow limits for complex non-rectangular paragraph shapes. These cases are surfaced
     instead of silently merged or clipped.
 
