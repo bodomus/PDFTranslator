@@ -90,7 +90,7 @@ def test_extract_writes_compact_versioned_json(
     assert "Extracted 1 page(s)" in result.stdout
     payload = output.read_text(encoding="utf-8")
     document = json.loads(payload)
-    assert document["schema_version"] == "1.0"
+    assert document["schema_version"] == "1.2"
     assert document["selected_pages"] == [2]
     assert document["pages"][0]["classification"] == "empty"
     assert payload.count("\n") == 1

@@ -39,6 +39,7 @@ from pdftranslate.pipeline.models import (
     StageProgress,
 )
 from pdftranslate.pipeline.workspace import PipelineWorkspace
+from pdftranslate.reconstruction import ParagraphReconstructionOptions
 from pdftranslate.rendering import (
     OutputPdfError,
     PdfRenderer,
@@ -109,6 +110,23 @@ class TranslationRuntime:
         return self._translator
 
 
+def _reconstruction_options(options: PipelineOptions) -> ParagraphReconstructionOptions:
+    settings = Settings()
+    return ParagraphReconstructionOptions(
+        mode=options.paragraph_reconstruction,
+        left_alignment_tolerance=settings.paragraph_left_alignment_tolerance,
+        indentation_tolerance=settings.paragraph_indentation_tolerance,
+        max_vertical_gap_ratio=settings.paragraph_max_vertical_gap_ratio,
+        min_width_ratio=settings.paragraph_min_width_ratio,
+        column_gutter_ratio=settings.paragraph_column_gutter_ratio,
+        heading_font_ratio=settings.paragraph_heading_font_ratio,
+        footnote_font_ratio=settings.paragraph_footnote_font_ratio,
+        margin_region_ratio=settings.paragraph_margin_region_ratio,
+        cross_page_edge_ratio=settings.paragraph_cross_page_edge_ratio,
+        repeated_margin_min_pages=settings.paragraph_repeated_margin_min_pages,
+    )
+
+
 def default_services(settings: Settings | None = None) -> PipelineServices:
     """Build production adapters without loading the heavyweight model yet."""
     selected_settings = settings or Settings()
@@ -162,7 +180,9 @@ def plan_pipeline(
     try:
         _validate_paths(options, allow_existing_output=True)
         inspection = selected_services.analyzer.inspect(options.input_path)
-        extracted = selected_services.extractor.extract(options.input_path, options.pages)
+        extracted = selected_services.extractor.extract(
+            options.input_path, options.pages, _reconstruction_options(options)
+        )
     except (PdfInputError, OSError) as error:
         raise PipelineExecutionError(
             str(error),
@@ -552,7 +572,9 @@ def _ocr(
 ]:
     stage = PipelineStage.OCR
     source_path = options.input_path.expanduser().resolve()
-    before = services.extractor.extract(source_path, options.pages)
+    before = services.extractor.extract(
+        source_path, options.pages, _reconstruction_options(options)
+    )
     scanned_pages = _scanned_pages(before)
     target_pages = before.selected_pages if options.ocr == "on" else scanned_pages
     reported_pages = _reported_ocr_pages(before, options)
@@ -568,7 +590,9 @@ def _ocr(
         after = before
         warnings: tuple[str, ...] = ()
         if artifact != source_path:
-            after = services.extractor.extract(artifact, options.pages)
+            after = services.extractor.extract(
+                artifact, options.pages, _reconstruction_options(options)
+            )
             warnings = validate_ocr_output(
                 source_path,
                 artifact,
@@ -609,7 +633,9 @@ def _ocr(
             force=options.ocr_force,
         ),
     )
-    after = services.extractor.extract(execution.output_path, options.pages)
+    after = services.extractor.extract(
+        execution.output_path, options.pages, _reconstruction_options(options)
+    )
     warnings = validate_ocr_output(
         source_path,
         execution.output_path,

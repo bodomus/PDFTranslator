@@ -9,9 +9,12 @@ from pydantic import Field, model_validator
 
 from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import DomainModel
+from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphReconstruction
 
-DOCUMENT_SCHEMA_VERSION = "1.0"
-TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.1"
+LEGACY_DOCUMENT_SCHEMA_VERSION = "1.0"
+LEGACY_TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.1"
+DOCUMENT_SCHEMA_VERSION = "1.2"
+TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.3"
 
 
 class SourceDocument(DomainModel):
@@ -87,7 +90,7 @@ class TranslationMetadata(DomainModel):
 class ExtractedDocument(DomainModel):
     """Versioned intermediate representation shared by pipeline stages."""
 
-    schema_version: Literal["1.0", "1.1"] = "1.0"
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = "1.0"
     source: SourceDocument
     page_count: int = Field(ge=1)
     selected_pages: tuple[int, ...]
@@ -96,6 +99,11 @@ class ExtractedDocument(DomainModel):
     password_required: bool
     probable_source_language: str | None = None
     pages: tuple[ExtractedPage, ...]
+    paragraphs: tuple[LogicalParagraph, ...] = ()
+    reconstruction: ParagraphReconstruction | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     warnings: tuple[str, ...] = ()
     translation: TranslationMetadata | None = Field(
         default=None,
@@ -111,10 +119,38 @@ class ExtractedDocument(DomainModel):
             raise ValueError("selected page number exceeds page_count")
         if tuple(sorted(set(self.selected_pages))) != self.selected_pages:
             raise ValueError("selected_pages must be unique and strictly increasing")
-        if self.schema_version == "1.0" and self.translation is not None:
-            raise ValueError("schema 1.0 cannot contain translation metadata")
-        if self.schema_version == "1.1" and self.translation is None:
-            raise ValueError("schema 1.1 requires translation metadata")
+
+        if self.schema_version == LEGACY_DOCUMENT_SCHEMA_VERSION:
+            if self.translation is not None or self.reconstruction is not None or self.paragraphs:
+                raise ValueError("schema 1.0 cannot contain translation or reconstruction data")
+            return self
+        if self.schema_version == LEGACY_TRANSLATED_DOCUMENT_SCHEMA_VERSION:
+            if self.translation is None:
+                raise ValueError("schema 1.1 requires translation metadata")
+            if self.reconstruction is not None or self.paragraphs:
+                raise ValueError("schema 1.1 cannot contain paragraph reconstruction data")
+            return self
+
+        if self.reconstruction is None:
+            raise ValueError(f"schema {self.schema_version} requires reconstruction evidence")
+        if len(self.paragraphs) != self.reconstruction.metrics.logical_paragraphs:
+            raise ValueError("paragraph count must match reconstruction metrics")
+        source_ids = {block.id for page in self.pages for block in page.text_blocks}
+        mapped_ids = {
+            fragment.mapping.source_block_id
+            for paragraph in self.paragraphs
+            for fragment in paragraph.fragments
+        }
+        if not mapped_ids.issubset(source_ids):
+            raise ValueError("paragraph mapping references an unknown source block")
+        if self.schema_version == DOCUMENT_SCHEMA_VERSION:
+            if self.translation is not None:
+                raise ValueError("schema 1.2 cannot contain translation metadata")
+            if any(paragraph.translated_text is not None for paragraph in self.paragraphs):
+                raise ValueError("schema 1.2 cannot contain translated paragraphs")
+            return self
+        if self.translation is None:
+            raise ValueError("schema 1.3 requires translation metadata")
         return self
 
 

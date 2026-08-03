@@ -18,7 +18,7 @@ from pdftranslate.domain.document import (
     SourceDocument,
 )
 from pdftranslate.domain.page import ExtractedPage, PageClassification
-from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextSpan
+from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextLine, TextSpan
 from pdftranslate.pdf.errors import (
     PdfCorruptError,
     PdfEmptyError,
@@ -26,6 +26,11 @@ from pdftranslate.pdf.errors import (
     PdfNotFoundError,
 )
 from pdftranslate.pdf.page_ranges import parse_page_range
+from pdftranslate.reconstruction import (
+    ParagraphReconstructionOptions,
+    ReconstructionResult,
+    reconstruct_paragraphs,
+)
 
 
 def _bbox(value: object) -> BoundingBox:
@@ -102,9 +107,10 @@ def _text_block_from_dict(
     original_order: int,
     normalized_order: int,
 ) -> TextBlock | None:
+    block_id = f"p{page_number:04d}-b{normalized_order + 1:04d}"
     spans: list[TextSpan] = []
-    normalized_lines: list[str] = []
-    for line in cast(Iterable[Mapping[str, Any]], block.get("lines", ())):
+    lines: list[TextLine] = []
+    for line_order, line in enumerate(cast(Iterable[Mapping[str, Any]], block.get("lines", ()))):
         line_spans = [
             span
             for raw_span in cast(Iterable[Mapping[str, Any]], line.get("spans", ()))
@@ -112,19 +118,39 @@ def _text_block_from_dict(
         ]
         spans.extend(line_spans)
         line_text = "".join(span.text for span in line_spans).strip()
-        if line_text:
-            normalized_lines.append(line_text)
+        if not line_text:
+            continue
+        line_bbox = (
+            _bbox(line["bbox"])
+            if line.get("bbox") is not None
+            else BoundingBox(
+                x0=min(span.bbox.x0 for span in line_spans),
+                y0=min(span.bbox.y0 for span in line_spans),
+                x1=max(span.bbox.x1 for span in line_spans),
+                y1=max(span.bbox.y1 for span in line_spans),
+            )
+        )
+        lines.append(
+            TextLine(
+                id=f"{block_id}-l{len(lines) + 1:04d}",
+                text=line_text,
+                bbox=line_bbox,
+                original_order=line_order,
+                spans=tuple(line_spans),
+            )
+        )
 
-    text = _normalize_text(normalized_lines)
+    text = _normalize_text(line.text for line in lines)
     if not text:
         return None
     return TextBlock(
-        id=f"p{page_number:04d}-b{normalized_order + 1:04d}",
+        id=block_id,
         text=text,
         bbox=_bbox(block["bbox"]),
         original_order=original_order,
         normalized_order=normalized_order,
         spans=tuple(spans),
+        lines=tuple(lines),
     )
 
 
@@ -211,6 +237,19 @@ class PyMuPdfBackend:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or Settings()
+        self._reconstruction_options = ParagraphReconstructionOptions(
+            mode=self._settings.paragraph_reconstruction_mode,
+            left_alignment_tolerance=self._settings.paragraph_left_alignment_tolerance,
+            indentation_tolerance=self._settings.paragraph_indentation_tolerance,
+            max_vertical_gap_ratio=self._settings.paragraph_max_vertical_gap_ratio,
+            min_width_ratio=self._settings.paragraph_min_width_ratio,
+            column_gutter_ratio=self._settings.paragraph_column_gutter_ratio,
+            heading_font_ratio=self._settings.paragraph_heading_font_ratio,
+            footnote_font_ratio=self._settings.paragraph_footnote_font_ratio,
+            margin_region_ratio=self._settings.paragraph_margin_region_ratio,
+            cross_page_edge_ratio=self._settings.paragraph_cross_page_edge_ratio,
+            repeated_margin_min_pages=self._settings.paragraph_repeated_margin_min_pages,
+        )
 
     @contextmanager
     def open_pdf(self, input_path: Path) -> Iterator[pymupdf.Document]:
@@ -247,10 +286,17 @@ class PyMuPdfBackend:
                 )
             if document.page_count == 0:
                 raise PdfEmptyError(f"PDF contains no pages: {path}")
-            extracted = self._extract_validated(document, source, None)
+            extracted = self._extract_validated(
+                document, source, None, self._reconstruction_options
+            )
         return _inspection_from_document(extracted)
 
-    def extract(self, input_path: Path, page_range: str | None = None) -> ExtractedDocument:
+    def extract(
+        self,
+        input_path: Path,
+        page_range: str | None = None,
+        reconstruction_options: ParagraphReconstructionOptions | None = None,
+    ) -> ExtractedDocument:
         path = input_path.expanduser()
         with self.open_pdf(path) as document:
             source = source_identity(path)
@@ -258,16 +304,22 @@ class PyMuPdfBackend:
                 raise PdfEncryptedError(f"PDF requires a password and cannot be extracted: {path}")
             if document.page_count == 0:
                 raise PdfEmptyError(f"PDF contains no pages: {path}")
-            return self._extract_validated(document, source, page_range)
+            return self._extract_validated(
+                document,
+                source,
+                page_range,
+                reconstruction_options or self._reconstruction_options,
+            )
 
     def _extract_validated(
         self,
         document: pymupdf.Document,
         source: SourceDocument,
         page_range: str | None,
+        reconstruction_options: ParagraphReconstructionOptions,
     ) -> ExtractedDocument:
         try:
-            return self._extract_open_document(document, source, page_range)
+            return self._extract_open_document(document, source, page_range, reconstruction_options)
         except (PdfCorruptError, PdfEmptyError, PdfEncryptedError):
             raise
         except (KeyError, IndexError, TypeError, ValueError, RuntimeError) as error:
@@ -280,12 +332,15 @@ class PyMuPdfBackend:
         document: pymupdf.Document,
         source: SourceDocument,
         page_range: str | None,
+        reconstruction_options: ParagraphReconstructionOptions,
     ) -> ExtractedDocument:
         selected_pages = parse_page_range(page_range, document.page_count)
         pages = tuple(self._extract_page(document[number - 1], number) for number in selected_pages)
-        language = _probable_language(block.text for page in pages for block in page.text_blocks)
+        reconstructed: ReconstructionResult = reconstruct_paragraphs(pages, reconstruction_options)
+        language = _probable_language(paragraph.text for paragraph in reconstructed.paragraphs)
         warnings = tuple(dict.fromkeys(warning for page in pages for warning in page.warnings))
         return ExtractedDocument(
+            schema_version="1.2",
             source=source,
             page_count=document.page_count,
             selected_pages=selected_pages,
@@ -294,6 +349,8 @@ class PyMuPdfBackend:
             password_required=False,
             probable_source_language=language,
             pages=pages,
+            paragraphs=reconstructed.paragraphs,
+            reconstruction=reconstructed.evidence,
             warnings=warnings,
         )
 
@@ -318,8 +375,6 @@ class PyMuPdfBackend:
                     text_blocks.append(text_block)
             elif block_type == 1:
                 image_boxes.append(_bbox(block["bbox"]))
-
-        text_blocks = _merge_adjacent_text_blocks(text_blocks, page_number)
 
         page_area = max(float(page.rect.width * page.rect.height), 1.0)
         image_area_ratio = min(sum(box.area for box in image_boxes) / page_area, 1.0)

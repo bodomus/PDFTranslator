@@ -42,6 +42,16 @@ class TextSpan(DomainModel):
     italic: bool | None = None
 
 
+class TextLine(DomainModel):
+    """A source line with stable identity, geometry, and same-style spans."""
+
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    bbox: BoundingBox
+    original_order: int = Field(ge=0)
+    spans: tuple[TextSpan, ...] = ()
+
+
 class TextBlock(DomainModel):
     """A source block plus an optional translated value."""
 
@@ -51,4 +61,5 @@ class TextBlock(DomainModel):
     original_order: int = Field(ge=0)
     normalized_order: int = Field(ge=0)
     spans: tuple[TextSpan, ...] = ()
+    lines: tuple[TextLine, ...] = ()
     translated_text: str | None = Field(default=None, exclude_if=lambda value: value is None)

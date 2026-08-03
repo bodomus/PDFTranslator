@@ -12,6 +12,7 @@ from pydantic import Field
 from pdftranslate.domain.text_block import DomainModel
 from pdftranslate.pipeline.exit_codes import ExitCode
 from pdftranslate.pipeline.models import DeviceRequest, OcrMode, PipelineOptions
+from pdftranslate.reconstruction import ReconstructionMode
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class BatchOptions:
     resume: bool = False
     continue_on_error: bool = False
     ocr: OcrMode = "auto"
+    paragraph_reconstruction: ReconstructionMode = "conservative"
     device: DeviceRequest = "auto"
     report_path: Path | None = None
     cache_dir: Path | None = None
@@ -46,6 +48,8 @@ class BatchOptions:
             raise ValueError("--resume and --overwrite cannot be used together")
         if self.device not in {"auto", "cpu", "cuda"}:
             raise ValueError("device must be one of: auto, cpu, cuda")
+        if self.paragraph_reconstruction not in {"conservative", "off"}:
+            raise ValueError("paragraph reconstruction must be conservative or off")
         if self.ocr not in {"auto", "on", "off"}:
             raise ValueError("ocr mode must be one of: auto, on, off")
         if self.report_path is not None and self.report_path.suffix.casefold() != ".json":
@@ -81,6 +85,7 @@ class BatchOptions:
             overwrite=self.overwrite,
             font_path=self.font_path,
             ocr=self.ocr,
+            paragraph_reconstruction=self.paragraph_reconstruction,
         )
 
 

@@ -26,7 +26,7 @@ class FakeCliTranslator:
         return [f"RU {text}" for text in texts]
 
 
-def test_translate_command_uses_fake_backend_and_writes_schema_1_1(
+def test_translate_command_uses_fake_backend_and_writes_schema_1_3(
     tmp_path: Path,
     pdf_factory: PdfFactory,
 ) -> None:
@@ -58,13 +58,13 @@ def test_translate_command_uses_fake_backend_and_writes_schema_1_1(
     loader.assert_called_once()
     assert loader.call_args.kwargs["offline"] is True
     translated = read_document_json(output_json)
-    assert translated.schema_version == "1.1"
+    assert translated.schema_version == "1.3"
     assert translated.translation is not None
     assert translated.translation.status == "completed"
-    block = translated.pages[0].text_blocks[0]
-    assert block.translated_text is not None
-    assert block.translated_text.startswith("RU ")
-    assert block.text in block.translated_text
+    paragraph = translated.paragraphs[0]
+    assert paragraph.translated_text is not None
+    assert paragraph.translated_text.startswith("RU ")
+    assert paragraph.text in paragraph.translated_text
 
 
 def test_translate_rejects_unknown_backend_before_model_loading(

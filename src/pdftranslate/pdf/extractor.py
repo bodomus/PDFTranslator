@@ -7,6 +7,7 @@ from pathlib import Path
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.pdf.pymupdf_backend import PyMuPdfBackend
+from pdftranslate.reconstruction import ParagraphReconstructionOptions
 
 
 class PdfExtractor:
@@ -19,5 +20,6 @@ class PdfExtractor:
         self,
         input_path: Path,
         page_range: str | None = None,
+        reconstruction_options: ParagraphReconstructionOptions | None = None,
     ) -> ExtractedDocument:
-        return self._backend.extract(input_path, page_range)
+        return self._backend.extract(input_path, page_range, reconstruction_options)

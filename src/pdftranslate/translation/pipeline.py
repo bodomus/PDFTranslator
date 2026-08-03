@@ -108,7 +108,21 @@ def translate_document(
     progress: ProgressCallback | None = None,
     clock: Clock = lambda: datetime.now(UTC),
 ) -> ExtractedDocument:
-    """Translate all eligible blocks and checkpoint resumable schema 1.1 output."""
+    """Translate reconstructed paragraphs or legacy physical blocks."""
+    if document.schema_version == "1.2":
+        from pdftranslate.translation.paragraphs import translate_paragraphs
+
+        return translate_paragraphs(
+            document,
+            translator=translator,
+            cache=cache,
+            options=options,
+            resume_document=resume_document,
+            checkpoint=checkpoint,
+            progress=progress,
+            clock=clock,
+            progress_factory=TranslationProgress,
+        )
     if document.translation is not None:
         raise ResumeMismatchError("input document must be the original extracted JSON")
     total_blocks = sum(len(page.text_blocks) for page in document.pages)

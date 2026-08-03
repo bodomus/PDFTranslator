@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import Field
 
 from pdftranslate.domain.text_block import BoundingBox, DomainModel
+from pdftranslate.reconstruction import ParagraphReconstruction
 
 
 class DiagnosticCode(StrEnum):
@@ -80,6 +81,10 @@ class ReportSummary(DomainModel):
     peak_ram_bytes: int | None = Field(default=None, ge=0)
     peak_vram_bytes: int | None = Field(default=None, ge=0)
     selected_font: str | None = None
+    raw_lines: int = Field(default=0, ge=0)
+    logical_paragraphs: int = Field(default=0, ge=0)
+    ambiguous_decisions: int = Field(default=0, ge=0)
+    cross_page_merges: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):
@@ -96,3 +101,4 @@ class TranslationReport(DomainModel):
     findings: tuple[DiagnosticFinding, ...] = ()
     text_included: bool = False
     debug_layout_path: str | None = None
+    reconstruction: ParagraphReconstruction | None = None

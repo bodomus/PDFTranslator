@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Typed schema 1.2/1.3 paragraph reconstruction with preserved raw lines/blocks, reversible source
+  mappings, conservative reading order, two-column/list/heading/caption/footnote boundaries,
+  protected hyphenation, strong cross-page continuation, ambiguity decisions, and metrics.
+- `--paragraph-reconstruction conservative|off` for root, extract, and batch workflows plus typed
+  `PDFTRANSLATE_PARAGRAPH_*` tolerance settings.
+- Paragraph-aware translation, cache/resume identity, diagnostics, and rendering that redacts every
+  mapped source fragment while inserting each logical translation exactly once.
+
 - Opt-in per-translation diagnostics with versioned privacy-safe JSON and self-contained offline
   HTML reports, stable warning codes, page/block geometry, cache/OCR/fitting/overflow/validation
   evidence, durations, file sizes, and measurable Python peak memory.

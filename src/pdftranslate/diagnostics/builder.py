@@ -15,6 +15,7 @@ from pdftranslate.diagnostics.models import (
     TranslationReport,
 )
 from pdftranslate.domain.document import ExtractedDocument, TranslationStatistics
+from pdftranslate.reconstruction import DecisionAction
 from pdftranslate.rendering.models import RenderResult
 
 
@@ -54,10 +55,36 @@ def build_success_report(
             )
             for warning in render.warnings
         )
+    if translated.reconstruction is not None:
+        findings.extend(
+            DiagnosticFinding(
+                code=DiagnosticCode.READING_ORDER_AMBIGUOUS,
+                severity="warning",
+                stage="extract",
+                message=(
+                    f"Ambiguous boundary between {decision.previous_fragment_id} "
+                    f"and {decision.current_fragment_id}: "
+                    + ", ".join(reason.value for reason in decision.reasons)
+                ),
+                page_number=decision.page_number,
+                block_id=decision.current_fragment_id,
+            )
+            for decision in translated.reconstruction.decisions
+            if decision.action is DecisionAction.AMBIGUOUS
+        )
     pages: list[PageDiagnostic] = []
     for page in translated.pages:
         blocks: list[BlockDiagnostic] = []
-        for block in page.text_blocks:
+        units = (
+            tuple(
+                paragraph
+                for paragraph in translated.paragraphs
+                if paragraph.anchor_page_number == page.page_number
+            )
+            if translated.schema_version == "1.3"
+            else page.text_blocks
+        )
+        for block in units:
             layout = render_by_id.get(block.id)
             codes: list[DiagnosticCode] = []
             state = "unknown"
@@ -144,6 +171,16 @@ def build_success_report(
             cache_hits=statistics.cache_hits,
             cache_misses=statistics.cache_misses,
             translated_segments=statistics.translated_segments,
+            raw_lines=translated.reconstruction.metrics.raw_lines
+            if translated.reconstruction
+            else sum(len(block.lines) for page in translated.pages for block in page.text_blocks),
+            logical_paragraphs=len(translated.paragraphs),
+            ambiguous_decisions=translated.reconstruction.metrics.ambiguous_decisions
+            if translated.reconstruction
+            else 0,
+            cross_page_merges=translated.reconstruction.metrics.cross_page_merges
+            if translated.reconstruction
+            else 0,
             ocr_pages=len(ocr_pages),
             font_reductions=render.font_reductions if render else 0,
             expanded_blocks=render.expanded_blocks if render else 0,
@@ -159,6 +196,7 @@ def build_success_report(
         findings=tuple(findings),
         text_included=include_text,
         debug_layout_path=str(debug_layout_path) if debug_layout_path else None,
+        reconstruction=translated.reconstruction,
     )
 
 
@@ -194,6 +232,10 @@ def build_failure_report(
             cache_hits=0,
             cache_misses=0,
             translated_segments=0,
+            raw_lines=0,
+            logical_paragraphs=0,
+            ambiguous_decisions=0,
+            cross_page_merges=0,
             ocr_pages=0,
             font_reductions=0,
             expanded_blocks=0,

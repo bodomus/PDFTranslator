@@ -21,7 +21,14 @@ class DocumentJsonError(ValueError):
 
 def document_to_json(document: ExtractedDocument, *, pretty: bool = True) -> str:
     """Serialize a document with stable field names and Unicode text."""
-    return document.model_dump_json(indent=2 if pretty else None, by_alias=True)
+    excluded = (
+        {"paragraphs", "reconstruction"} if document.schema_version in {"1.0", "1.1"} else None
+    )
+    return document.model_dump_json(
+        indent=2 if pretty else None,
+        by_alias=True,
+        exclude=excluded,
+    )
 
 
 def document_from_json(value: str) -> ExtractedDocument:

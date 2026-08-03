@@ -51,7 +51,7 @@ def test_extracts_one_page_text_with_layout_metadata(
 
     document = PdfExtractor().extract(source)
 
-    assert document.schema_version == "1.0"
+    assert document.schema_version == "1.2"
     assert document.page_count == 1
     assert document.selected_pages == (1,)
     assert document.source.file_size > 0
@@ -75,6 +75,11 @@ def test_extracts_one_page_text_with_layout_metadata(
     assert isinstance(block.spans[0].text_color, int)
     assert block.spans[0].bold is False
     assert block.spans[0].italic is False
+    assert block.lines
+    assert document.paragraphs
+    assert document.reconstruction is not None
+    assert document.reconstruction.metrics.raw_blocks == len(page.text_blocks)
+    assert document.paragraphs[0].fragments[0].mapping.source_block_id == block.id
 
 
 def test_extracts_selected_pages_from_multi_page_pdf(

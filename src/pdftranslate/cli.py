@@ -43,6 +43,7 @@ from pdftranslate.pipeline import (
     run_pipeline,
 )
 from pdftranslate.pipeline.models import ReportFormat
+from pdftranslate.reconstruction import ParagraphReconstructionOptions, ReconstructionMode
 from pdftranslate.rendering import PdfRenderer, RenderingError, RenderOptions
 from pdftranslate.serialization import (
     DocumentJsonError,
@@ -282,6 +283,13 @@ def translate_pdf(
         bool,
         typer.Option("--allow-expand", help="Expand blocks downward within safe limits."),
     ] = False,
+    paragraph_reconstruction: Annotated[
+        str,
+        typer.Option(
+            "--paragraph-reconstruction",
+            help="Logical paragraph reconstruction: conservative or off.",
+        ),
+    ] = "conservative",
     ocr: Annotated[
         str,
         typer.Option("--ocr", help="OCR preprocessing: auto, on, or off."),
@@ -347,6 +355,7 @@ def translate_pdf(
             input_path=input_path,
             output_path=output or default_output_path(input_path),
             pages=pages,
+            paragraph_reconstruction=cast(ReconstructionMode, paragraph_reconstruction),
             backend=backend,
             model=model,
             device=cast(DeviceRequest, device),
@@ -486,6 +495,13 @@ def translate_batch(
         bool,
         typer.Option("--continue-on-error", help="Continue processing after a file failure."),
     ] = False,
+    paragraph_reconstruction: Annotated[
+        str,
+        typer.Option(
+            "--paragraph-reconstruction",
+            help="Logical paragraph reconstruction: conservative or off.",
+        ),
+    ] = "conservative",
     ocr: Annotated[
         str,
         typer.Option("--ocr", help="OCR preprocessing for each PDF: auto, on, or off."),
@@ -511,6 +527,7 @@ def translate_batch(
             resume=resume,
             continue_on_error=continue_on_error,
             ocr=cast(OcrMode, ocr),
+            paragraph_reconstruction=cast(ReconstructionMode, paragraph_reconstruction),
             device=cast(DeviceRequest, device),
             report_path=report,
         )
@@ -623,6 +640,13 @@ def extract_pdf(
         str | None,
         typer.Option("--pages", help="One-based page range, for example 1,3-5."),
     ] = None,
+    paragraph_reconstruction: Annotated[
+        str,
+        typer.Option(
+            "--paragraph-reconstruction",
+            help="Logical paragraph reconstruction: conservative or off.",
+        ),
+    ] = "conservative",
     pretty: Annotated[
         bool,
         typer.Option("--pretty/--compact", help="Select formatted or compact JSON."),
@@ -634,7 +658,11 @@ def extract_pdf(
 ) -> None:
     """Extract structured text blocks into a stable JSON representation."""
     try:
-        document = PdfExtractor(Settings()).extract(input_path, pages)
+        document = PdfExtractor(Settings()).extract(
+            input_path,
+            pages,
+            ParagraphReconstructionOptions(mode=cast(ReconstructionMode, paragraph_reconstruction)),
+        )
         write_document_json(document, output, pretty=pretty, overwrite=overwrite)
     except (PdfInputError, OutputExistsError, OSError) as error:
         _exit_with_error(error)

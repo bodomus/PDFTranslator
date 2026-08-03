@@ -6,7 +6,7 @@ from pdftranslate.domain.document import (
     TranslationStatistics,
 )
 from pdftranslate.domain.page import ExtractedPage, PageClassification
-from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextSpan
+from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextLine, TextSpan
 
 __all__ = [
     "BoundingBox",
@@ -14,6 +14,7 @@ __all__ = [
     "ExtractedPage",
     "PageClassification",
     "TextBlock",
+    "TextLine",
     "TextSpan",
     "TranslationMetadata",
     "TranslationStatistics",

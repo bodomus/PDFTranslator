@@ -15,6 +15,7 @@ from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.text_block import BoundingBox, TextBlock
 from pdftranslate.pdf import PdfExtractor
 from pdftranslate.pdf.pymupdf_backend import source_identity
+from pdftranslate.reconstruction import LogicalParagraph
 from pdftranslate.rendering.errors import OutputPdfError, RenderingInputError, SourceMismatchError
 from pdftranslate.rendering.fonts import discover_font, required_cyrillic_characters, validate_font
 from pdftranslate.rendering.layout import (
@@ -72,10 +73,14 @@ class PdfRenderer:
         _validate_output_paths(source, output, debug_output, settings.overwrite)
         _validate_document(source, translated, settings.force_source_mismatch)
 
-        translations = tuple(
-            cast(str, block.translated_text)
-            for page in translated.pages
-            for block in page.text_blocks
+        translations = (
+            tuple(cast(str, paragraph.translated_text) for paragraph in translated.paragraphs)
+            if translated.schema_version == "1.3"
+            else tuple(
+                cast(str, block.translated_text)
+                for page in translated.pages
+                for block in page.text_blocks
+            )
         )
         selected_font = discover_font(font_path)
         validate_font(selected_font, translations)
@@ -89,18 +94,28 @@ class PdfRenderer:
         try:
             document = _open_source(source)
             try:
+                paragraph_mode = translated.schema_version == "1.3"
+                blocks_by_page = _paragraph_blocks_by_page(translated) if paragraph_mode else {}
+                if paragraph_mode:
+                    _redact_paragraph_fragments(document, translated, settings, warnings)
                 for page_model in translated.pages:
                     page = document[page_model.source_index]
+                    render_blocks = (
+                        blocks_by_page.get(page_model.page_number, ())
+                        if paragraph_mode
+                        else page_model.text_blocks
+                    )
                     page_plans, page_warnings = _plan_page(
                         page,
                         page_model.page_number,
-                        page_model.text_blocks,
+                        render_blocks,
                         selected_font,
                         settings,
                     )
                     plans.extend(page_plans)
                     warnings.extend(page_warnings)
-                    _redact_page(page, page_plans, settings.redaction_padding, warnings)
+                    if not paragraph_mode:
+                        _redact_page(page, page_plans, settings.redaction_padding, warnings)
                     _insert_page(page, page_plans, selected_font, settings.line_height)
                     for plan in page_plans:
                         text = cast(str, plan.block.translated_text)
@@ -147,6 +162,55 @@ class PdfRenderer:
         )
 
 
+def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
+    first = paragraph.fragments[0]
+    return TextBlock(
+        id=paragraph.id,
+        text=paragraph.text,
+        translated_text=paragraph.translated_text,
+        bbox=paragraph.bbox,
+        original_order=first.mapping.original_order,
+        normalized_order=first.mapping.normalized_order,
+        spans=paragraph.spans,
+    )
+
+
+def _paragraph_blocks_by_page(
+    translated: ExtractedDocument,
+) -> dict[int, tuple[TextBlock, ...]]:
+    grouped: dict[int, list[TextBlock]] = {}
+    for paragraph in translated.paragraphs:
+        grouped.setdefault(paragraph.anchor_page_number, []).append(_paragraph_block(paragraph))
+    return {page: tuple(blocks) for page, blocks in grouped.items()}
+
+
+def _redact_paragraph_fragments(
+    document: pymupdf.Document,
+    translated: ExtractedDocument,
+    options: RenderOptions,
+    warnings: list[str],
+) -> None:
+    page_indices = {page.page_number: page.source_index for page in translated.pages}
+    seen: set[tuple[int, float, float, float, float]] = set()
+    for paragraph in translated.paragraphs:
+        for fragment in paragraph.fragments:
+            box = fragment.bbox
+            key = (fragment.mapping.page_number, box.x0, box.y0, box.x1, box.y1)
+            if key in seen:
+                warnings.append(
+                    f"paragraph {paragraph.id}: duplicate source fragment was redacted once"
+                )
+                continue
+            seen.add(key)
+            page = document[page_indices[fragment.mapping.page_number]]
+            rect = _padded_rect(_rect(box), page.rect, options.redaction_padding)
+            background = _sample_background(page, _rect(box))
+            page.add_redact_annot(rect, fill=background, cross_out=False)
+    for page_number in {item[0] for item in seen}:
+        page = document[page_indices[page_number]]
+        page.apply_redactions(images=0, graphics=0, text=0)
+
+
 def _validate_output_paths(
     source: Path,
     output: Path,
@@ -170,19 +234,28 @@ def _validate_output_paths(
 
 def _validate_document(source: Path, translated: ExtractedDocument, force_mismatch: bool) -> None:
     metadata = translated.translation
-    if translated.schema_version != "1.1" or metadata is None:
-        raise RenderingInputError("rendering requires translated document schema 1.1")
+    if translated.schema_version not in {"1.1", "1.3"} or metadata is None:
+        raise RenderingInputError("rendering requires translated document schema 1.1 or 1.3")
     if metadata.status != "completed":
         raise RenderingInputError("rendering requires a completed translation")
-    missing = tuple(
-        block.id
-        for page in translated.pages
-        for block in page.text_blocks
-        if block.translated_text is None or not block.translated_text.strip()
-    )
+    if translated.schema_version == "1.3":
+        missing = tuple(
+            paragraph.id
+            for paragraph in translated.paragraphs
+            if paragraph.translated_text is None or not paragraph.translated_text.strip()
+        )
+        label = "paragraph"
+    else:
+        missing = tuple(
+            block.id
+            for page in translated.pages
+            for block in page.text_blocks
+            if block.translated_text is None or not block.translated_text.strip()
+        )
+        label = "block"
     if missing:
         raise RenderingInputError(
-            f"translated text is missing for block(s): {', '.join(missing[:8])}"
+            f"translated text is missing for {label}(s): {', '.join(missing[:8])}"
         )
 
     actual_identity = source_identity(source)
@@ -197,7 +270,10 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
         )
 
     selected_range = ",".join(str(number) for number in translated.selected_pages)
-    current = PdfExtractor().extract(source, selected_range)
+    reconstruction_options = (
+        translated.reconstruction.options if translated.reconstruction is not None else None
+    )
+    current = PdfExtractor().extract(source, selected_range, reconstruction_options)
     if current.page_count != translated.page_count:
         raise SourceMismatchError("source PDF page count does not match translated JSON")
     if len(current.pages) != len(translated.pages):
@@ -228,6 +304,17 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
             if not _bbox_close(actual_block.bbox, expected_block.bbox):
                 raise SourceMismatchError(f"bounding box mismatch for block {expected_block.id}")
             _validate_bbox(expected_block.bbox, expected_page.width, expected_page.height)
+    if translated.schema_version == "1.3":
+        actual_paragraphs = tuple(
+            (item.id, item.text, item.fragments) for item in current.paragraphs
+        )
+        expected_paragraphs = tuple(
+            (item.id, item.text, item.fragments) for item in translated.paragraphs
+        )
+        if actual_paragraphs != expected_paragraphs:
+            raise SourceMismatchError(
+                "paragraph reconstruction or source mapping does not match the source PDF"
+            )
 
 
 def _plan_page(

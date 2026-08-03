@@ -62,12 +62,13 @@ uv run pdftranslate extract .\manual.pdf --pages 1,3-5 --output .\selected.json
 uv run pdftranslate extract .\manual.pdf --output .\manual.document.json --compact --overwrite
 ```
 
-The version 1.0 JSON schema includes the absolute source path, byte size and SHA-256 fingerprint,
-PDF metadata, total and selected pages, page dimensions and rotation, classification, actual image
-placements, extraction warnings, and text blocks with bounding boxes, original/normalized order,
-and span typography. Coordinates are numeric values in PyMuPDF's effective page coordinate system.
-Vertically adjacent, similarly aligned line fragments are conservatively coalesced when lowercase
-continuation text proves they belong to one paragraph; split-word hyphenation is removed.
+Extraction writes schema 1.2. It preserves typed physical blocks, source lines, span typography,
+geometry, and original/normalized order, then adds logical paragraphs with reversible source-block
+and line mappings. Conservative reconstruction uses page, column, alignment, gap, indentation,
+font/style, width, punctuation, list/heading/caption/footnote, repeated-margin, and strong cross-page
+signals. It never merges columns, headings into body text, or separate list items by default;
+uncertain boundaries remain separate and are recorded as ambiguous diagnostics. Use
+`--paragraph-reconstruction off` for one logical unit per physical block.
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 
@@ -296,10 +297,12 @@ and numeric identifiers. Embedded URLs, email addresses, file paths, measurement
 are protected and must be restored exactly. Long blocks split at paragraph/sentence boundaries
 where possible; forced splits produce warnings instead of silent truncation.
 
-Translated output uses schema 1.1. It preserves schema 1.0 source fields and original block text,
-adds `translated_text`, and records model/device/settings, timestamps, warnings, counters, and
-completion state. Atomic checkpoints make interruption visible; `--resume` validates the source
-fingerprint, block structure, backend, model, language pair, batch size, and token limit.
+New extracted output uses schema 1.2 and translated output uses schema 1.3. Translation runs once
+per logical paragraph while raw blocks and mapping evidence remain immutable. Rendering redacts
+every mapped source fragment and inserts the translated paragraph once on its anchor page, including
+cross-page continuations without duplicate insertion. Legacy schema 1.0/1.1 JSON remains readable.
+Atomic checkpoints validate the source fingerprint, paragraph structure, backend, model, language
+pair, batch size, and token limit.
 
 ## Translation quality benchmark
 
@@ -400,6 +403,13 @@ Each page is classified as `text`, `scanned`, `mixed`, or `empty`. The determini
 | `PDFTRANSLATE_CLASSIFICATION_MAX_INCIDENTAL_TEXT_BLOCKS` | `1` | Maximum block count still considered incidental |
 | `PDFTRANSLATE_CLASSIFICATION_MIXED_IMAGE_AREA_RATIO` | `0.15` | Image coverage that makes a meaningful-text page mixed |
 | `PDFTRANSLATE_CLASSIFICATION_SCANNED_IMAGE_AREA_RATIO` | `0.65` | Expected coverage for a strong scanned-page signal |
+| `PDFTRANSLATE_PARAGRAPH_RECONSTRUCTION_MODE` | `conservative` | `conservative` reconstruction or physical-block `off` mode |
+| `PDFTRANSLATE_PARAGRAPH_LEFT_ALIGNMENT_TOLERANCE` | `8.0` | Maximum aligned-left difference in PDF points |
+| `PDFTRANSLATE_PARAGRAPH_INDENTATION_TOLERANCE` | `14.0` | Maximum continuation indentation difference |
+| `PDFTRANSLATE_PARAGRAPH_MAX_VERTICAL_GAP_RATIO` | `0.75` | Maximum line gap relative to line height |
+| `PDFTRANSLATE_PARAGRAPH_MIN_WIDTH_RATIO` | `0.72` | Similar-width evidence threshold |
+| `PDFTRANSLATE_PARAGRAPH_COLUMN_GUTTER_RATIO` | `0.08` | Minimum two-column gutter ratio |
+| `PDFTRANSLATE_PARAGRAPH_CROSS_PAGE_EDGE_RATIO` | `0.18` | Top/bottom region required for cross-page merging |
 
 Image coverage is the sum of actual image-placement bounding-box areas divided by visible page
 area, capped at 1. Image-only pages remain `scanned` below the strong threshold and receive a
