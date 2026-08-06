@@ -80,7 +80,8 @@
 - mypy: passed for 76 source files.
 - `scripts/check.ps1`: passed.
 - CLI help: `root=True batch=True translate=True` for `--glossary`.
-- GitHub Actions: pending push at report creation; update after remote workflow completes.
+- GitHub Actions: [CI run #35](https://github.com/bodomus/PDFTranslator/actions/runs/31100059862) passed for commit `2f528fa` in 1m 35s; both Python 3.12 matrix jobs (`ubuntu-latest`, `windows-latest`) completed successfully.
+- CI annotations: GitHub emitted two infrastructure warnings that `actions/checkout@v4` and `astral-sh/setup-uv@v6` still target deprecated Node.js 20 and are being forced onto Node.js 24. These warnings did not fail either job and are unrelated to PDFTR-13 behavior.
 
 ## Remaining risks
 
@@ -92,4 +93,4 @@
 
 ## Recommendation
 
-- Ready for review after GitHub Actions is green. PDFTR-14 was not started.
+- Ready for review and merge: local validation and GitHub Actions are green. PDFTR-14 was not started.

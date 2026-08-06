@@ -2,7 +2,7 @@
 
 ## Verdict
 
-Ready locally for review: focused tests, generated-PDF validation, full `scripts/check.ps1`, coverage, Ruff, and mypy pass. Remote CI is pending push.
+Ready for review and merge: focused tests, generated-PDF validation, full `scripts/check.ps1`, coverage, Ruff, mypy, and [GitHub Actions CI run #35](https://github.com/bodomus/PDFTranslator/actions/runs/31100059862) pass.
 
 ## Scope reviewed
 
@@ -28,6 +28,7 @@ Ready locally for review: focused tests, generated-PDF validation, full `scripts
 - Generated PDF: three pages; Russian target searchable three times; original English term absent; placeholders absent; preserve identifier semantically retained.
 - Benchmark: 64 paragraphs, 128 matches, 0 measured violations/false matches, 0 model calls.
 - Graphify refreshed to 1,824 nodes/3,974 edges; CRG refreshed to 891 indexed rows and reviewed against source/tests.
+- GitHub Actions: commit `2f528fa`; 2/2 Python 3.12 matrix jobs passed on `ubuntu-latest` and `windows-latest` in 1m 35s.
 
 ## Limitations and all review remarks
 
@@ -41,7 +42,8 @@ Ready locally for review: focused tests, generated-PDF validation, full `scripts
 - Initial Graphify update was blocked by sandbox access and succeeded on the elevated retry.
 - Generated PDFs, SQLite cache, benchmark JSON, logs, model assets, and runtime directories remain under ignored `./temp/` and are not committed.
 - Ticket attachment/state update depends on connector support; the ticket Markdown is preserved under `Tickets/` and review/report files are ready for attachment.
+- CI emitted one Node.js 20 deprecation annotation per runner for `actions/checkout@v4` and `astral-sh/setup-uv@v6`; GitHub forced those actions to Node.js 24 and both jobs still passed. This is recorded as infrastructure follow-up, not a PDFTR-13 defect.
 
 ## Recommendation
 
-Merge only after the pushed GitHub Actions workflow is green. Do not start PDFTR-14.
+Ready to merge PDFTR-13. Do not start PDFTR-14.
