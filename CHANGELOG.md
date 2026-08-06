@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Conservative document-level detection for sequential page numbers, uniform/alternating running
+  headers and footers, repeated legal boilerplate, watermark candidates, and ambiguous repeated
+  content, with retained source blocks and auditable confidence/group/policy evidence.
+- Typed `--repeated-elements auto|off` controls for root, batch, and extract workflows; confirmed
+  non-body elements are isolated from paragraph merging, repeated translations are reused, page
+  numbers are preserved, and uncertain content is never automatically removed.
+- PDFTR-10 diagnostics now include repeated-element counts, confidence, group IDs, policies,
+  ambiguity flags, and a stable `REPEATED_ELEMENT_AMBIGUOUS` finding.
 - Typed schema 1.2/1.3 paragraph reconstruction with preserved raw lines/blocks, reversible source
   mappings, conservative reading order, two-column/list/heading/caption/footnote boundaries,
   protected hyphenation, strong cross-page continuation, ambiguity decisions, and metrics.

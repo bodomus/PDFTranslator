@@ -12,6 +12,8 @@ from pdftranslate.domain.document import (
     TranslationMetadata,
     TranslationStatistics,
 )
+from pdftranslate.reconstruction import LogicalParagraph
+from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.translation.cache import TranslationCache
 from pdftranslate.translation.errors import (
     ResumeMismatchError,
@@ -78,7 +80,11 @@ def translate_paragraphs(
         started_at = metadata.started_at
         completed = sum(item.translated_text is not None for item in paragraphs)
         skipped = sum(
-            item.translated_text is not None and should_skip_translation(item.text)
+            item.translated_text is not None
+            and (
+                _paragraph_policy(resume_document, item) is not RepeatedElementPolicy.TRANSLATE
+                or should_skip_translation(item.text)
+            )
             for item in paragraphs
         )
         hits = metadata.statistics.cache_hits
@@ -144,6 +150,17 @@ def translate_paragraphs(
     try:
         for index, paragraph in enumerate(document.paragraphs):
             if paragraphs[index].translated_text is not None:
+                continue
+            policy = _paragraph_policy(document, paragraph)
+            if policy is not RepeatedElementPolicy.TRANSLATE:
+                translated_text = paragraph.text if policy is RepeatedElementPolicy.PRESERVE else ""
+                paragraphs[index] = paragraph.model_copy(
+                    update={"translated_text": translated_text}
+                )
+                completed += 1
+                skipped += 1
+                notify(index, "skipped", 0)
+                save()
                 continue
             if should_skip_translation(paragraph.text):
                 paragraphs[index] = paragraph.model_copy(update={"translated_text": paragraph.text})
@@ -232,6 +249,26 @@ def translate_paragraphs(
     if checkpoint is not None:
         checkpoint(result)
     return result
+
+
+def _paragraph_policy(
+    document: ExtractedDocument,
+    paragraph: LogicalParagraph,
+) -> RepeatedElementPolicy:
+    evidence = document.repeated_elements
+    if evidence is None:
+        return RepeatedElementPolicy.TRANSLATE
+    by_id = evidence.by_block_id()
+    policies = {
+        item.policy
+        for fragment in paragraph.fragments
+        if (item := by_id.get(fragment.mapping.source_block_id)) is not None
+    }
+    if not policies:
+        return RepeatedElementPolicy.TRANSLATE
+    if len(policies) > 1:
+        return RepeatedElementPolicy.PRESERVE
+    return next(iter(policies))
 
 
 def _validate_resume(

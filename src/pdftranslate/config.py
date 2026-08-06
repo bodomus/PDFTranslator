@@ -43,3 +43,11 @@ class Settings(BaseSettings):
     paragraph_margin_region_ratio: float = Field(default=0.12, gt=0, le=1)
     paragraph_cross_page_edge_ratio: float = Field(default=0.18, gt=0, le=1)
     paragraph_repeated_margin_min_pages: int = Field(default=2, ge=2)
+    repeated_elements_mode: Literal["auto", "off"] = "auto"
+    repeated_margin_region_ratio: float = Field(default=0.12, gt=0, le=1)
+    repeated_min_recurrence_ratio: float = Field(default=0.60, gt=0, le=1)
+    repeated_parity_recurrence_ratio: float = Field(default=0.75, gt=0, le=1)
+    repeated_bbox_tolerance_ratio: float = Field(default=0.035, gt=0, le=1)
+    repeated_font_size_tolerance_ratio: float = Field(default=0.18, gt=0, le=1)
+    repeated_watermark_font_ratio: float = Field(default=1.60, gt=1)
+    repeated_min_confirmed_pages: int = Field(default=3, ge=3)

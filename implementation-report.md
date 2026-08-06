@@ -1,3 +1,125 @@
+# Implementation Report — PDFTR-12
+
+## Ticket and repository state
+
+- Ticket: PDFTR-12 — Repeated headers, footers and boilerplate detection.
+- Branch: `codex/PDFTR-12-repeated-headers-footers-and-boilerplate-detection`.
+- PDFTR-11 prerequisite: `master` was fast-forwarded and pushed from `3b0bd0f` to `a3887db`
+  before this branch was created, as explicitly authorized by the user.
+- Initial PDFTR-12 tree: clean at `a3887db`; ticket Markdown was then added under `Tickets/`.
+- YouTrack: moved from Open to In Progress. The ticket already contained its Markdown attachment.
+
+## Workflow and repository intelligence
+
+- Level: 2 — the change crosses extraction, domain serialization, reconstruction, translation,
+  rendering, pipeline/cache identity, batch, CLI and PDFTR-10 diagnostics.
+- Graphify preflight identified the extraction → reconstruction → translation → renderer →
+  diagnostics path and was source-verified. Post-change refresh initially hit Windows access
+  denial inside the restricted process, then succeeded with the approved elevated retry: 1,665
+  nodes, 3,704 edges and 110 communities.
+- CRG was rebuilt/updated: 824 nodes, 7,000 edges across 93 files. Its post-change heuristic reports
+  47 changed symbols, risk 0.60 and 42 possible test gaps. The generic gap list includes indirectly
+  exercised dataclass/CLI orchestration symbols; focused CLI, policy, generated-PDF and full-suite
+  tests are authoritative. Source inspection confirmed all important graph relationships.
+- Design followed KISS/separation of concerns: the pure classifier is independent from Typer,
+  PyMuPDF mutation and translation backends; existing pipeline components consume typed evidence.
+
+## Capability implemented
+
+- Added classifications: `body`, `page_number`, `running_header`, `running_footer`,
+  `repeated_boilerplate`, `watermark_candidate`, and `unknown_repeated`.
+- Added explicit policies: `translate`, `preserve`, `skip`, and `remove`. Automatic classification
+  never selects `remove`. Page numbers and uncertain groups remain untouched in the source PDF;
+  watermark candidates skip model/render work but are not erased.
+- Classifier evidence uses normalized text, margin/central position, normalized bounding boxes,
+  font similarity, recurrence ratio, odd/even parity, page-number sequence and first/last-page
+  exceptions. Every physical source block receives a classification and remains serialized.
+- Confirmed and uncertain repeated units receive separate logical paragraph kinds, preventing body
+  and cross-page merging. Original fragment mappings and page anchors remain intact.
+- Repeated translatable strings use normal in-run deduplication/cache once and are rendered on each
+  source page. Preserve/skip policies do not call the model.
+- Pipeline behavior revision changed from 3 to 4; `auto|off` is included in resume/workspace
+  identity and propagated through root, extract and batch paths.
+- CLI adds `--repeated-elements auto|off` to root translation, `extract`, and `batch`.
+- Typed `PDFTRANSLATE_REPEATED_*` settings control margin, recurrence/parity, geometry/font,
+  watermark-font and minimum-page thresholds.
+- PDFTR-10 diagnostics add document counts and per-unit confidence, group ID, policy and ambiguity,
+  plus stable warning code `REPEATED_ELEMENT_AMBIGUOUS`. Source/translation text remains excluded
+  unless the existing explicit diagnostics opt-in is used.
+
+## Main files and symbols
+
+- `src/pdftranslate/repeated/models.py`: typed kinds, policies, options and persisted evidence.
+- `src/pdftranslate/repeated/classifier.py`: `classify_repeated_elements()` and conservative rules.
+- `src/pdftranslate/pdf/pymupdf_backend.py`: classification before reconstruction.
+- `src/pdftranslate/reconstruction/reconstructor.py`: typed repeated boundaries and paragraph kinds.
+- `src/pdftranslate/domain/document.py`: optional schema 1.2/1.3 evidence with exact block coverage.
+- `src/pdftranslate/translation/paragraphs.py`: translate/preserve/skip/remove policy execution.
+- `src/pdftranslate/rendering/renderer.py`: leave preserve/skip source content untouched; render
+  translated units per page; redact-only behavior remains available for explicit remove policy.
+- `src/pdftranslate/pipeline/{models.py,runner.py}`, `batch/models.py`, `config.py`, and `cli.py`:
+  settings, behavior identity and end-to-end propagation.
+- `src/pdftranslate/diagnostics/{models.py,builder.py}`: summary/block evidence and warning.
+- `tests/test_repeated_elements.py`: generated model and real generated-PDF coverage.
+- `scripts/benchmark-repeated-elements.py`: deterministic synthetic noise benchmark.
+- README, CHANGELOG, investigation, plan, ticket copy and completion review were updated.
+
+## Validation results
+
+- Focused and adjacent suite:
+  `uv run pytest tests/test_repeated_elements.py tests/test_paragraph_reconstruction.py
+  tests/test_translation.py tests/test_rendering.py tests/test_diagnostics.py tests/test_cli.py
+  tests/test_batch_cli.py tests/test_serialization.py -q --no-cov` → **52 passed**.
+- Direct CLI help: root, batch and extract commands exited 0; batch/extract help contains
+  `--repeated-elements`, and the existing required batch options remain present.
+- Static checks: `ruff format --check .`, `ruff check .`, and `mypy src` → passed.
+- Full `scripts/check.ps1` → **174 passed, 1 skipped**, coverage **87.47%** (required 80%).
+- GitHub Actions CI #30 for commit `5fd40d2` completed successfully in 1m 20s:
+  <https://github.com/bodomus/PDFTranslator/actions/runs/31087523817>.
+
+- Generated-PDF evidence: a three-page PDF was extracted, fake-translated and rendered; each page
+  retained its own page number, contained its page-specific translated body and the repeated header,
+  and preserved page-number units without redrawing them.
+- Diagnostics evidence: tests assert repeated counts/classification/confidence/group/policy fields,
+  stable ambiguity code, and absence of source/translated text under default privacy behavior.
+
+## Benchmark results
+
+Command:
+`uv run python scripts/benchmark-repeated-elements.py --output
+temp/pdftr12-benchmark/repeated-elements.json`
+
+- Fixture: eight generated pages with alternating headers, unique body, copyright footer and
+  sequential page number.
+- Baseline body blocks: 32.
+- Classified body blocks: 8.
+- Service/noise blocks removed from body reconstruction: 24 (**75% reduction**).
+- Counts: body 8, page number 8, running header 8, repeated boilerplate 8.
+- Groups: 4; ambiguous blocks: 0.
+- JSON and Markdown results were generated under `./temp/` and intentionally are not committed.
+
+## Limitations, findings and deferred validation
+
+- No private real-world corpus PDF was provided for PDFTR-12. Real-PDF evidence here is a PDF
+  generated and reopened with PyMuPDF; it validates extraction/render page placement, not the full
+  diversity of publisher layouts.
+- Real NLLB, CUDA and OCR were not run: they are outside the classifier behavior and normal tests
+  must not download models or require GPU/OCR tools. Translation reuse was verified with a fake
+  backend and real SQLite cache path.
+- Exact normalized-text grouping intentionally does not attempt fuzzy chapter-title similarity or
+  OCR-error correction. Chapter-dependent/short-document groups remain ambiguous and preserved.
+- Watermark classification is intentionally a candidate with ambiguity; `skip` keeps the visible
+  source watermark. Automatic cleaning/removal is explicitly out of scope.
+- CRG's 42 reported gaps are conservative static heuristics, not 42 failing or absent acceptance
+  tests. The key production path is covered, but additional real-corpus calibration remains useful.
+
+## Final status
+
+Local implementation, branch push and GitHub Actions are complete and green. Ready for review;
+do not start PDFTR-13 until this report and the real results are reviewed.
+
+---
+
 # Implementation Report — PDFTR-11
 
 ## Ticket

@@ -12,7 +12,7 @@ from pdftranslate.domain.document import InspectionReport, TranslationStatistics
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 OcrMode = Literal["auto", "on", "off"]
 ReportFormat = Literal["json", "html", "both"]
-PIPELINE_BEHAVIOR_REVISION = 3
+PIPELINE_BEHAVIOR_REVISION = 4
 
 
 class PipelineStage(StrEnum):
@@ -44,6 +44,7 @@ class PipelineOptions:
     output_path: Path
     pages: str | None = None
     paragraph_reconstruction: Literal["conservative", "off"] = "conservative"
+    repeated_elements: Literal["auto", "off"] = "auto"
     backend: str = "nllb"
     model: str = "facebook/nllb-200-distilled-600M"
     device: DeviceRequest = "auto"
@@ -74,6 +75,8 @@ class PipelineOptions:
     def __post_init__(self) -> None:
         if self.paragraph_reconstruction not in {"conservative", "off"}:
             raise ValueError("paragraph reconstruction must be conservative or off")
+        if self.repeated_elements not in {"auto", "off"}:
+            raise ValueError("repeated elements must be auto or off")
         if self.backend != "nllb":
             raise ValueError(f"unsupported translation backend: {self.backend}")
         if self.device not in {"auto", "cpu", "cuda"}:
@@ -113,6 +116,7 @@ class PipelineOptions:
             "output_path": str(self.output_path.expanduser().resolve()),
             "pages": self.pages,
             "paragraph_reconstruction": self.paragraph_reconstruction,
+            "repeated_elements": self.repeated_elements,
             "backend": self.backend,
             "model": self.model,
             "device": self.device,

@@ -1,3 +1,28 @@
+# Implementation Plan — PDFTR-12
+
+1. Add typed repeated-element kinds, policies, options, per-block/group evidence and metrics.
+2. Implement conservative document-level normalization, position, bbox/font similarity,
+   recurrence, parity, numeric sequence and first/last-page heuristics.
+3. Classify before reconstruction, retain every source block, isolate confirmed repeated units
+   from body and cross-page merges, and persist evidence in schema 1.2/1.3.
+4. Apply translate/preserve/skip/remove policies without automatic removal; reuse translation/cache
+   work for duplicate headers and legal text while maintaining page-specific paragraph anchors.
+5. Update renderer and source revalidation so preserve/translate/skip semantics are deterministic
+   and source watermark candidates remain untouched.
+6. Add typed settings and `--repeated-elements auto|off` to root, extract and batch; include mode in
+   pipeline identity and bump behavior revision.
+7. Extend PDFTR-10 diagnostics with counts, confidence, group IDs, policy, ambiguity and a stable
+   warning code without exposing report text by default.
+8. Add generated fixtures for sequences, uniform/alternating/chapter headers, footers, legal text,
+   legitimate repeated body, first-page exceptions, watermark, short documents, policy/cache,
+   diagnostics and page-correct rendered PDF output.
+9. Add a deterministic synthetic benchmark, update README/CHANGELOG/help, run focused and full
+   checks, then refresh/query Graphify and CRG and source-verify their conclusions.
+10. Create `implementation-report.md` and `reviews/review-PDFTR-12.md`, update YouTrack, commit,
+    push and record CI status without beginning PDFTR-13.
+
+---
+
 # Implementation Plan — PDFTR-11
 
 1. Add immutable raw-line, paragraph-fragment, source mapping, logical-paragraph, decision,

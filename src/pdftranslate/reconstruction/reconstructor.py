@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -22,6 +21,12 @@ from pdftranslate.reconstruction.models import (
     ReconstructionMetrics,
     ReconstructionResult,
     SourceBlockMapping,
+)
+from pdftranslate.repeated import (
+    RepeatedBlockClassification,
+    RepeatedElementAnalysis,
+    RepeatedElementKind,
+    classify_repeated_elements,
 )
 
 _LIST_MARKER = re.compile(r"^\s*(?:[•◦▪‣]|[-*+]\s|\(?\d+[.)]\s|[A-Za-z][.)]\s)")
@@ -43,10 +48,12 @@ class _PageLayout:
 def reconstruct_paragraphs(
     pages: Sequence[ExtractedPage],
     options: ParagraphReconstructionOptions | None = None,
+    repeated_elements: RepeatedElementAnalysis | None = None,
 ) -> ReconstructionResult:
     """Build deterministic logical paragraphs and auditable merge evidence."""
     selected = options or ParagraphReconstructionOptions()
-    repeated_margin_text = _repeated_margin_text(pages, selected)
+    repeated = repeated_elements or classify_repeated_elements(pages)
+    repeated_by_block = repeated.by_block_id()
     layouts = tuple(_page_layout(page, selected) for page in pages)
     raw_blocks = sum(len(page.text_blocks) for page in pages)
     raw_lines = sum(max(1, len(block.lines)) for page in pages for block in page.text_blocks)
@@ -55,7 +62,7 @@ def reconstruct_paragraphs(
         off_paragraphs = tuple(
             _paragraph_from_fragments(
                 (fragment,),
-                _kind(fragment, layout, repeated_margin_text, selected),
+                _kind(fragment, layout, repeated_by_block, selected),
                 ambiguous=False,
             )
             for layout in layouts
@@ -83,7 +90,7 @@ def reconstruct_paragraphs(
     soft_hyphens_removed = 0
     for layout in layouts:
         page_paragraphs, page_decisions, removed = _reconstruct_page(
-            layout, repeated_margin_text, selected
+            layout, repeated_by_block, selected
         )
         paragraphs.extend(page_paragraphs)
         decisions.extend(page_decisions)
@@ -201,7 +208,7 @@ def _mapping(block: TextBlock, page_number: int) -> SourceBlockMapping:
 
 def _reconstruct_page(
     layout: _PageLayout,
-    repeated_margin_text: frozenset[tuple[str, str]],
+    repeated_by_block: dict[str, RepeatedBlockClassification],
     options: ParagraphReconstructionOptions,
 ) -> tuple[list[LogicalParagraph], list[ReconstructionDecision], int]:
     paragraphs: list[LogicalParagraph] = []
@@ -211,7 +218,7 @@ def _reconstruct_page(
     current_kind: ParagraphKind | None = None
     current_ambiguous = False
     for fragment in layout.fragments:
-        kind = _kind(fragment, layout, repeated_margin_text, options)
+        kind = _kind(fragment, layout, repeated_by_block, options)
         if not current:
             current = [fragment]
             current_kind = kind
@@ -256,11 +263,16 @@ def _decide(
     layout: _PageLayout,
     options: ParagraphReconstructionOptions,
 ) -> tuple[DecisionAction, tuple[DecisionReason, ...]]:
-    if previous_kind in {ParagraphKind.HEADER, ParagraphKind.FOOTER} or current_kind in {
+    repeated_kinds = {
         ParagraphKind.HEADER,
         ParagraphKind.FOOTER,
-    }:
-        return DecisionAction.KEEP, (DecisionReason.REPEATED_MARGIN_TEXT,)
+        ParagraphKind.PAGE_NUMBER,
+        ParagraphKind.BOILERPLATE,
+        ParagraphKind.WATERMARK,
+        ParagraphKind.UNKNOWN_REPEATED,
+    }
+    if previous_kind in repeated_kinds or current_kind in repeated_kinds:
+        return DecisionAction.KEEP, (DecisionReason.REPEATED_ELEMENT_BOUNDARY,)
     boundary_reason = _kind_boundary(previous_kind, current_kind)
     if boundary_reason is not None:
         return DecisionAction.KEEP, (boundary_reason,)
@@ -446,13 +458,22 @@ def _paragraph_from_fragments(
 def _kind(
     fragment: ParagraphFragment,
     layout: _PageLayout,
-    repeated_margin_text: frozenset[tuple[str, str]],
+    repeated_by_block: dict[str, RepeatedBlockClassification],
     options: ParagraphReconstructionOptions,
 ) -> ParagraphKind:
-    normalized = _normalized_text(fragment.text)
-    position = _margin_position(fragment.bbox, layout.page.height, options)
-    if position is not None and (position, normalized) in repeated_margin_text:
-        return ParagraphKind.HEADER if position == "top" else ParagraphKind.FOOTER
+    repeated = repeated_by_block.get(fragment.mapping.source_block_id)
+    if repeated is not None:
+        kinds = {
+            RepeatedElementKind.PAGE_NUMBER: ParagraphKind.PAGE_NUMBER,
+            RepeatedElementKind.RUNNING_HEADER: ParagraphKind.HEADER,
+            RepeatedElementKind.RUNNING_FOOTER: ParagraphKind.FOOTER,
+            RepeatedElementKind.REPEATED_BOILERPLATE: ParagraphKind.BOILERPLATE,
+            RepeatedElementKind.WATERMARK_CANDIDATE: ParagraphKind.WATERMARK,
+            RepeatedElementKind.UNKNOWN_REPEATED: ParagraphKind.UNKNOWN_REPEATED,
+        }
+        classified = kinds.get(repeated.kind)
+        if classified is not None:
+            return classified
     if _LIST_MARKER.match(fragment.text):
         return ParagraphKind.LIST_ITEM
     if _CAPTION.match(fragment.text):
@@ -485,34 +506,6 @@ def _kind_boundary(previous: ParagraphKind | None, current: ParagraphKind) -> De
         return DecisionReason.CAPTION_BOUNDARY
     if previous is ParagraphKind.FOOTNOTE or current is ParagraphKind.FOOTNOTE:
         return DecisionReason.FOOTNOTE_BOUNDARY
-    return None
-
-
-def _repeated_margin_text(
-    pages: Sequence[ExtractedPage], options: ParagraphReconstructionOptions
-) -> frozenset[tuple[str, str]]:
-    occurrences: Counter[tuple[str, str]] = Counter()
-    page_occurrences: defaultdict[tuple[str, str], set[int]] = defaultdict(set)
-    for page in pages:
-        for block in page.text_blocks:
-            position = _margin_position(block.bbox, page.height, options)
-            normalized = _normalized_text(block.text)
-            if position is not None and normalized:
-                page_occurrences[(position, normalized)].add(page.page_number)
-    for key, page_numbers in page_occurrences.items():
-        occurrences[key] = len(page_numbers)
-    return frozenset(
-        key for key, count in occurrences.items() if count >= options.repeated_margin_min_pages
-    )
-
-
-def _margin_position(
-    bbox: BoundingBox, page_height: float, options: ParagraphReconstructionOptions
-) -> str | None:
-    if bbox.y1 <= page_height * options.margin_region_ratio:
-        return "top"
-    if bbox.y0 >= page_height * (1 - options.margin_region_ratio):
-        return "bottom"
     return None
 
 
@@ -585,10 +578,6 @@ def _is_soft_hyphen(previous: str, current: str) -> bool:
         or len(stem) < 3
         or stem.casefold() in _LEGITIMATE_HYPHEN_PREFIXES
     )
-
-
-def _normalized_text(value: str) -> str:
-    return " ".join(value.casefold().split())
 
 
 def _union(boxes: Iterable[BoundingBox]) -> BoundingBox:

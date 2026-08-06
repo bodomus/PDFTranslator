@@ -84,6 +84,7 @@ def test_batch_help_lists_required_options() -> None:
         "--ocr",
         "--device",
         "--report",
+        "--repeated-elements",
     ):
         assert option in help_text
 
@@ -111,6 +112,8 @@ def test_batch_cli_builds_options_and_returns_partial_failure_code(tmp_path: Pat
                 "--continue-on-error",
                 "--ocr",
                 "off",
+                "--repeated-elements",
+                "off",
                 "--device",
                 "cpu",
             ],
@@ -122,6 +125,7 @@ def test_batch_cli_builds_options_and_returns_partial_failure_code(tmp_path: Pat
     assert captured[0].exclude_patterns == ("**/draft.pdf",)
     assert captured[0].continue_on_error is True
     assert captured[0].ocr == "off"
+    assert captured[0].repeated_elements == "off"
     assert captured[0].device == "cpu"
     assert "PDFTranslate batch" in result.stdout
     assert "render failed" in result.stderr
