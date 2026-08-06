@@ -69,6 +69,10 @@ class ParagraphKind(StrEnum):
     FOOTNOTE = "footnote"
     HEADER = "header"
     FOOTER = "footer"
+    PAGE_NUMBER = "page_number"
+    BOILERPLATE = "repeated_boilerplate"
+    WATERMARK = "watermark_candidate"
+    UNKNOWN_REPEATED = "unknown_repeated"
 
 
 class DecisionAction(StrEnum):
@@ -98,6 +102,7 @@ class DecisionReason(StrEnum):
     CAPTION_BOUNDARY = "caption_boundary"
     FOOTNOTE_BOUNDARY = "footnote_boundary"
     REPEATED_MARGIN_TEXT = "repeated_margin_text"
+    REPEATED_ELEMENT_BOUNDARY = "repeated_element_boundary"
     CROSS_PAGE_CONTINUATION = "cross_page_continuation"
     PAGE_BOUNDARY_WEAK = "page_boundary_weak"
     AMBIGUOUS_GEOMETRY = "ambiguous_geometry"

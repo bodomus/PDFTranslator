@@ -17,6 +17,11 @@ from pdftranslate.diagnostics.models import (
 from pdftranslate.domain.document import ExtractedDocument, TranslationStatistics
 from pdftranslate.reconstruction import DecisionAction
 from pdftranslate.rendering.models import RenderResult
+from pdftranslate.repeated import (
+    RepeatedBlockClassification,
+    RepeatedElementKind,
+    RepeatedElementPolicy,
+)
 
 
 def build_success_report(
@@ -72,6 +77,19 @@ def build_success_report(
             for decision in translated.reconstruction.decisions
             if decision.action is DecisionAction.AMBIGUOUS
         )
+    if translated.repeated_elements is not None:
+        findings.extend(
+            DiagnosticFinding(
+                code=DiagnosticCode.REPEATED_ELEMENT_AMBIGUOUS,
+                severity="warning",
+                stage="extract",
+                message=(f"Ambiguous repeated element {item.block_id}: " + ", ".join(item.reasons)),
+                page_number=item.page_number,
+                block_id=item.block_id,
+            )
+            for item in translated.repeated_elements.blocks
+            if item.ambiguous
+        )
     pages: list[PageDiagnostic] = []
     for page in translated.pages:
         blocks: list[BlockDiagnostic] = []
@@ -85,6 +103,7 @@ def build_success_report(
             else page.text_blocks
         )
         for block in units:
+            repeated = _repeated_for_unit(translated, block)
             layout = render_by_id.get(block.id)
             codes: list[DiagnosticCode] = []
             state = "unknown"
@@ -126,6 +145,15 @@ def build_success_report(
                     warning_codes=tuple(codes),
                     source_text=block.text if include_text else None,
                     translated_text=block.translated_text if include_text else None,
+                    repeated_classification=(
+                        repeated.kind if repeated is not None else RepeatedElementKind.BODY
+                    ),
+                    repeated_confidence=repeated.confidence if repeated is not None else 1.0,
+                    repeated_group_id=repeated.group_id if repeated is not None else None,
+                    repeated_policy=(
+                        repeated.policy if repeated is not None else RepeatedElementPolicy.TRANSLATE
+                    ),
+                    repeated_ambiguous=repeated.ambiguous if repeated is not None else False,
                 )
             )
         page_codes = (
@@ -182,6 +210,16 @@ def build_success_report(
             if translated.reconstruction
             else 0,
             ocr_pages=len(ocr_pages),
+            repeated_elements=(
+                translated.repeated_elements.metrics.counts
+                if translated.repeated_elements is not None
+                else {}
+            ),
+            ambiguous_repeated_elements=(
+                translated.repeated_elements.metrics.ambiguous_blocks
+                if translated.repeated_elements is not None
+                else 0
+            ),
             font_reductions=render.font_reductions if render else 0,
             expanded_blocks=render.expanded_blocks if render else 0,
             overflow_blocks=render.overflow_blocks if render else 0,
@@ -198,6 +236,30 @@ def build_success_report(
         debug_layout_path=str(debug_layout_path) if debug_layout_path else None,
         reconstruction=translated.reconstruction,
     )
+
+
+def _repeated_for_unit(
+    document: ExtractedDocument,
+    unit: object,
+) -> RepeatedBlockClassification | None:
+    evidence = document.repeated_elements
+    if evidence is None:
+        return None
+    by_id = evidence.by_block_id()
+    fragments = getattr(unit, "fragments", None)
+    if fragments is None:
+        return by_id.get(str(getattr(unit, "id", "")))
+    values = [
+        item
+        for fragment in fragments
+        if (item := by_id.get(fragment.mapping.source_block_id)) is not None
+    ]
+    if not values:
+        return None
+    first = values[0]
+    if any(item.kind != first.kind or item.policy != first.policy for item in values[1:]):
+        return None
+    return first
 
 
 def build_failure_report(

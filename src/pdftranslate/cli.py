@@ -45,6 +45,7 @@ from pdftranslate.pipeline import (
 from pdftranslate.pipeline.models import ReportFormat
 from pdftranslate.reconstruction import ParagraphReconstructionOptions, ReconstructionMode
 from pdftranslate.rendering import PdfRenderer, RenderingError, RenderOptions
+from pdftranslate.repeated import RepeatedElementOptions, RepeatedElementsMode
 from pdftranslate.serialization import (
     DocumentJsonError,
     OutputExistsError,
@@ -290,6 +291,13 @@ def translate_pdf(
             help="Logical paragraph reconstruction: conservative or off.",
         ),
     ] = "conservative",
+    repeated_elements: Annotated[
+        str,
+        typer.Option(
+            "--repeated-elements",
+            help="Repeated header, footer and boilerplate detection: auto or off.",
+        ),
+    ] = "auto",
     ocr: Annotated[
         str,
         typer.Option("--ocr", help="OCR preprocessing: auto, on, or off."),
@@ -356,6 +364,7 @@ def translate_pdf(
             output_path=output or default_output_path(input_path),
             pages=pages,
             paragraph_reconstruction=cast(ReconstructionMode, paragraph_reconstruction),
+            repeated_elements=cast(RepeatedElementsMode, repeated_elements),
             backend=backend,
             model=model,
             device=cast(DeviceRequest, device),
@@ -502,6 +511,13 @@ def translate_batch(
             help="Logical paragraph reconstruction: conservative or off.",
         ),
     ] = "conservative",
+    repeated_elements: Annotated[
+        str,
+        typer.Option(
+            "--repeated-elements",
+            help="Repeated header, footer and boilerplate detection: auto or off.",
+        ),
+    ] = "auto",
     ocr: Annotated[
         str,
         typer.Option("--ocr", help="OCR preprocessing for each PDF: auto, on, or off."),
@@ -528,6 +544,7 @@ def translate_batch(
             continue_on_error=continue_on_error,
             ocr=cast(OcrMode, ocr),
             paragraph_reconstruction=cast(ReconstructionMode, paragraph_reconstruction),
+            repeated_elements=cast(RepeatedElementsMode, repeated_elements),
             device=cast(DeviceRequest, device),
             report_path=report,
         )
@@ -647,6 +664,13 @@ def extract_pdf(
             help="Logical paragraph reconstruction: conservative or off.",
         ),
     ] = "conservative",
+    repeated_elements: Annotated[
+        str,
+        typer.Option(
+            "--repeated-elements",
+            help="Repeated header, footer and boilerplate detection: auto or off.",
+        ),
+    ] = "auto",
     pretty: Annotated[
         bool,
         typer.Option("--pretty/--compact", help="Select formatted or compact JSON."),
@@ -662,6 +686,7 @@ def extract_pdf(
             input_path,
             pages,
             ParagraphReconstructionOptions(mode=cast(ReconstructionMode, paragraph_reconstruction)),
+            RepeatedElementOptions(mode=cast(RepeatedElementsMode, repeated_elements)),
         )
         write_document_json(document, output, pretty=pretty, overwrite=overwrite)
     except (PdfInputError, OutputExistsError, OSError) as error:

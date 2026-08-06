@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import DomainModel
 from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphReconstruction
+from pdftranslate.repeated import RepeatedElementAnalysis
 
 LEGACY_DOCUMENT_SCHEMA_VERSION = "1.0"
 LEGACY_TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.1"
@@ -104,6 +105,10 @@ class ExtractedDocument(DomainModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    repeated_elements: RepeatedElementAnalysis | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     warnings: tuple[str, ...] = ()
     translation: TranslationMetadata | None = Field(
         default=None,
@@ -143,6 +148,12 @@ class ExtractedDocument(DomainModel):
         }
         if not mapped_ids.issubset(source_ids):
             raise ValueError("paragraph mapping references an unknown source block")
+        if self.repeated_elements is not None:
+            classified_ids = {item.block_id for item in self.repeated_elements.blocks}
+            if classified_ids != source_ids:
+                raise ValueError(
+                    "repeated-element evidence must classify every source block exactly once"
+                )
         if self.schema_version == DOCUMENT_SCHEMA_VERSION:
             if self.translation is not None:
                 raise ValueError("schema 1.2 cannot contain translation metadata")

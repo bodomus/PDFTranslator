@@ -10,6 +10,7 @@ from pydantic import Field
 
 from pdftranslate.domain.text_block import BoundingBox, DomainModel
 from pdftranslate.reconstruction import ParagraphReconstruction
+from pdftranslate.repeated import RepeatedElementKind, RepeatedElementPolicy
 
 
 class DiagnosticCode(StrEnum):
@@ -24,6 +25,7 @@ class DiagnosticCode(StrEnum):
     OUTPUT_VALIDATION_FAILED = "OUTPUT_VALIDATION_FAILED"
     PIPELINE_STAGE_FAILED = "PIPELINE_STAGE_FAILED"
     RENDER_WARNING = "RENDER_WARNING"
+    REPEATED_ELEMENT_AMBIGUOUS = "REPEATED_ELEMENT_AMBIGUOUS"
 
 
 class DiagnosticFinding(DomainModel):
@@ -49,6 +51,11 @@ class BlockDiagnostic(DomainModel):
     warning_codes: tuple[DiagnosticCode, ...] = ()
     source_text: str | None = None
     translated_text: str | None = None
+    repeated_classification: RepeatedElementKind = RepeatedElementKind.BODY
+    repeated_confidence: float = Field(default=1.0, ge=0, le=1)
+    repeated_group_id: str | None = None
+    repeated_policy: RepeatedElementPolicy = RepeatedElementPolicy.TRANSLATE
+    repeated_ambiguous: bool = False
 
 
 class PageDiagnostic(DomainModel):
@@ -85,6 +92,8 @@ class ReportSummary(DomainModel):
     logical_paragraphs: int = Field(default=0, ge=0)
     ambiguous_decisions: int = Field(default=0, ge=0)
     cross_page_merges: int = Field(default=0, ge=0)
+    repeated_elements: dict[str, int] = Field(default_factory=dict)
+    ambiguous_repeated_elements: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

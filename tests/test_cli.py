@@ -83,6 +83,8 @@ def test_extract_writes_compact_versioned_json(
             "--output",
             str(output),
             "--compact",
+            "--repeated-elements",
+            "off",
         ],
     )
 
@@ -93,6 +95,8 @@ def test_extract_writes_compact_versioned_json(
     assert document["schema_version"] == "1.2"
     assert document["selected_pages"] == [2]
     assert document["pages"][0]["classification"] == "empty"
+    assert document["repeated_elements"]["mode"] == "off"
+    assert document["repeated_elements"]["metrics"]["classified_blocks"] == 0
     assert payload.count("\n") == 1
 
 

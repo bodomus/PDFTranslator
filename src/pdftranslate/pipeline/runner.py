@@ -48,6 +48,7 @@ from pdftranslate.rendering import (
     RenderResult,
     validate_output_pdf,
 )
+from pdftranslate.repeated import RepeatedElementOptions
 from pdftranslate.serialization import OutputExistsError
 from pdftranslate.translation import (
     NllbTranslator,
@@ -127,6 +128,20 @@ def _reconstruction_options(options: PipelineOptions) -> ParagraphReconstruction
     )
 
 
+def _repeated_element_options(options: PipelineOptions) -> RepeatedElementOptions:
+    settings = Settings()
+    return RepeatedElementOptions(
+        mode=options.repeated_elements,
+        margin_region_ratio=settings.repeated_margin_region_ratio,
+        min_recurrence_ratio=settings.repeated_min_recurrence_ratio,
+        parity_recurrence_ratio=settings.repeated_parity_recurrence_ratio,
+        bbox_tolerance_ratio=settings.repeated_bbox_tolerance_ratio,
+        font_size_tolerance_ratio=settings.repeated_font_size_tolerance_ratio,
+        watermark_font_ratio=settings.repeated_watermark_font_ratio,
+        min_confirmed_pages=settings.repeated_min_confirmed_pages,
+    )
+
+
 def default_services(settings: Settings | None = None) -> PipelineServices:
     """Build production adapters without loading the heavyweight model yet."""
     selected_settings = settings or Settings()
@@ -181,7 +196,10 @@ def plan_pipeline(
         _validate_paths(options, allow_existing_output=True)
         inspection = selected_services.analyzer.inspect(options.input_path)
         extracted = selected_services.extractor.extract(
-            options.input_path, options.pages, _reconstruction_options(options)
+            options.input_path,
+            options.pages,
+            _reconstruction_options(options),
+            _repeated_element_options(options),
         )
     except (PdfInputError, OSError) as error:
         raise PipelineExecutionError(
@@ -573,7 +591,10 @@ def _ocr(
     stage = PipelineStage.OCR
     source_path = options.input_path.expanduser().resolve()
     before = services.extractor.extract(
-        source_path, options.pages, _reconstruction_options(options)
+        source_path,
+        options.pages,
+        _reconstruction_options(options),
+        _repeated_element_options(options),
     )
     scanned_pages = _scanned_pages(before)
     target_pages = before.selected_pages if options.ocr == "on" else scanned_pages
@@ -591,7 +612,10 @@ def _ocr(
         warnings: tuple[str, ...] = ()
         if artifact != source_path:
             after = services.extractor.extract(
-                artifact, options.pages, _reconstruction_options(options)
+                artifact,
+                options.pages,
+                _reconstruction_options(options),
+                _repeated_element_options(options),
             )
             warnings = validate_ocr_output(
                 source_path,
@@ -634,7 +658,10 @@ def _ocr(
         ),
     )
     after = services.extractor.extract(
-        execution.output_path, options.pages, _reconstruction_options(options)
+        execution.output_path,
+        options.pages,
+        _reconstruction_options(options),
+        _repeated_element_options(options),
     )
     warnings = validate_ocr_output(
         source_path,

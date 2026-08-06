@@ -29,6 +29,7 @@ class BatchOptions:
     continue_on_error: bool = False
     ocr: OcrMode = "auto"
     paragraph_reconstruction: ReconstructionMode = "conservative"
+    repeated_elements: Literal["auto", "off"] = "auto"
     device: DeviceRequest = "auto"
     report_path: Path | None = None
     cache_dir: Path | None = None
@@ -50,6 +51,8 @@ class BatchOptions:
             raise ValueError("device must be one of: auto, cpu, cuda")
         if self.paragraph_reconstruction not in {"conservative", "off"}:
             raise ValueError("paragraph reconstruction must be conservative or off")
+        if self.repeated_elements not in {"auto", "off"}:
+            raise ValueError("repeated elements must be auto or off")
         if self.ocr not in {"auto", "on", "off"}:
             raise ValueError("ocr mode must be one of: auto, on, off")
         if self.report_path is not None and self.report_path.suffix.casefold() != ".json":
@@ -86,6 +89,7 @@ class BatchOptions:
             font_path=self.font_path,
             ocr=self.ocr,
             paragraph_reconstruction=self.paragraph_reconstruction,
+            repeated_elements=self.repeated_elements,
         )
 
 

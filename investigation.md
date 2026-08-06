@@ -1,3 +1,60 @@
+# Investigation — PDFTR-12
+
+## Baseline and workflow
+
+- PDFTR-11 was complete and green but absent from `master`; with the user's authorization,
+  `master` was fast-forwarded from `3b0bd0f` to `a3887db` and pushed before this branch was made.
+- Branch: `codex/PDFTR-12-repeated-headers-footers-and-boilerplate-detection` from `a3887db`.
+- Workflow level: Level 2 because classification affects extraction, paragraph reconstruction,
+  translation/cache behavior, rendering, pipeline identity, batch, CLI, diagnostics and schemas.
+- YouTrack PDFTR-12 was moved from Open to In Progress; its Markdown attachment already existed,
+  and the repository copy is under `Tickets/`.
+
+## Repository intelligence and source verification
+
+- Graphify traced the production path from PyMuPDF extraction through paragraph reconstruction,
+  document serialization, paragraph translation, rendering and PDFTR-10 diagnostics.
+- CRG was rebuilt at the branch base: 93 files parsed and approximately 826 nodes / 6,996 edges.
+  It found six callers/tests/benchmark relationships for `reconstruct_paragraphs`; source review
+  additionally confirmed the PyMuPDF adapter call that CRG did not expose.
+- Source inspection confirmed that PDFTR-11's repeated-margin logic was local to reconstruction,
+  had only a normalized-text/page-margin count, and could not persist classification evidence or
+  influence translation, rendering, diagnostics, resume identity or batch behavior.
+
+## Capability gap
+
+1. Page numbers, alternating headers, first/last-page exceptions, legal boilerplate, watermark
+   candidates and uncertain repeated text had no distinct typed classifications.
+2. Repeated physical blocks were retained, but the old reconstruction-only rule could label only
+   repeated top/bottom text and had no group, confidence, policy, parity, geometry or font evidence.
+3. Translation could translate page numbers/watermarks unnecessarily, and policy behavior was not
+   explicit. Rendering could not intentionally retain source-only repeated units.
+4. Diagnostics did not report repeated-element counts or per-unit classification evidence.
+5. Pipeline/cache identity did not distinguish automatic classification from compatibility-off mode.
+
+## Smallest coherent design
+
+- Add a pure `pdftranslate.repeated` classifier and immutable typed evidence models, independent of
+  Typer, translation backends and PyMuPDF mutation.
+- Classify every original block. Automatic policy is conservative: translate confirmed headers,
+  footers and legal text; preserve page numbers and uncertain groups; skip watermark translation
+  while leaving its source content untouched; never select `remove` automatically.
+- Run classification before reconstruction, isolate confirmed non-body units from merging, persist
+  evidence in schema 1.2/1.3, and propagate `auto|off` through root/extract/batch options.
+- Use the normal translation cache/deduplication for repeated translatable text, apply policy during
+  translation/rendering, expose evidence in diagnostics, and bump pipeline behavior revision.
+
+## Risks and validation obligations
+
+- Heuristics can produce false positives; short documents and weak evidence must remain ambiguous
+  and preserved. Legitimately repeated body text with unstable geometry must remain body.
+- Generated fixtures must cover all requested classes, parity, first-page exceptions, policy,
+  translation reuse, page-specific rendering, privacy-safe diagnostics and compatibility-off mode.
+- No model, CUDA or OCR dependency belongs in normal tests. A deterministic benchmark must quantify
+  reduced body noise; full `scripts/check.ps1` and post-change Graphify/CRG checks remain required.
+
+---
+
 # Investigation — PDFTR-11
 
 ## Baseline

@@ -31,6 +31,10 @@ from pdftranslate.reconstruction import (
     ReconstructionResult,
     reconstruct_paragraphs,
 )
+from pdftranslate.repeated import (
+    RepeatedElementOptions,
+    classify_repeated_elements,
+)
 
 
 def _bbox(value: object) -> BoundingBox:
@@ -250,6 +254,16 @@ class PyMuPdfBackend:
             cross_page_edge_ratio=self._settings.paragraph_cross_page_edge_ratio,
             repeated_margin_min_pages=self._settings.paragraph_repeated_margin_min_pages,
         )
+        self._repeated_element_options = RepeatedElementOptions(
+            mode=self._settings.repeated_elements_mode,
+            margin_region_ratio=self._settings.repeated_margin_region_ratio,
+            min_recurrence_ratio=self._settings.repeated_min_recurrence_ratio,
+            parity_recurrence_ratio=self._settings.repeated_parity_recurrence_ratio,
+            bbox_tolerance_ratio=self._settings.repeated_bbox_tolerance_ratio,
+            font_size_tolerance_ratio=self._settings.repeated_font_size_tolerance_ratio,
+            watermark_font_ratio=self._settings.repeated_watermark_font_ratio,
+            min_confirmed_pages=self._settings.repeated_min_confirmed_pages,
+        )
 
     @contextmanager
     def open_pdf(self, input_path: Path) -> Iterator[pymupdf.Document]:
@@ -287,7 +301,11 @@ class PyMuPdfBackend:
             if document.page_count == 0:
                 raise PdfEmptyError(f"PDF contains no pages: {path}")
             extracted = self._extract_validated(
-                document, source, None, self._reconstruction_options
+                document,
+                source,
+                None,
+                self._reconstruction_options,
+                self._repeated_element_options,
             )
         return _inspection_from_document(extracted)
 
@@ -296,6 +314,7 @@ class PyMuPdfBackend:
         input_path: Path,
         page_range: str | None = None,
         reconstruction_options: ParagraphReconstructionOptions | None = None,
+        repeated_element_options: RepeatedElementOptions | None = None,
     ) -> ExtractedDocument:
         path = input_path.expanduser()
         with self.open_pdf(path) as document:
@@ -309,6 +328,7 @@ class PyMuPdfBackend:
                 source,
                 page_range,
                 reconstruction_options or self._reconstruction_options,
+                repeated_element_options or self._repeated_element_options,
             )
 
     def _extract_validated(
@@ -317,9 +337,16 @@ class PyMuPdfBackend:
         source: SourceDocument,
         page_range: str | None,
         reconstruction_options: ParagraphReconstructionOptions,
+        repeated_element_options: RepeatedElementOptions,
     ) -> ExtractedDocument:
         try:
-            return self._extract_open_document(document, source, page_range, reconstruction_options)
+            return self._extract_open_document(
+                document,
+                source,
+                page_range,
+                reconstruction_options,
+                repeated_element_options,
+            )
         except (PdfCorruptError, PdfEmptyError, PdfEncryptedError):
             raise
         except (KeyError, IndexError, TypeError, ValueError, RuntimeError) as error:
@@ -333,10 +360,14 @@ class PyMuPdfBackend:
         source: SourceDocument,
         page_range: str | None,
         reconstruction_options: ParagraphReconstructionOptions,
+        repeated_element_options: RepeatedElementOptions,
     ) -> ExtractedDocument:
         selected_pages = parse_page_range(page_range, document.page_count)
         pages = tuple(self._extract_page(document[number - 1], number) for number in selected_pages)
-        reconstructed: ReconstructionResult = reconstruct_paragraphs(pages, reconstruction_options)
+        repeated = classify_repeated_elements(pages, repeated_element_options)
+        reconstructed: ReconstructionResult = reconstruct_paragraphs(
+            pages, reconstruction_options, repeated
+        )
         language = _probable_language(paragraph.text for paragraph in reconstructed.paragraphs)
         warnings = tuple(dict.fromkeys(warning for page in pages for warning in page.warnings))
         return ExtractedDocument(
@@ -351,6 +382,7 @@ class PyMuPdfBackend:
             pages=pages,
             paragraphs=reconstructed.paragraphs,
             reconstruction=reconstructed.evidence,
+            repeated_elements=repeated,
             warnings=warnings,
         )
 

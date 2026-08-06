@@ -24,6 +24,7 @@ from pdftranslate.rendering.layout import (
     safe_expanded_bbox,
 )
 from pdftranslate.rendering.models import BlockRenderResult, RenderOptions, RenderResult
+from pdftranslate.repeated import RepeatedElementPolicy
 
 _FONT_NAME = "PDFTranslateFont"
 _COORDINATE_TOLERANCE = 0.5
@@ -74,7 +75,16 @@ class PdfRenderer:
         _validate_document(source, translated, settings.force_source_mismatch)
 
         translations = (
-            tuple(cast(str, paragraph.translated_text) for paragraph in translated.paragraphs)
+            tuple(
+                cast(str, paragraph.translated_text)
+                for paragraph in translated.paragraphs
+                if _paragraph_policy(translated, paragraph)
+                not in {
+                    RepeatedElementPolicy.PRESERVE,
+                    RepeatedElementPolicy.SKIP,
+                    RepeatedElementPolicy.REMOVE,
+                }
+            )
             if translated.schema_version == "1.3"
             else tuple(
                 cast(str, block.translated_text)
@@ -180,6 +190,12 @@ def _paragraph_blocks_by_page(
 ) -> dict[int, tuple[TextBlock, ...]]:
     grouped: dict[int, list[TextBlock]] = {}
     for paragraph in translated.paragraphs:
+        if _paragraph_policy(translated, paragraph) in {
+            RepeatedElementPolicy.PRESERVE,
+            RepeatedElementPolicy.SKIP,
+            RepeatedElementPolicy.REMOVE,
+        }:
+            continue
         grouped.setdefault(paragraph.anchor_page_number, []).append(_paragraph_block(paragraph))
     return {page: tuple(blocks) for page, blocks in grouped.items()}
 
@@ -193,6 +209,11 @@ def _redact_paragraph_fragments(
     page_indices = {page.page_number: page.source_index for page in translated.pages}
     seen: set[tuple[int, float, float, float, float]] = set()
     for paragraph in translated.paragraphs:
+        if _paragraph_policy(translated, paragraph) in {
+            RepeatedElementPolicy.PRESERVE,
+            RepeatedElementPolicy.SKIP,
+        }:
+            continue
         for fragment in paragraph.fragments:
             box = fragment.bbox
             key = (fragment.mapping.page_number, box.x0, box.y0, box.x1, box.y1)
@@ -242,7 +263,14 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
         missing = tuple(
             paragraph.id
             for paragraph in translated.paragraphs
-            if paragraph.translated_text is None or not paragraph.translated_text.strip()
+            if (
+                paragraph.translated_text is None
+                or (
+                    not paragraph.translated_text.strip()
+                    and _paragraph_policy(translated, paragraph)
+                    not in {RepeatedElementPolicy.SKIP, RepeatedElementPolicy.REMOVE}
+                )
+            )
         )
         label = "paragraph"
     else:
@@ -273,7 +301,12 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
     reconstruction_options = (
         translated.reconstruction.options if translated.reconstruction is not None else None
     )
-    current = PdfExtractor().extract(source, selected_range, reconstruction_options)
+    repeated_options = (
+        translated.repeated_elements.options if translated.repeated_elements is not None else None
+    )
+    current = PdfExtractor().extract(
+        source, selected_range, reconstruction_options, repeated_options
+    )
     if current.page_count != translated.page_count:
         raise SourceMismatchError("source PDF page count does not match translated JSON")
     if len(current.pages) != len(translated.pages):
@@ -315,6 +348,26 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
             raise SourceMismatchError(
                 "paragraph reconstruction or source mapping does not match the source PDF"
             )
+
+
+def _paragraph_policy(
+    document: ExtractedDocument,
+    paragraph: LogicalParagraph,
+) -> RepeatedElementPolicy:
+    evidence = document.repeated_elements
+    if evidence is None:
+        return RepeatedElementPolicy.TRANSLATE
+    by_id = evidence.by_block_id()
+    policies = {
+        item.policy
+        for fragment in paragraph.fragments
+        if (item := by_id.get(fragment.mapping.source_block_id)) is not None
+    }
+    if not policies:
+        return RepeatedElementPolicy.TRANSLATE
+    if len(policies) > 1:
+        return RepeatedElementPolicy.PRESERVE
+    return next(iter(policies))
 
 
 def _plan_page(

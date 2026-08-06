@@ -69,6 +69,22 @@ font/style, width, punctuation, list/heading/caption/footnote, repeated-margin, 
 signals. It never merges columns, headings into body text, or separate list items by default;
 uncertain boundaries remain separate and are recorded as ambiguous diagnostics. Use
 `--paragraph-reconstruction off` for one logical unit per physical block.
+
+Document-level repeated-element analysis runs before paragraph reconstruction. It conservatively
+classifies body blocks, sequential page numbers, running headers/footers, repeated boilerplate,
+watermark candidates, and uncertain repeated content using position, normalized text, geometry,
+font similarity, recurrence, parity, numeric sequences, and first/last-page exceptions. Every
+source block remains in schema 1.2/1.3 JSON with confidence, a stable group ID, policy, ambiguity,
+and reasons. Confirmed repeated elements form separate logical units and cannot merge into body
+paragraphs or across pages.
+
+The default `--repeated-elements auto` preserves page numbers, translates repeated headers and
+legal text once per unique source text through the normal cache, skips translation/rendering of
+watermark candidates without erasing the source PDF content, and preserves uncertain groups. The
+classifier never selects the destructive `remove` policy automatically. Use
+`--repeated-elements off` on root, batch, or extract commands to classify all blocks as body. Fine
+tuning is available through `PDFTRANSLATE_REPEATED_*` settings; defaults are conservative and
+short documents do not receive confirmed header/footer classifications.
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 
@@ -276,6 +292,7 @@ Useful runtime options:
 --ocr-clean
 --ocr-rotate-pages
 --ocr-force
+--repeated-elements auto|off
 ```
 
 Normal mode may download missing model files and reports this before loading. `--offline` resolves
@@ -465,7 +482,10 @@ diagnostic files are never replaced. Reports contain run/page/block IDs, classif
 boxes, cache and
 OCR status, font fitting, expansion/overflow, validation findings, elapsed time, file sizes, and
 measurable Python peak memory. Fresh translation stages record exact per-block segmentation counts
-and cache status; reused historical stages and unavailable VRAM remain `null`/`unknown`, never guessed.
+and cache status. Repeated-element evidence adds document counts plus per-block classification,
+confidence, group ID, policy, and ambiguity; ambiguous groups produce the stable
+`REPEATED_ELEMENT_AMBIGUOUS` finding. Reused historical stages and unavailable VRAM remain
+`null`/`unknown`, never guessed.
 The report also records the renderer's selected font and promotes renderer warnings to stable
 `RENDER_WARNING` findings.
 

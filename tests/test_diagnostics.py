@@ -25,6 +25,7 @@ def test_diagnostic_codes_are_stable() -> None:
         "OUTPUT_VALIDATION_FAILED",
         "PIPELINE_STAGE_FAILED",
         "RENDER_WARNING",
+        "REPEATED_ELEMENT_AMBIGUOUS",
     }
 
 
@@ -48,6 +49,12 @@ def test_report_options_do_not_change_translation_artifact_identity() -> None:
     )
 
     assert diagnostics.identity_values() == base.identity_values()
+    repeated_off = PipelineOptions(
+        input_path=Path("input.pdf"),
+        output_path=Path("output.pdf"),
+        repeated_elements="off",
+    )
+    assert repeated_off.identity_values() != base.identity_values()
 
 
 def test_report_writer_never_replaces_an_existing_artifact(tmp_path: Path) -> None:
