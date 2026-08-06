@@ -12,6 +12,7 @@ from pdftranslate.domain.document import (
     TranslationMetadata,
     TranslationStatistics,
 )
+from pdftranslate.glossary import LoadedGlossary
 from pdftranslate.translation.cache import TranslationCache
 from pdftranslate.translation.errors import (
     ResumeMismatchError,
@@ -44,6 +45,7 @@ class TranslationOptions:
     target_language: str = "ru"
     batch_size: int = 8
     max_input_tokens: int = 512
+    glossary: LoadedGlossary | None = None
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
@@ -52,6 +54,11 @@ class TranslationOptions:
             raise ValueError("max_input_tokens must be at least 8")
         if (self.source_language, self.target_language) != ("en", "ru"):
             raise ValueError("only English to Russian translation is currently supported")
+        if self.glossary is not None and (
+            self.glossary.document.source_language,
+            self.glossary.document.target_language,
+        ) != (self.source_language, self.target_language):
+            raise ValueError("glossary language pair does not match translation settings")
 
 
 @dataclass(frozen=True)
@@ -123,6 +130,8 @@ def translate_document(
             clock=clock,
             progress_factory=TranslationProgress,
         )
+    if options.glossary is not None:
+        raise ValueError("glossary translation requires logical paragraph schema 1.2")
     if document.translation is not None:
         raise ResumeMismatchError("input document must be the original extracted JSON")
     total_blocks = sum(len(page.text_blocks) for page in document.pages)

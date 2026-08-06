@@ -9,6 +9,8 @@ from pathlib import Path
 from pdftranslate.translation.errors import TranslationCacheError
 from pdftranslate.translation.text import normalize_source_text
 
+TRANSLATION_BEHAVIOR_REVISION = 2
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS translations (
     cache_key TEXT PRIMARY KEY,
@@ -54,8 +56,16 @@ class TranslationCache:
         source_language: str,
         target_language: str,
         source_text: str,
+        glossary_fingerprint: str | None = None,
     ) -> str | None:
-        key = cache_key(backend, model, source_language, target_language, source_text)
+        key = cache_key(
+            backend,
+            model,
+            source_language,
+            target_language,
+            source_text,
+            glossary_fingerprint=glossary_fingerprint,
+        )
         try:
             row = (
                 self._require_connection()
@@ -80,8 +90,16 @@ class TranslationCache:
         target_language: str,
         source_text: str,
         translated_text: str,
+        glossary_fingerprint: str | None = None,
     ) -> None:
-        key = cache_key(backend, model, source_language, target_language, source_text)
+        key = cache_key(
+            backend,
+            model,
+            source_language,
+            target_language,
+            source_text,
+            glossary_fingerprint=glossary_fingerprint,
+        )
         try:
             connection = self._require_connection()
             connection.execute(
@@ -106,13 +124,17 @@ def cache_key(
     source_language: str,
     target_language: str,
     source_text: str,
+    *,
+    glossary_fingerprint: str | None = None,
 ) -> str:
     """Create a stable key from every behavior-defining identity field."""
     parts = (
+        str(TRANSLATION_BEHAVIOR_REVISION),
         backend,
         model,
         source_language,
         target_language,
+        glossary_fingerprint or "no-glossary",
         normalize_source_text(source_text),
     )
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()

@@ -12,6 +12,13 @@ from pdftranslate.domain.document import (
     TranslationMetadata,
     TranslationStatistics,
 )
+from pdftranslate.glossary import (
+    ParagraphGlossaryEvidence,
+    PreparedGlossaryText,
+    build_glossary_evidence,
+    prepare_glossary_text,
+    validate_glossary_output,
+)
 from pdftranslate.reconstruction import LogicalParagraph
 from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.translation.cache import TranslationCache
@@ -43,6 +50,7 @@ class _Work:
     source_text: str
     protected: ProtectedText
     segments: tuple[Segment, ...]
+    glossary: PreparedGlossaryText | None = None
     targets: list[tuple[int, str]] = field(default_factory=list)
     translated: list[str] = field(default_factory=list)
 
@@ -71,6 +79,7 @@ def translate_paragraphs(
     started_at = clock()
     completed = skipped = hits = misses = translated_segments = 0
     warnings: list[str] = []
+    glossary_evidence: dict[str, ParagraphGlossaryEvidence] = {}
 
     if resume_document is not None:
         _validate_resume(document, resume_document, translator, options)
@@ -91,6 +100,10 @@ def translate_paragraphs(
         misses = metadata.statistics.cache_misses
         translated_segments = metadata.statistics.translated_segments
         warnings.extend(metadata.warnings)
+        if metadata.glossary is not None:
+            glossary_evidence.update(
+                (item.paragraph_id, item) for item in metadata.glossary.paragraphs
+            )
 
     def build(status: Literal["in_progress", "interrupted", "completed"]) -> ExtractedDocument:
         now = clock()
@@ -116,6 +129,11 @@ def translate_paragraphs(
             completed_at=now if status == "completed" else None,
             statistics=statistics,
             warnings=tuple(dict.fromkeys(warnings)),
+            glossary=(
+                build_glossary_evidence(options.glossary, tuple(glossary_evidence.values()))
+                if options.glossary is not None
+                else None
+            ),
         )
         return document.model_copy(
             update={
@@ -170,15 +188,27 @@ def translate_paragraphs(
                 save()
                 continue
             normalized = normalize_source_text(paragraph.text)
+            prepared = (
+                prepare_glossary_text(paragraph.text, options.glossary)
+                if options.glossary is not None
+                else None
+            )
             cached = cache.get(
                 backend=translator.backend_name,
                 model=translator.model_name,
                 source_language=source_language,
                 target_language=target_language,
                 source_text=normalized,
+                glossary_fingerprint=options.glossary.fingerprint if options.glossary else None,
             )
             if cached is not None:
                 paragraphs[index] = paragraph.model_copy(update={"translated_text": cached})
+                if prepared is not None:
+                    glossary_evidence[paragraph.id] = validate_glossary_output(
+                        cached,
+                        paragraph.id,
+                        prepared.matches,
+                    )
                 completed += 1
                 hits += 1
                 notify(index, "hit")
@@ -188,7 +218,7 @@ def translate_paragraphs(
                 work_by_text[normalized].targets.append((index, "hit"))
                 hits += 1
                 continue
-            protected = protect_text(paragraph.text)
+            protected = protect_text(prepared.value if prepared is not None else paragraph.text)
             segmentation = segment_text(
                 protected.value,
                 count_tokens=translator.count_tokens,
@@ -203,6 +233,7 @@ def translate_paragraphs(
                 protected=protected,
                 segments=segmentation.segments,
                 targets=[(index, "miss")],
+                glossary=prepared,
             )
             misses += 1
 
@@ -222,6 +253,12 @@ def translate_paragraphs(
                 translated_text = work.protected.restore(
                     recombine_segments(work.segments, work.translated)
                 )
+                evidence: ParagraphGlossaryEvidence | None = None
+                if work.glossary is not None:
+                    translated_text, evidence = work.glossary.restore_and_validate(
+                        translated_text,
+                        document.paragraphs[work.targets[0][0]].id,
+                    )
                 cache.put(
                     backend=translator.backend_name,
                     model=translator.model_name,
@@ -229,12 +266,19 @@ def translate_paragraphs(
                     target_language=target_language,
                     source_text=work.source_text,
                     translated_text=translated_text,
+                    glossary_fingerprint=(
+                        options.glossary.fingerprint if options.glossary else None
+                    ),
                 )
                 for index, cache_status in work.targets:
                     paragraphs[index] = document.paragraphs[index].model_copy(
                         update={"translated_text": translated_text}
                     )
                     completed += 1
+                    if evidence is not None:
+                        glossary_evidence[document.paragraphs[index].id] = evidence.model_copy(
+                            update={"paragraph_id": document.paragraphs[index].id}
+                        )
                     notify(index, cache_status, len(work.segments))
                 save()
     except KeyboardInterrupt as error:
@@ -289,6 +333,7 @@ def _validate_resume(
         options.target_language,
         options.batch_size,
         options.max_input_tokens,
+        options.glossary.fingerprint if options.glossary is not None else None,
     )
     actual = (
         metadata.backend,
@@ -297,6 +342,7 @@ def _validate_resume(
         metadata.target_language,
         metadata.batch_size,
         metadata.max_input_tokens,
+        metadata.glossary.fingerprint if metadata.glossary is not None else None,
     )
     if expected != actual:
         raise ResumeMismatchError("resume settings do not match the partial output")

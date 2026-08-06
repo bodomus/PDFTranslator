@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
 from pdftranslate.domain.document import InspectionReport, TranslationStatistics
+from pdftranslate.glossary import GLOSSARY_BEHAVIOR_REVISION, LoadedGlossary
+from pdftranslate.glossary.models import GlossaryTranslationEvidence
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 OcrMode = Literal["auto", "on", "off"]
 ReportFormat = Literal["json", "html", "both"]
-PIPELINE_BEHAVIOR_REVISION = 4
+PIPELINE_BEHAVIOR_REVISION = 5
 
 
 class PipelineStage(StrEnum):
@@ -51,6 +53,11 @@ class PipelineOptions:
     batch_size: int = 8
     max_input_tokens: int = 512
     cache_dir: Path | None = None
+    glossary_path: Path | None = None
+    glossary_fingerprint: str | None = None
+    glossary_schema_version: str | None = None
+    glossary_version: str | None = None
+    glossary_behavior_revision: int | None = None
     offline: bool = False
     resume: bool = False
     overwrite: bool = False
@@ -108,6 +115,21 @@ class PipelineOptions:
         if self.include_report_text and not self.report:
             raise ValueError("--include-report-text requires --report")
 
+        if self.glossary_path is None and self.glossary_fingerprint is not None:
+            raise ValueError("glossary identity requires a glossary path")
+
+    def with_glossary(self, glossary: LoadedGlossary | None) -> PipelineOptions:
+        """Attach validated semantic identity without relying on path or mtime."""
+        if glossary is None:
+            return self
+        return replace(
+            self,
+            glossary_fingerprint=glossary.fingerprint,
+            glossary_schema_version=glossary.document.schema_version,
+            glossary_version=glossary.document.glossary_version,
+            glossary_behavior_revision=GLOSSARY_BEHAVIOR_REVISION,
+        )
+
     def identity_values(self) -> dict[str, str | int | float | bool | None]:
         """Return canonical values that determine artifact compatibility."""
         font = self.font_path.expanduser().resolve() if self.font_path is not None else None
@@ -125,6 +147,11 @@ class PipelineOptions:
             "offline": self.offline,
             "font_path": str(font) if font is not None else None,
             "min_font_size": self.min_font_size,
+            "glossary_fingerprint": self.glossary_fingerprint,
+            "glossary_schema_version": self.glossary_schema_version,
+            "glossary_version": self.glossary_version,
+            "glossary_behavior_revision": self.glossary_behavior_revision,
+            "glossary_languages": "en-ru" if self.glossary_fingerprint else None,
             "font_size_step": self.font_size_step,
             "line_height": self.line_height,
             "redaction_padding": self.redaction_padding,
@@ -164,6 +191,7 @@ class PipelineResult:
     pages_processed: int = 0
     report_paths: tuple[Path, ...] = ()
     debug_layout_path: Path | None = None
+    glossary: GlossaryTranslationEvidence | None = None
 
 
 @dataclass(frozen=True)

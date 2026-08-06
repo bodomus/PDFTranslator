@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "glossary_version": "1.0.0",
+  "source_language": "en",
+  "target_language": "ru",
+  "entries": [
+    {
+      "id": "service",
+      "source": "Secret Service",
+      "target": "Секретная служба",
+      "mode": "translate",
+      "case_sensitive": false,
+      "match": "phrase",
+      "inflection": "fixed",
+      "priority": 100,
+      "notes": "Synthetic public-safe example"
+    },
+    {
+      "id": "product-code",
+      "source": "ZX-1900-1",
+      "target": "ZX-1900-1",
+      "mode": "preserve",
+      "case_sensitive": true,
+      "match": "whole_word",
+      "inflection": "fixed",
+      "priority": 200
+    }
+  ]
+}

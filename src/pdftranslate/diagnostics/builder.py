@@ -43,6 +43,10 @@ def build_success_report(
     block_evidence: dict[str, tuple[int | None, str]],
 ) -> TranslationReport:
     statistics = _statistics(translated)
+    glossary = translated.translation.glossary if translated.translation is not None else None
+    glossary_by_id = (
+        {item.paragraph_id: item for item in glossary.paragraphs} if glossary is not None else {}
+    )
     render_by_id = {item.block_id: item for item in render.blocks} if render else {}
     findings: list[DiagnosticFinding] = [
         DiagnosticFinding(
@@ -90,6 +94,16 @@ def build_success_report(
             for item in translated.repeated_elements.blocks
             if item.ambiguous
         )
+    if glossary is not None:
+        findings.extend(
+            DiagnosticFinding(
+                code=DiagnosticCode.GLOSSARY_ENTRY_UNUSED,
+                severity="info",
+                stage="translate",
+                message=f"Glossary entry {entry_id} was not matched",
+            )
+            for entry_id in glossary.unmatched_entry_ids
+        )
     pages: list[PageDiagnostic] = []
     for page in translated.pages:
         blocks: list[BlockDiagnostic] = []
@@ -105,6 +119,7 @@ def build_success_report(
         for block in units:
             repeated = _repeated_for_unit(translated, block)
             layout = render_by_id.get(block.id)
+            glossary_unit = glossary_by_id.get(block.id)
             codes: list[DiagnosticCode] = []
             state = "unknown"
             if layout is not None:
@@ -154,6 +169,22 @@ def build_success_report(
                         repeated.policy if repeated is not None else RepeatedElementPolicy.TRANSLATE
                     ),
                     repeated_ambiguous=repeated.ambiguous if repeated is not None else False,
+                    glossary_entry_ids=(
+                        glossary_unit.entry_ids if glossary_unit is not None else ()
+                    ),
+                    glossary_occurrences=(
+                        len(glossary_unit.occurrences) if glossary_unit is not None else 0
+                    ),
+                    glossary_modes=(
+                        tuple(sorted({item.mode.value for item in glossary_unit.occurrences}))
+                        if glossary_unit is not None
+                        else ()
+                    ),
+                    glossary_compliance=(
+                        glossary_unit.compliance
+                        if glossary_unit is not None and glossary_unit.compliance != "not_matched"
+                        else "not_applicable"
+                    ),
                 )
             )
         page_codes = (
@@ -222,6 +253,33 @@ def build_success_report(
             ),
             font_reductions=render.font_reductions if render else 0,
             expanded_blocks=render.expanded_blocks if render else 0,
+            glossary_enabled=glossary is not None,
+            glossary_schema_version=glossary.schema_version if glossary is not None else None,
+            glossary_version=glossary.glossary_version if glossary is not None else None,
+            glossary_fingerprint=glossary.fingerprint if glossary is not None else None,
+            glossary_total_entries=(
+                glossary.statistics.total_entries if glossary is not None else 0
+            ),
+            glossary_matched_entries=(
+                glossary.statistics.matched_entries if glossary is not None else 0
+            ),
+            glossary_unmatched_entries=(
+                glossary.statistics.unmatched_entries if glossary is not None else 0
+            ),
+            glossary_applied_occurrences=(
+                glossary.statistics.applied_occurrences if glossary is not None else 0
+            ),
+            glossary_preserved_occurrences=(
+                glossary.statistics.preserved_occurrences if glossary is not None else 0
+            ),
+            glossary_translation_occurrences=(
+                glossary.statistics.mandatory_translation_occurrences if glossary is not None else 0
+            ),
+            glossary_violations=(glossary.statistics.violations if glossary is not None else 0),
+            glossary_conflicts=(glossary.statistics.conflicts if glossary is not None else 0),
+            glossary_ambiguous_matches=(
+                glossary.statistics.ambiguous_matches if glossary is not None else 0
+            ),
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,
             output_size=output_path.stat().st_size,

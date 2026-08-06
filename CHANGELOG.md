@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- PDFTR-13 strict versioned EN-to-RU JSON glossaries with deterministic paragraph-bounded
+  matching, translate/preserve modes, fixed/allow-model behavior, overlap priorities, and explicit
+  conflict rejection.
+- Glossary-aware protected-token restoration, validated final output, cache/resume/workspace
+  identity, once-per-batch loading, per-file batch statistics, and privacy-safe diagnostic evidence
+  with stable glossary codes.
+- `--glossary PATH` for normal PDF, batch, and direct JSON translation workflows plus schema docs,
 - Conservative document-level detection for sequential page numbers, uniform/alternating running
   headers and footers, repeated legal boilerplate, watermark candidates, and ambiguous repeated
   content, with retained source blocks and auditable confidence/group/policy evidence.

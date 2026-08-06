@@ -22,7 +22,8 @@ _CODE_LINE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _PROTECTED = re.compile(
-    r"https?://[^\s<>()]+"
+    r"__PDFTR_GLOSSARY_\d{4}__"
+    r"|https?://[^\s<>()]+"
     r"|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
     r"|[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]+"
     r"|(?<!\w)(?:\.{0,2}/)?(?:[\w.-]+/)+[\w.-]+"

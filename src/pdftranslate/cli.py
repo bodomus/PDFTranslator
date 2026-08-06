@@ -29,6 +29,7 @@ from pdftranslate.benchmark import (
 )
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
+from pdftranslate.glossary import load_glossary
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.ocr import OcrMode, inspect_ocr_dependencies
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
@@ -260,6 +261,13 @@ def translate_pdf(
         Path | None,
         typer.Option("--cache-dir", help="Application cache and pipeline workspace root."),
     ] = None,
+    glossary: Annotated[
+        Path | None,
+        typer.Option(
+            "--glossary",
+            help="Strict versioned UTF-8 EN-to-RU glossary JSON; changes cache/resume identity.",
+        ),
+    ] = None,
     font: Annotated[
         Path | None,
         typer.Option("--font", help="TrueType or OpenType Cyrillic font path."),
@@ -372,6 +380,7 @@ def translate_pdf(
             max_input_tokens=max_input_tokens,
             cache_dir=cache_dir,
             offline=offline,
+            glossary_path=glossary,
             resume=resume,
             overwrite=overwrite,
             font_path=font,
@@ -526,6 +535,13 @@ def translate_batch(
         str,
         typer.Option("--device", help="Inference device shared by the batch: auto, cpu, or cuda."),
     ] = "auto",
+    glossary: Annotated[
+        Path | None,
+        typer.Option(
+            "--glossary",
+            help="Strict versioned UTF-8 EN-to-RU glossary JSON, loaded once per batch.",
+        ),
+    ] = None,
     report: Annotated[
         Path | None,
         typer.Option("--report", help="JSON report path; defaults below the output root."),
@@ -546,6 +562,7 @@ def translate_batch(
             paragraph_reconstruction=cast(ReconstructionMode, paragraph_reconstruction),
             repeated_elements=cast(RepeatedElementsMode, repeated_elements),
             device=cast(DeviceRequest, device),
+            glossary_path=glossary,
             report_path=report,
         )
     except ValueError as error:
@@ -728,6 +745,13 @@ def translate_json(
         Path | None,
         typer.Option("--cache-dir", help="Root for model files and translation memory."),
     ] = None,
+    glossary: Annotated[
+        Path | None,
+        typer.Option(
+            "--glossary",
+            help="Strict versioned UTF-8 EN-to-RU glossary JSON; fixed terms have no inflection.",
+        ),
+    ] = None,
     overwrite: Annotated[
         bool, typer.Option("--overwrite", help="Replace an existing output and start again.")
     ] = False,
@@ -753,6 +777,9 @@ def translate_json(
         if overwrite and resume:
             raise TranslationError("--overwrite and --resume cannot be used together")
         source_document = read_document_json(input_path)
+        loaded_glossary = load_glossary(glossary) if glossary is not None else None
+        if loaded_glossary is not None and source_document.schema_version != "1.2":
+            raise TranslationError("--glossary requires extracted logical paragraph schema 1.2")
         resume_document = None
         if resume:
             if not output_path.exists():
@@ -789,6 +816,7 @@ def translate_json(
             target_language=target_language,
             batch_size=batch_size,
             max_input_tokens=max_input_tokens,
+            glossary=loaded_glossary,
         )
         with TranslationCache(root_cache / "translation-memory.sqlite3") as cache:
             result = translate_document(

@@ -26,6 +26,12 @@ def test_diagnostic_codes_are_stable() -> None:
         "PIPELINE_STAGE_FAILED",
         "RENDER_WARNING",
         "REPEATED_ELEMENT_AMBIGUOUS",
+        "GLOSSARY_CONFLICT",
+        "GLOSSARY_MATCH_AMBIGUOUS",
+        "GLOSSARY_TARGET_MISSING",
+        "GLOSSARY_PRESERVE_VIOLATION",
+        "GLOSSARY_PLACEHOLDER_LEAK",
+        "GLOSSARY_ENTRY_UNUSED",
     }
 
 

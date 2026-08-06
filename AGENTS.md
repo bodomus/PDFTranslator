@@ -37,4 +37,7 @@
 - Update ticket fields and workflow state while work progresses whenever possible.
 - When a ticket is complete, create `reviews/review-<TICKET-ID>.md` describing the completed work
   and attach it to the ticket. Store all ticket review files under `reviews/`.
+- Store every completed ticket implementation report under
+  `.implementation/implementation-report-<TICKET-ID>.md`. This path is the default for PDFTR-13
+  and all subsequent tickets; do not overwrite an earlier ticket's report.
 - Stop and ask the user before resolving ambiguous or conflicting requirements.

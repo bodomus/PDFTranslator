@@ -124,6 +124,36 @@ def run_batch(
                                 cache_hits=statistics.cache_hits,
                                 elapsed_seconds=time.perf_counter() - file_started,
                                 reused_stages=tuple(stage.value for stage in result.reused_stages),
+                                glossary_fingerprint=(
+                                    result.glossary.fingerprint
+                                    if result.glossary is not None
+                                    else None
+                                ),
+                                glossary_matched_entries=(
+                                    result.glossary.statistics.matched_entries
+                                    if result.glossary is not None
+                                    else 0
+                                ),
+                                glossary_unmatched_entries=(
+                                    result.glossary.statistics.unmatched_entries
+                                    if result.glossary is not None
+                                    else 0
+                                ),
+                                glossary_applied_occurrences=(
+                                    result.glossary.statistics.applied_occurrences
+                                    if result.glossary is not None
+                                    else 0
+                                ),
+                                glossary_preserved_occurrences=(
+                                    result.glossary.statistics.preserved_occurrences
+                                    if result.glossary is not None
+                                    else 0
+                                ),
+                                glossary_violations=(
+                                    result.glossary.statistics.violations
+                                    if result.glossary is not None
+                                    else 0
+                                ),
                             )
                         )
         except TranslationError as error:
