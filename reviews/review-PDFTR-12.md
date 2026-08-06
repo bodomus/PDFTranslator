@@ -2,8 +2,8 @@
 
 ## Verdict
 
-Ready for branch CI and project review. The implementation satisfies the ticket with conservative,
-typed, auditable behavior and does not start PDFTR-13.
+Ready for project review. Local checks and branch CI are green; the implementation satisfies the
+ticket with conservative, typed, auditable behavior and does not start PDFTR-13.
 
 ## What was reviewed
 
@@ -34,6 +34,8 @@ typed, auditable behavior and does not start PDFTR-13.
 
 - Focused and adjacent: **52 passed**.
 - Full `scripts/check.ps1`: **174 passed, 1 skipped**, **87.47%** total coverage.
+- GitHub Actions CI #30 on `5fd40d2`: completed successfully in 1m 20s
+  (<https://github.com/bodomus/PDFTranslator/actions/runs/31087523817>).
 - Formatting, Ruff and mypy: passed.
 - Direct batch/extract help: passed and lists `--repeated-elements`.
 - Generated-PDF rendering: page-specific translated body/header and original page numbers verified.
@@ -57,9 +59,8 @@ typed, auditable behavior and does not start PDFTR-13.
 7. CRG reports 42 conservative possible gaps and risk 0.60. Its list includes indirect dataclass and
    Typer paths; focused CLI/integration/full-suite results cover acceptance behavior. Real-corpus
    calibration remains the meaningful next validation layer.
-8. GitHub Actions is pending the branch push; its result will be added after the workflow completes.
 
 ## Recommendation
 
-Push the branch, require green GitHub Actions and coverage at or above 80%, then review this report
-and generated benchmark evidence before merging or starting the next ticket.
+Review this report and generated benchmark evidence before merging or starting the next ticket;
+the branch is pushed, GitHub Actions is green, and measured coverage exceeds 80%.
