@@ -74,6 +74,9 @@
   `--repeated-elements`, and the existing required batch options remain present.
 - Static checks: `ruff format --check .`, `ruff check .`, and `mypy src` → passed.
 - Full `scripts/check.ps1` → **174 passed, 1 skipped**, coverage **87.47%** (required 80%).
+- GitHub Actions CI #30 for commit `5fd40d2` completed successfully in 1m 20s:
+  <https://github.com/bodomus/PDFTranslator/actions/runs/31087523817>.
+
 - Generated-PDF evidence: a three-page PDF was extracted, fake-translated and rendered; each page
   retained its own page number, contained its page-specific translated body and the repeated header,
   and preserved page-number units without redrawing them.
@@ -109,12 +112,11 @@ temp/pdftr12-benchmark/repeated-elements.json`
   source watermark. Automatic cleaning/removal is explicitly out of scope.
 - CRG's 42 reported gaps are conservative static heuristics, not 42 failing or absent acceptance
   tests. The key production path is covered, but additional real-corpus calibration remains useful.
-- GitHub Actions status is pending the first branch push and will be recorded in the review/check-in.
 
 ## Final status
 
-Local implementation and acceptance checks are complete. Ready to commit and push for CI; do not
-start PDFTR-13 until this report and the real results are reviewed.
+Local implementation, branch push and GitHub Actions are complete and green. Ready for review;
+do not start PDFTR-13 until this report and the real results are reviewed.
 
 ---
 
