@@ -2,8 +2,8 @@
 
 ## Verdict
 
-Ready locally for review. The benchmark defect is corrected without rewriting glossary or changing
-production translation behavior.
+Ready for review and merge. The benchmark defect is corrected without rewriting glossary or
+changing production translation behavior; local checks and GitHub Actions are green.
 
 ## Scope reviewed
 
@@ -45,7 +45,8 @@ production translation behavior.
 - CRG post-change analysis found 0 affected production flows. Its 12 heuristic test gaps do not
   recognize subprocess execution of the benchmark; the executable test asserts the exact JSON
   contract and counters.
-- GitHub Actions: pending push at review creation.
+- GitHub Actions: [CI run #40](https://github.com/bodomus/PDFTranslator/actions/runs/31566034559)
+  passed in 1m 39s; 2/2 Python 3.12 jobs completed on Ubuntu and Windows.
 
 ## All review remarks and limitations
 
@@ -58,9 +59,12 @@ production translation behavior.
   without inflating it into real-model evidence.
 - Generated benchmark JSON, SQLite databases, and run directories stay under ignored `./temp/` and
   are not committed.
+- CI reports one Node.js 20 deprecation warning per runner for `actions/checkout@v4` and
+  `astral-sh/setup-uv@v6`; GitHub forced both actions onto Node.js 24 and both jobs passed. This is
+  an infrastructure follow-up, not a benchmark defect.
 - YouTrack does not contain a separate `PDFTR-13A` key. Completion will be recorded as a follow-up
   comment on PDFTR-13 unless a separate issue is created by the user.
 
 ## Recommendation
 
-Merge PDFTR-13A after the pushed GitHub Actions workflow is green.
+Ready to merge PDFTR-13A.
