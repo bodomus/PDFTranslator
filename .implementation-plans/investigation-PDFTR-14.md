@@ -54,18 +54,35 @@ the lockfile and developer documentation; do not add packages or change translat
 - Clean synchronization, raw CUDA work, memory counters, offline NLLB CUDA/CPU smoke tests, full
   checks, and both CI platforms remain mandatory evidence.
 
-## PDFTR-14A execution blocker
+## PDFTR-14A blocker resolution
 
-The candidate `pytorch-cu130` source configuration was exercised but not retained because a
-committed `pyproject.toml` with the old CPU-only lockfile would break every frozen synchronization.
+After outbound package-index access was enabled, the intended source configuration was reapplied
+and `uv --cache-dir .\temp\uv-cache lock` resolved the official Windows
+`torch 2.13.0+cu130` wheel while retaining PyPI Torch for non-Windows platforms. A clean project
+environment was created by moving the previous `.venv` below `./temp/` and running frozen
+synchronization; no manual pip repair was used.
 
-- Online `uv lock` with repository-local `./temp/uv-cache`: PyPI connection refused.
-- Online `uv lock` with the existing user cache: socket access forbidden (`os error 10013`).
-- Offline `uv lock`: no compatible Windows Torch version is available in the cache.
-- Cache inspection: only PyPI CPU Torch artifacts are present; no cu130 wheel/metadata.
-- Browser verification: exact official link and SHA-256 were visible, but direct wheel download
-  was blocked by the browser client.
+The clean environment reports CUDA 13.0, one RTX 4080 with capability 8.9, and successfully
+performs CUDA allocation, matrix multiplication, synchronization, result transfer, and allocated/
+reserved peak-memory queries. Production `NllbTranslator` strict-offline smoke tests return the
+same non-empty Russian text for explicit CUDA and explicit CPU; explicit CUDA remains CUDA.
 
-No lockfile was manually edited and no CPU result was substituted. The next required environmental
-change is outbound access for uv to PyPI and the official PyTorch index, or a correctly populated
-repository-local uv cache.
+## Benchmark ownership and source verification
+
+- `translate_document()` selects `translate_paragraphs()` for schema 1.2 documents.
+- `translate_paragraphs()` owns repeated-element policy, glossary protection/validation,
+  segmentation, translator calls, restoration, and cache accounting.
+- `NllbTranslator` owns tokenizer/config/model construction and effective device selection, so
+  timing its constructor externally captures model load and CUDA placement without modifying the
+  production hot path.
+- `TranslationRuntime.translator_for()` proves the production batch rule: one compatible translator
+  instance is lazily reused. The benchmark mirrors that ownership by constructing one measured
+  translator and passing it through every scenario and all three documents in the reuse scenario.
+- Each benchmark scenario opens an explicitly named `TranslationCache` below its selected
+  repository-local `./temp/` output. Only the intentional warm-cache scenario reopens cold cache.
+- The new package is callable independently of Typer; the standalone script supplies either the
+  deterministic fake or production NLLB factory.
+
+The instrumentation does not cross PDF extraction, OCR, rendering, publication, or normal CLI
+boundaries. It adds report contracts and a benchmark-only sampler around the existing translation
+path; the lock/source change is the only normal environment behavior change.

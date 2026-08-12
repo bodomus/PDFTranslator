@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Versioned JSON and Markdown performance reports for deterministic and real NLLB runs, including
+  cold/warm timing, translation-cache reuse, batch-size distributions, RSS, CUDA memory, shared
+  model reuse, and output-integrity evidence.
+- Reproducible official CUDA 13.0 PyTorch resolution on Windows through uv project metadata,
+  while Linux CI and explicit CPU inference remain GPU-independent.
+
 - PDFTR-13A end-to-end glossary benchmark with 64 logical paragraphs, repeated-element policies,
   protected-token segmentation/restoration, deterministic fake translation, isolated SQLite
   caches, warm-cache reuse, and changed-glossary invalidation evidence.
