@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 
 from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import DomainModel
+from pdftranslate.glossary.models import GlossaryTranslationEvidence
 from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphReconstruction
 from pdftranslate.repeated import RepeatedElementAnalysis
 
@@ -69,6 +70,10 @@ class TranslationMetadata(DomainModel):
     completed_at: datetime | None = None
     statistics: TranslationStatistics
     warnings: tuple[str, ...] = ()
+    glossary: GlossaryTranslationEvidence | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_lifecycle(self) -> TranslationMetadata:

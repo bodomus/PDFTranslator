@@ -85,6 +85,7 @@ def test_batch_help_lists_required_options() -> None:
         "--device",
         "--report",
         "--repeated-elements",
+        "--glossary",
     ):
         assert option in help_text
 

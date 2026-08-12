@@ -1,3 +1,76 @@
+# Investigation — PDFTR-13
+
+## Baseline
+
+- Branch: `codex/PDFTR-13-glossary-protected-terms-and-terminology-consistency`.
+- Base: clean `master` at `5737801`; PDFTR-11 and PDFTR-12 are merged and `origin/master` matches.
+- Runtime: uv 0.5.26, Python 3.12.10; no dependency change is planned.
+- Workflow: Level 2 because glossary behavior crosses translation preparation, protected tokens,
+  cache/resume identity, batch runtime reuse, CLI, serialization and diagnostics.
+- Ticket Markdown was downloaded from the existing YouTrack attachment into `Tickets/`; the issue
+  was moved from Open to In Progress.
+
+## Graph and source findings
+
+- Graphify identified `LogicalParagraph` → `translate_paragraphs()` → `protect_text()` /
+  `segment_text()` → translator → `TranslationCache` as the owning translation path, reached by
+  root pipeline, direct `translate`, and shared batch runtime. Source inspection confirmed it.
+- PDFTR-12 policy is evaluated before skip/cache/model work in `translate_paragraphs()`; therefore
+  glossary preparation must remain after policy handling so preserve/skip always wins.
+- Protected tokens are converted to `__PDFTR_####__` before segmentation and restored after segment
+  recombination. Glossary replacement must precede generic protection so explicit glossary spans
+  own overlaps; generic protection can then protect the internal glossary sentinel itself.
+- Cache keys currently include backend/model/language/normalized source only. Pipeline workspace
+  identity has behavior revision 4 but no glossary fields. Both are insufficient for terminology.
+- Batch opens one `TranslationRuntime`, one translator and one SQLite cache, but has no shared
+  validated behavior object. The runtime is the correct owner for one loaded glossary per batch.
+- `TranslationMetadata` and PDFTR-10 diagnostics are additive typed boundaries suitable for
+  optional glossary identity/evidence while keeping legacy no-glossary JSON readable.
+- CRG updated successfully at the base and reported broad historical changes relative to its stored
+  baseline (92 symbols, risk 0.60). Its dynamic Typer/Pydantic/test mapping is advisory; every
+  ticket-relevant relation above was checked in current source.
+
+## Missing capability
+
+1. There is no versioned glossary schema, strict loader, conflict detector or deterministic matcher.
+2. Mandatory/preserved terminology cannot take precedence over generic protected-token matching.
+3. Cache, checkpoints and workspace resume can reuse translations produced without the same terms.
+4. Batch cannot validate/load terminology once before file processing.
+5. Translated JSON and diagnostics cannot prove which entries applied or whether output complied.
+
+## Smallest coherent design
+
+- Add a Typer/PyMuPDF/Transformers-independent `pdftranslate.glossary` package containing Pydantic
+  contracts, strict UTF-8 loader/fingerprint, deterministic matcher and preparation/restoration.
+- Support the ticket's required `translate|preserve`, `whole_word|phrase|exact`, case behavior and
+  `fixed|allow_model`. `fixed` and preserve use collision-safe sentinels; `allow_model` is not a
+  morphology generator and only validates that the preferred target appears.
+- Resolve valid overlaps by priority, length, case sensitivity, match specificity and ID; reject
+  semantically conflicting normalized duplicates before model construction.
+- Extend generic protection to own glossary sentinels after glossary matching. Restore generic
+  protected tokens first, then glossary values, then fail on missing target or any sentinel leak.
+- Add optional glossary evidence to translation metadata, not to reconstruction models. Paragraph
+  IDs/fragments/mappings remain immutable and full glossary text is never copied per paragraph.
+- Include normalized content fingerprint, schema/version, language pair and glossary behavior
+  revision in translation cache and pipeline workspace identity. Bump pipeline/cache behavior.
+- Add only `--glossary PATH` in strict mode to root, batch and direct translate; defer warn/off
+  because optional modes must not be added without complete semantics and tests.
+- Load the glossary into `TranslationRuntime`, allowing a batch to validate/load exactly once.
+
+## Compatibility and risk
+
+- No glossary preserves user-visible translation behavior, but cache/workspace identities are
+  deliberately invalidated by a behavior revision to prevent silent use of legacy cache entries.
+- Legacy schema 1.0–1.3 without glossary metadata remains readable through optional fields.
+- Glossary failures occur before model loading/publication. Source PDFs and renderer/OCR heuristics
+  remain unchanged.
+- Matching is paragraph-bounded and exact/normalized, not fuzzy OCR correction. `allow_model` can
+  fail strictly when the backend chooses a different inflection; this is intentional and visible.
+- Tests must cover loader conflicts, precedence, protected overlaps, cache/resume, repeated policy,
+  diagnostics privacy, CLI/batch validation, generated PDF and a 50–100 paragraph benchmark.
+
+---
+
 # Investigation — PDFTR-12
 
 ## Baseline and workflow

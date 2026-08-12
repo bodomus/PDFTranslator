@@ -1,3 +1,33 @@
+# Implementation Plan — PDFTR-13
+
+1. Add `pdftranslate.glossary` typed models, strict loader, normalized semantic fingerprint,
+   conflict validation, deterministic matcher and processor/evidence contracts.
+2. Define collision-safe glossary sentinels and extend generic token protection so explicit
+   glossary ownership wins overlaps without leaking unresolved placeholders.
+3. Integrate glossary processing into logical-paragraph translation after repeated-element policy,
+   before segmentation/model work, and validate/cache only final restored output.
+4. Persist additive optional glossary run/paragraph evidence in translation metadata while keeping
+   paragraph structure, source mappings and legacy documents unchanged.
+5. Add glossary fingerprint/schema/version/behavior to cache keys, resume validation and pipeline
+   workspace identity; bump behavior revisions to reject incompatible historical artifacts.
+6. Make `TranslationRuntime` load/validate one glossary for root or an entire batch, before model
+   construction; propagate one loaded instance to every file.
+7. Add strict `--glossary PATH` support to root, batch and direct translate with early, actionable
+   errors; keep Typer outside the glossary package.
+8. Extend batch per-file evidence and PDFTR-10 diagnostics with privacy-safe glossary summary,
+   paragraph entry IDs/compliance and stable glossary codes.
+9. Add focused loader, matcher, integration, repeated-policy, protected-token, cache/resume,
+   CLI/batch, serialization, diagnostics and generated-PDF tests using fakes only.
+10. Add a deterministic 60+ paragraph glossary benchmark and synthetic public-safe glossary docs;
+    update README, CHANGELOG and the persistent implementation-report location rule.
+11. Run focused tests, CLI help/direct validation, benchmark, full `scripts/check.ps1`, then refresh
+    Graphify and update/query CRG with source verification.
+12. Write `.implementation/implementation-report-PDFTR-13.md` and
+    `reviews/review-PDFTR-13.md`, commit/push, verify GitHub Actions, update YouTrack to In Review,
+    and do not start PDFTR-14.
+
+---
+
 # Implementation Plan — PDFTR-12
 
 1. Add typed repeated-element kinds, policies, options, per-block/group evidence and metrics.

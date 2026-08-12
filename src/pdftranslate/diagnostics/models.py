@@ -26,6 +26,12 @@ class DiagnosticCode(StrEnum):
     PIPELINE_STAGE_FAILED = "PIPELINE_STAGE_FAILED"
     RENDER_WARNING = "RENDER_WARNING"
     REPEATED_ELEMENT_AMBIGUOUS = "REPEATED_ELEMENT_AMBIGUOUS"
+    GLOSSARY_CONFLICT = "GLOSSARY_CONFLICT"
+    GLOSSARY_MATCH_AMBIGUOUS = "GLOSSARY_MATCH_AMBIGUOUS"
+    GLOSSARY_TARGET_MISSING = "GLOSSARY_TARGET_MISSING"
+    GLOSSARY_PRESERVE_VIOLATION = "GLOSSARY_PRESERVE_VIOLATION"
+    GLOSSARY_PLACEHOLDER_LEAK = "GLOSSARY_PLACEHOLDER_LEAK"
+    GLOSSARY_ENTRY_UNUSED = "GLOSSARY_ENTRY_UNUSED"
 
 
 class DiagnosticFinding(DomainModel):
@@ -56,6 +62,10 @@ class BlockDiagnostic(DomainModel):
     repeated_group_id: str | None = None
     repeated_policy: RepeatedElementPolicy = RepeatedElementPolicy.TRANSLATE
     repeated_ambiguous: bool = False
+    glossary_entry_ids: tuple[str, ...] = ()
+    glossary_occurrences: int = Field(default=0, ge=0)
+    glossary_modes: tuple[str, ...] = ()
+    glossary_compliance: Literal["not_applicable", "compliant", "violation"] = "not_applicable"
 
 
 class PageDiagnostic(DomainModel):
@@ -94,6 +104,20 @@ class ReportSummary(DomainModel):
     cross_page_merges: int = Field(default=0, ge=0)
     repeated_elements: dict[str, int] = Field(default_factory=dict)
     ambiguous_repeated_elements: int = Field(default=0, ge=0)
+
+    glossary_enabled: bool = False
+    glossary_schema_version: str | None = None
+    glossary_version: str | None = None
+    glossary_fingerprint: str | None = None
+    glossary_total_entries: int = Field(default=0, ge=0)
+    glossary_matched_entries: int = Field(default=0, ge=0)
+    glossary_unmatched_entries: int = Field(default=0, ge=0)
+    glossary_applied_occurrences: int = Field(default=0, ge=0)
+    glossary_preserved_occurrences: int = Field(default=0, ge=0)
+    glossary_translation_occurrences: int = Field(default=0, ge=0)
+    glossary_violations: int = Field(default=0, ge=0)
+    glossary_conflicts: int = Field(default=0, ge=0)
+    glossary_ambiguous_matches: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

@@ -33,6 +33,7 @@ class BatchOptions:
     device: DeviceRequest = "auto"
     report_path: Path | None = None
     cache_dir: Path | None = None
+    glossary_path: Path | None = None
     backend: str = "nllb"
     model: str = "facebook/nllb-200-distilled-600M"
     batch_size: int = 8
@@ -83,6 +84,7 @@ class BatchOptions:
             batch_size=self.batch_size,
             max_input_tokens=self.max_input_tokens,
             cache_dir=self.cache_dir,
+            glossary_path=self.glossary_path,
             offline=self.offline,
             resume=self.resume,
             overwrite=self.overwrite,
@@ -121,6 +123,12 @@ class BatchFileSuccess(DomainModel):
     cache_hits: int = Field(ge=0)
     elapsed_seconds: float = Field(ge=0)
     reused_stages: tuple[str, ...] = ()
+    glossary_fingerprint: str | None = None
+    glossary_matched_entries: int = Field(default=0, ge=0)
+    glossary_unmatched_entries: int = Field(default=0, ge=0)
+    glossary_applied_occurrences: int = Field(default=0, ge=0)
+    glossary_preserved_occurrences: int = Field(default=0, ge=0)
+    glossary_violations: int = Field(default=0, ge=0)
 
 
 class BatchFileFailure(DomainModel):

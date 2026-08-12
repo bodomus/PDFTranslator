@@ -20,6 +20,7 @@ from pdftranslate.config import Settings
 from pdftranslate.diagnostics.builder import build_failure_report, build_success_report
 from pdftranslate.diagnostics.reporting import write_report
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
+from pdftranslate.glossary import LoadedGlossary, load_glossary
 from pdftranslate.ocr import OcrError, OcrOptions, OcrProcessor, validate_ocr_output
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
 from pdftranslate.pdf.pymupdf_backend import source_identity
@@ -87,8 +88,9 @@ class TranslationRuntime:
     cache_root: Path
     model_cache: Path
     cache: TranslationCache
+    glossary: LoadedGlossary | None = None
     _translator: Translator | None = None
-    _identity: tuple[str, str, str, int, bool, str] | None = None
+    _identity: tuple[str, str, str, int, bool, str, str | None] | None = None
 
     def translator_for(self, options: PipelineOptions) -> Translator:
         """Create the model once and reject incompatible reuse."""
@@ -102,6 +104,7 @@ class TranslationRuntime:
             options.max_input_tokens,
             options.offline,
             str(requested_cache_root),
+            self.glossary.fingerprint if self.glossary is not None else None,
         )
         if self._identity is not None and self._identity != identity:
             raise ValueError("shared translation runtime settings do not match this document")
@@ -176,12 +179,15 @@ def open_translation_runtime(
     selected_services = services or default_services()
     settings = Settings()
     cache_root = (options.cache_dir or settings.cache_dir).expanduser().resolve()
+    glossary = load_glossary(options.glossary_path) if options.glossary_path is not None else None
+    options = options.with_glossary(glossary)
     with TranslationCache(cache_root / "translation-memory.sqlite3") as cache:
         yield TranslationRuntime(
             translator_factory=selected_services.translator_factory,
             cache_root=cache_root,
             model_cache=cache_root / "models",
             cache=cache,
+            glossary=glossary,
         )
 
 
@@ -193,6 +199,9 @@ def plan_pipeline(
     """Inspect and estimate selected pages without model construction or persistent artifacts."""
     selected_services = services or default_services()
     try:
+        if options.glossary_path is not None:
+            options.with_glossary(load_glossary(options.glossary_path))
+
         _validate_paths(options, allow_existing_output=True)
         inspection = selected_services.analyzer.inspect(options.input_path)
         extracted = selected_services.extractor.extract(
@@ -245,6 +254,14 @@ def run_pipeline(
         tracemalloc.start()
     selected_services = services or default_services()
     try:
+        glossary = (
+            translation_runtime.glossary
+            if translation_runtime is not None
+            else load_glossary(options.glossary_path)
+            if options.glossary_path is not None
+            else None
+        )
+        options = options.with_glossary(glossary)
         _validate_paths(options, allow_existing_output=options.resume or options.overwrite)
         source = source_identity(options.input_path.expanduser().resolve())
         settings = Settings()
@@ -466,6 +483,7 @@ def run_pipeline(
         pages_processed=len(translated.selected_pages),
         report_paths=report_paths,
         debug_layout_path=debug_layout_path,
+        glossary=metadata.glossary,
     )
 
 
@@ -798,6 +816,7 @@ def _translate_with_runtime(
             target_language="ru",
             batch_size=options.batch_size,
             max_input_tokens=options.max_input_tokens,
+            glossary=runtime.glossary,
         ),
         resume_document=resume_document,
         checkpoint=checkpoint,

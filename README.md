@@ -85,6 +85,20 @@ classifier never selects the destructive `remove` policy automatically. Use
 `--repeated-elements off` on root, batch, or extract commands to classify all blocks as body. Fine
 tuning is available through `PDFTRANSLATE_REPEATED_*` settings; defaults are conservative and
 short documents do not receive confirmed header/footer classifications.
+
+Optional strict EN-to-RU terminology is supplied with `--glossary PATH` on the normal PDF,
+`batch`, and direct `translate` workflows. Glossaries are versioned UTF-8 JSON and operate on
+logical paragraphs, after repeated-element policy selection. Fixed translations and preserved
+terms use collision-safe protected placeholders; final outputs fail closed if a preferred target
+or placeholder is missing. The semantic glossary fingerprint participates in cache and resume
+identity, and batch loads it once for all files:
+
+```powershell
+uv run pdftranslate .\manual.pdf --glossary .\docs\glossary.example.json
+uv run pdftranslate batch .\manuals --glossary .\docs\glossary.example.json
+```
+
+See [docs/glossary.md](docs/glossary.md) for schema, precedence, matching, privacy, and limitations.
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 

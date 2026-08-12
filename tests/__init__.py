@@ -1,1 +1,1 @@
-"""PDFTranslate test suite."""
+"""PDFTranslate test package."""
