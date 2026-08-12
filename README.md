@@ -19,6 +19,17 @@ No CUDA toolkit, NVIDIA GPU, model download, or administrator privileges are req
 PyMuPDF is the PDF backend; PyTorch and Transformers provide local inference. NLLB weights are
 downloaded only when translation runs without an already cached model.
 
+On Windows, the committed uv configuration installs the official CUDA 13.0 PyTorch build so the
+same environment supports both explicit CPU inference and NVIDIA GPU inference. CUDA execution
+requires a compatible NVIDIA GPU and driver, but not a separately installed CUDA Toolkit. Linux CI
+continues to resolve Torch from PyPI and does not require GPU hardware.
+
+Performance and memory measurements are available through the standalone benchmark script. It
+supports deterministic model-free checks plus strict-offline real NLLB CPU/CUDA runs without
+adding benchmark commands to the production CLI. See
+[docs/performance-benchmark.md](docs/performance-benchmark.md) for scenarios, commands, metrics,
+and interpretation limits.
+
 ## Windows setup
 
 From PowerShell, clone or open the repository and run:
