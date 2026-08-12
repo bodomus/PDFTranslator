@@ -2,8 +2,8 @@
 
 ## Verdict
 
-**Locally ready; final merge recommendation awaits GitHub Actions.** The mandatory CUDA criterion
-is satisfied with real NLLB work on an RTX 4080, and CPU results were never substituted for CUDA.
+**Ready to merge.** The mandatory CUDA criterion is satisfied with real NLLB work on an RTX 4080,
+CPU results were never substituted for CUDA, and both GitHub Actions platforms are green.
 
 ## Scope reviewed
 
@@ -74,10 +74,12 @@ is satisfied with real NLLB work on an RTX 4080, and CPU results were never subs
 - Adjacent translation/glossary/repeated: **31 passed**.
 - Full quality gate: **199 passed, 1 skipped**, coverage **88.21%**.
 - Ruff, formatting, mypy, lock check, synthetic, CPU real, CUDA real, Graphify, and CRG: PASS.
-- GitHub Actions Windows/Ubuntu: **pending branch push**.
+- Initial CI: Windows passed; Ubuntu correctly rejected direct Windows-only ctypes attribute access
+  during mypy. The narrow portable-access fix was locally revalidated.
+- Final implementation CI [`31590250965`](https://github.com/bodomus/PDFTranslator/actions/runs/31590250965):
+  **Windows PASS, Ubuntu PASS** through frozen sync, Ruff, mypy, tests, and coverage.
 
 ## Recommendation
 
-Push the branch and require both GitHub Actions jobs to pass. If they are green, update this review
-to **ready to merge** without starting PDFTR-15. If dependency synchronization fails on either OS,
-PDFTR-14 remains not ready even though the local CUDA gate passed.
+Merge recommendation: **ready**. The branch has local CUDA evidence, full local validation, and
+green Windows/Ubuntu CI. Do not start PDFTR-15 until this review is accepted.

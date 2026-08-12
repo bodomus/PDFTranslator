@@ -2,7 +2,8 @@
 
 ## Status
 
-Implementation complete; final local validation, commit, push, and CI verification remain.
+Completed. Implementation, real CPU/CUDA benchmarks, local validation, push, report/review, and
+Windows/Ubuntu CI verification all passed.
 
 ## Scope and sequence
 

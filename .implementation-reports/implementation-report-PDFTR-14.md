@@ -2,7 +2,7 @@
 
 ## Final status
 
-**Implementation and local acceptance: PASS. GitHub Actions: pending branch push.**
+**Implementation, local acceptance, and GitHub Actions: PASS.**
 
 PDFTR-14A removed the CUDA dependency blocker reproducibly, and PDFTR-14 now has complete
 synthetic, real CPU, and real CUDA benchmark evidence. No CPU result is presented as CUDA data.
@@ -223,7 +223,11 @@ cache, timing, throughput, RAM, and VRAM fields for every class.
 - Real CUDA NLLB benchmark: PASS, `complete=true`, 26 scenarios, effective device CUDA.
 - `uv lock --check`: PASS.
 - Graphify/CRG post-change refresh: PASS after rerun with UTF-8 and normal filesystem access.
-- GitHub Actions Windows/Ubuntu: **pending push**.
+- First CI run `31590073605`: Windows passed, Ubuntu found three portable mypy errors because
+  Linux ctypes stubs omit Windows-only `WinDLL`/`windll` attributes. Runtime guards were correct;
+  access was made type-portable through `ctypes.__dict__` and the full local gate was repeated.
+- Final implementation CI run [`31590250965`](https://github.com/bodomus/PDFTranslator/actions/runs/31590250965):
+  **Windows PASS, Ubuntu PASS**, including frozen sync, Ruff, mypy, tests, and coverage.
 
 The first local check attempts failed before meaningful assertions because sandboxed processes
 could not access the configured `A:\Temp`, the default user uv cache, or even their newly created
@@ -239,4 +243,4 @@ pytest directories. The unchanged checks passed outside that filesystem restrict
   separately from model throughput.
 - A future optimization ticket may investigate CPU batch variance, model compilation/quantization,
   or larger GPU batches. None was implemented here.
-- **Ready for branch push and CI verification; merge readiness requires both CI jobs green.**
+- **Ready for review/merge. Both required CI jobs are green.**
