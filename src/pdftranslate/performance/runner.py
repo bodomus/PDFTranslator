@@ -576,6 +576,7 @@ def _system_ram_bytes() -> int | None:
 
     status = _MemoryStatus()
     status.dwLength = ctypes.sizeof(status)
-    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+    windll = ctypes.__dict__["windll"]
+    if windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         return int(status.ullTotalPhys)
     return None

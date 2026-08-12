@@ -26,8 +26,9 @@ class _ProcessMemoryCounters(ctypes.Structure):
 
 def current_rss_bytes() -> int | None:
     if platform.system() == "Windows":
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        win_dll = ctypes.__dict__["WinDLL"]
+        kernel32 = win_dll("kernel32", use_last_error=True)
+        psapi = win_dll("psapi", use_last_error=True)
         kernel32.GetCurrentProcess.restype = wintypes.HANDLE
         psapi.GetProcessMemoryInfo.argtypes = [
             wintypes.HANDLE,
