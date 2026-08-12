@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- PDFTR-13A end-to-end glossary benchmark with 64 logical paragraphs, repeated-element policies,
+  protected-token segmentation/restoration, deterministic fake translation, isolated SQLite
+  caches, warm-cache reuse, and changed-glossary invalidation evidence.
 - PDFTR-13 strict versioned EN-to-RU JSON glossaries with deterministic paragraph-bounded
   matching, translate/preserve modes, fixed/allow-model behavior, overlap priorities, and explicit
   conflict rejection.
