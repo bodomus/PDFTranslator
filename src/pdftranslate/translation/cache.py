@@ -9,7 +9,9 @@ from pathlib import Path
 from pdftranslate.translation.errors import TranslationCacheError
 from pdftranslate.translation.text import normalize_source_text
 
-TRANSLATION_BEHAVIOR_REVISION = 2
+# Revision 3 invalidates entries created before PDFTR-16's protected-token preprocessing fix:
+# slash-separated prose and PDF ligatures now produce different model-facing text.
+TRANSLATION_BEHAVIOR_REVISION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS translations (

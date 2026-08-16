@@ -24,6 +24,7 @@ from pdftranslate.pipeline import (
 from pdftranslate.pipeline.models import PIPELINE_BEHAVIOR_REVISION
 from pdftranslate.rendering import OutputPdfError, PdfRenderer, validate_output_pdf
 from pdftranslate.translation import TranslationBackendError
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
 from tests.conftest import PdfFactory
 
 runner = CliRunner()
@@ -120,6 +121,9 @@ def test_pipeline_identity_includes_behavior_revision(tmp_path: Path) -> None:
     )
 
     assert options.identity_values()["pipeline_behavior_revision"] == PIPELINE_BEHAVIOR_REVISION
+    assert (
+        options.identity_values()["translation_behavior_revision"] == TRANSLATION_BEHAVIOR_REVISION
+    )
 
 
 def test_complete_pipeline_uses_cache_workspace_and_unicode_paths(

@@ -25,7 +25,7 @@ _PDF_LIGATURES = str.maketrans(
 _PATH_PART = r"[\w.-]*[\w-]"
 _RELATIVE_PATH = rf"(?<!\w)\.{{1,2}}/(?:{_PATH_PART}/)*{_PATH_PART}"
 _ABSOLUTE_POSIX_PATH = rf"(?<!\w)/(?:{_PATH_PART}/)+{_PATH_PART}"
-_BARE_FILE_PATH = rf"(?<!\w)(?=[\w./-]*(?:[._-]|\d))(?:{_PATH_PART}/)+{_PATH_PART}"
+_BARE_FILE_PATH = rf"(?<!\w)(?:{_PATH_PART}/)+[\w-]+\.[A-Za-z0-9]{{1,16}}"
 _MEASUREMENTS_ONLY = re.compile(
     r"^\s*(?:\d+(?:[.,]\d+)?\s*(?:%|mm|cm|m|km|mg|g|kg|ml|l|°C|°F)"
     r"(?:\s*[,;/x×]\s*)?)+\s*$",
