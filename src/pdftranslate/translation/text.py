@@ -11,6 +11,21 @@ from pdftranslate.translation.errors import ProtectedTokenError
 
 _PAGE_NUMBER = re.compile(r"^\s*\d+\s*$")
 _IDENTIFIER = re.compile(r"^\s*[A-Z0-9][A-Z0-9_.:/\\-]*\s*$")
+_PDF_LIGATURES = str.maketrans(
+    {
+        "\ufb00": "ff",
+        "\ufb01": "fi",
+        "\ufb02": "fl",
+        "\ufb03": "ffi",
+        "\ufb04": "ffl",
+        "\ufb05": "st",
+        "\ufb06": "st",
+    }
+)
+_PATH_PART = r"[\w.-]*[\w-]"
+_RELATIVE_PATH = rf"(?<!\w)\.{{1,2}}/(?:{_PATH_PART}/)*{_PATH_PART}"
+_ABSOLUTE_POSIX_PATH = rf"(?<!\w)/(?:{_PATH_PART}/)+{_PATH_PART}"
+_BARE_FILE_PATH = rf"(?<!\w)(?=[\w./-]*(?:[._-]|\d))(?:{_PATH_PART}/)+{_PATH_PART}"
 _MEASUREMENTS_ONLY = re.compile(
     r"^\s*(?:\d+(?:[.,]\d+)?\s*(?:%|mm|cm|m|km|mg|g|kg|ml|l|°C|°F)"
     r"(?:\s*[,;/x×]\s*)?)+\s*$",
@@ -26,7 +41,9 @@ _PROTECTED = re.compile(
     r"|https?://[^\s<>()]+"
     r"|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
     r"|[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]+"
-    r"|(?<!\w)(?:\.{0,2}/)?(?:[\w.-]+/)+[\w.-]+"
+    rf"|{_RELATIVE_PATH}"
+    rf"|{_ABSOLUTE_POSIX_PATH}"
+    rf"|{_BARE_FILE_PATH}"
     r"|\b\d+(?:[.,]\d+)?\s?(?:%|mm|cm|km|mg|kg|ml|°C|°F)\b"
     r"|\b(?:[A-Z]{1,8}[-_/])?\d{3,}(?:[-_/]\d+)*\b",
     re.IGNORECASE,
@@ -71,14 +88,14 @@ class SegmentationResult:
 
 def normalize_source_text(text: str) -> str:
     """Normalize cache identity without discarding paragraph structure."""
-    normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _normalize_pdf_text(text).replace("\r\n", "\n").replace("\r", "\n")
     normalized = re.sub(r"[ \t]+", " ", normalized)
     return normalized.strip()
 
 
 def should_skip_translation(text: str) -> bool:
     """Return true for content that must pass through without model inference."""
-    stripped = text.strip()
+    stripped = _normalize_pdf_text(text).strip()
     if not stripped or _PAGE_NUMBER.fullmatch(stripped):
         return True
     if _MEASUREMENTS_ONLY.fullmatch(stripped):
@@ -92,16 +109,21 @@ def should_skip_translation(text: str) -> bool:
 
 def protect_text(text: str) -> ProtectedText:
     """Replace sensitive tokens with deterministic sentinels."""
+    protected_source = _normalize_pdf_text(text)
     replacements: list[tuple[str, str]] = []
 
     def replace(match: re.Match[str]) -> str:
         placeholder = f"__PDFTR_{len(replacements):04d}__"
-        while placeholder in text:
+        while placeholder in protected_source:
             placeholder = f"_{placeholder}_"
         replacements.append((placeholder, match.group(0)))
         return placeholder
 
-    return ProtectedText(_PROTECTED.sub(replace, text), tuple(replacements))
+    return ProtectedText(_PROTECTED.sub(replace, protected_source), tuple(replacements))
+
+
+def _normalize_pdf_text(text: str) -> str:
+    return unicodedata.normalize("NFC", text.translate(_PDF_LIGATURES))
 
 
 def segment_text(

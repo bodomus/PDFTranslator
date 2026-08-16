@@ -21,7 +21,7 @@ from pdftranslate.translation import (
     TranslationOutOfMemoryError,
     translate_document,
 )
-from pdftranslate.translation.text import protect_text, segment_text
+from pdftranslate.translation.text import normalize_source_text, protect_text, segment_text
 
 
 class FakeTranslator:
@@ -244,6 +244,38 @@ def test_protected_tokens_use_ascii_placeholders_and_avoid_source_collisions() -
     assert protected.restore(protected.value) == (
         "Copyright 1999; literal __PDFTR_0000__ remains source text."
     )
+
+
+def test_slash_separated_prose_is_not_treated_as_protected_path() -> None:
+    protected = protect_text(
+        "Epicurean justice concerns nature/agreement and virtue/pleasure, not and/or syntax."
+    )
+
+    assert protected.replacements == ()
+    assert protected.value == (
+        "Epicurean justice concerns nature/agreement and virtue/pleasure, not and/or syntax."
+    )
+
+
+def test_file_like_paths_remain_protected_after_slash_prose_fix() -> None:
+    protected = protect_text(
+        "Read ./docs/glossary.md, docs/glossary.md, /usr/local/bin, and C:\\docs\\a.txt."
+    )
+    originals = [original.rstrip(".,") for _, original in protected.replacements]
+
+    assert "./docs/glossary.md" in originals
+    assert "docs/glossary.md" in originals
+    assert "/usr/local/bin" in originals
+    assert "C:\\docs\\a.txt" in originals
+
+
+def test_pdf_ligatures_are_normalized_before_token_protection() -> None:
+    assert normalize_source_text("The ofﬁce ﬂoor") == "The office floor"
+
+    protected = protect_text("The ofﬁce/virtue relation cites docs/ﬁle.pdf.")
+
+    assert "office/virtue" in protected.value
+    assert protected.replacements == (("__PDFTR_0000__", "docs/file.pdf"),)
 
 
 def test_segmentation_retains_paragraph_breaks() -> None:

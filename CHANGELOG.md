@@ -132,6 +132,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Protected-token detection no longer treats ordinary slash-separated prose as file paths, and
+  translation text preparation now normalizes common PDF ligatures before matching protected tokens.
 - Benchmark exact-source cache hits now reuse only inference artifacts and independently recompute
   protected-token, human-review, historical-trace findings, and status for every sample.
 - NLLB `--offline` now resolves a local model/cache snapshot before Transformers import, loads
