@@ -141,6 +141,46 @@ def test_saved_pdf_validation_rejects_partial_render_unit(
         )
 
 
+def test_saved_pdf_validation_rejects_duplicate_text_missing_from_expected_unit(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    path = tmp_path / "duplicate-missing.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=360, height=180)
+    shape = page.new_shape()
+    shape.insert_textbox(
+        pymupdf.Rect(40, 40, 220, 70),
+        "Русский повтор",
+        fontname="PDFTranslateFont",
+        fontfile=str(cyrillic_font_path),
+        fontsize=12,
+    )
+    shape.commit()
+    document.save(path)
+    document.close()
+
+    with pytest.raises(OutputPdfError, match="block p2"):
+        _validate_saved_pdf(
+            path,
+            1,
+            [
+                _expected_text(
+                    block_id="p1",
+                    text="Русский повтор",
+                    rect=pymupdf.Rect(35, 35, 230, 80),
+                    font_path=cyrillic_font_path,
+                ),
+                _expected_text(
+                    block_id="p2",
+                    text="Русский повтор",
+                    rect=pymupdf.Rect(35, 100, 230, 145),
+                    font_path=cyrillic_font_path,
+                ),
+            ],
+        )
+
+
 def _source_pdf(path: Path, *, image: bool = False, background: bool = False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     document = pymupdf.open()

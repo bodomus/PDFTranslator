@@ -648,8 +648,6 @@ def _validate_saved_pdf(
                 _normalize_validation_text(str(page.get_text("text"))),  # type: ignore[no-untyped-call]
             )
             normalized_expected = _normalize_validation_text(expected.translated_text)
-            if normalized_expected in normalized_page:
-                continue
             clip = _validation_clip(expected.final_rect, page.rect, expected.font_size)
             clipped = str(page.get_text("text", clip=clip))  # type: ignore[no-untyped-call]
             normalized_clipped = _normalize_validation_text(clipped)
@@ -658,7 +656,9 @@ def _validate_saved_pdf(
             if failed_output is not None:
                 failed_output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, failed_output)
-            raise OutputPdfError(_validation_failure_message(expected, normalized_clipped))
+            raise OutputPdfError(
+                _validation_failure_message(expected, normalized_clipped, normalized_page)
+            )
     finally:
         document.close()  # type: ignore[no-untyped-call]
 
@@ -681,12 +681,17 @@ def _validation_clip(
     )
 
 
-def _validation_failure_message(expected: _ExpectedText, normalized_clipped: str) -> str:
+def _validation_failure_message(
+    expected: _ExpectedText,
+    normalized_clipped: str,
+    normalized_page: str,
+) -> str:
     return (
         "generated PDF is missing inserted Cyrillic text "
         f"for block {expected.block_id} on page {expected.page_number}; "
         f"expected={_snippet(_normalize_validation_text(expected.translated_text))!r}; "
         f"extracted_clip={_snippet(normalized_clipped)!r}; "
+        f"extracted_page={_snippet(normalized_page)!r}; "
         f"source_bbox={_rect_tuple(expected.source_rect)}; "
         f"final_bbox={_rect_tuple(expected.final_rect)}; "
         f"font_path={expected.font_path}; "
