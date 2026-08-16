@@ -16,6 +16,7 @@ from pdftranslate.rendering import (
     FontValidationError,
     OutputPdfError,
     PdfRenderer,
+    RenderingInputError,
     RenderOptions,
     SourceMismatchError,
     validate_font,
@@ -47,6 +48,21 @@ def _source_pdf(path: Path, *, image: bool = False, background: bool = False) ->
         pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 40), False)
         pixmap.clear_with(0x336699)
         page.insert_image(pymupdf.Rect(280, 220, 370, 310), pixmap=pixmap)
+    document.save(path)
+    document.close()
+    return path
+
+
+def _split_block_pdf(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = pymupdf.open()
+    page = document.new_page(width=400, height=180)
+    page.insert_textbox(
+        pymupdf.Rect(40, 40, 270, 95),
+        "68.\nThe Origin of Justice",
+        fontsize=14,
+        lineheight=1.2,
+    )
     document.save(path)
     document.close()
     return path
@@ -92,6 +108,52 @@ def _translated(source: Path, text: str):
     )
 
 
+def _translation_metadata(total: int) -> TranslationMetadata:
+    now = datetime.now(UTC)
+    return TranslationMetadata(
+        status="completed",
+        backend="nllb",
+        model="fake",
+        source_language="en",
+        target_language="ru",
+        effective_device="cpu",
+        batch_size=1,
+        max_input_tokens=64,
+        started_at=now,
+        updated_at=now,
+        completed_at=now,
+        statistics=TranslationStatistics(
+            total_blocks=total,
+            completed_blocks=total,
+            skipped_blocks=0,
+            cache_hits=0,
+            cache_misses=total,
+            translated_segments=total,
+        ),
+    )
+
+
+def _schema_1_3_with_split_paragraphs(
+    source: Path,
+    *,
+    marker_translation: str,
+    heading_translation: str,
+):
+    extracted = PdfExtractor().extract(source)
+    marker, heading = extracted.paragraphs[:2]
+    paragraphs = (
+        marker.model_copy(update={"translated_text": marker_translation}),
+        heading.model_copy(update={"translated_text": heading_translation}),
+    )
+    return extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": paragraphs,
+            "translation": _translation_metadata(len(paragraphs)),
+        }
+    )
+
+
 def test_render_replaces_text_and_preserves_source_geometry_images_and_vectors(
     tmp_path: Path,
     cyrillic_font_path: Path,
@@ -126,6 +188,52 @@ def test_render_replaces_text_and_preserves_source_geometry_images_and_vectors(
     finally:
         rendered_document.close()
         source_document.close()
+
+
+def test_schema_1_3_render_accepts_split_block_when_marker_translation_is_present(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    source = _split_block_pdf(tmp_path / "split-block.pdf")
+    translated = _schema_1_3_with_split_paragraphs(
+        source,
+        marker_translation="68.",
+        heading_translation="Русское происхождение справедливости.",
+    )
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        tmp_path / "split-block.ru.pdf",
+        font_path=cyrillic_font_path,
+        options=RenderOptions(allow_expand=True),
+    )
+
+    assert result.blocks_rendered == 2
+    assert [item.block_id for item in result.blocks] == [
+        translated.paragraphs[0].id,
+        translated.paragraphs[1].id,
+    ]
+
+
+def test_schema_1_3_render_still_rejects_empty_translate_policy_paragraph(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    source = _split_block_pdf(tmp_path / "missing-split-block.pdf")
+    translated = _schema_1_3_with_split_paragraphs(
+        source,
+        marker_translation="",
+        heading_translation="Русское происхождение справедливости.",
+    )
+
+    with pytest.raises(RenderingInputError, match="translated text is missing"):
+        PdfRenderer().render(
+            source,
+            translated,
+            tmp_path / "missing-split-block.ru.pdf",
+            font_path=cyrillic_font_path,
+        )
 
 
 def test_font_size_is_reduced_for_longer_translation(

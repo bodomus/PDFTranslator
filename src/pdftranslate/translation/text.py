@@ -98,6 +98,8 @@ def should_skip_translation(text: str) -> bool:
     stripped = _normalize_pdf_text(text).strip()
     if not stripped or _PAGE_NUMBER.fullmatch(stripped):
         return True
+    if _is_private_use_marker(stripped):
+        return True
     if _MEASUREMENTS_ONLY.fullmatch(stripped):
         return True
     if _IDENTIFIER.fullmatch(stripped) and (
@@ -124,6 +126,12 @@ def protect_text(text: str) -> ProtectedText:
 
 def _normalize_pdf_text(text: str) -> str:
     return unicodedata.normalize("NFC", text.translate(_PDF_LIGATURES))
+
+
+def _is_private_use_marker(text: str) -> bool:
+    if not any(unicodedata.category(character) == "Co" for character in text):
+        return False
+    return not any(character.isalpha() for character in text)
 
 
 def segment_text(

@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevented PDF private-use marker-only paragraphs from being sent to translation models as prose,
+  preserving them as non-empty pass-through text so schema 1.3 rendering no longer reports false
+  missing translations for split source blocks.
+
 ### Added
 
 - Versioned JSON and Markdown performance reports for deterministic and real NLLB runs, including

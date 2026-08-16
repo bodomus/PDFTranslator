@@ -14,6 +14,16 @@ from pdftranslate.domain.document import (
 )
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox, TextBlock
+from pdftranslate.reconstruction import (
+    LogicalParagraph,
+    ParagraphFragment,
+    ParagraphKind,
+    ParagraphReconstruction,
+    ParagraphReconstructionOptions,
+    ReconstructionMetrics,
+    SourceBlockMapping,
+)
+from pdftranslate.serialization import document_from_json, document_to_json
 from pdftranslate.translation import (
     ProtectedTokenError,
     TranslationCache,
@@ -24,7 +34,12 @@ from pdftranslate.translation import (
     translate_document,
 )
 from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
-from pdftranslate.translation.text import normalize_source_text, protect_text, segment_text
+from pdftranslate.translation.text import (
+    normalize_source_text,
+    protect_text,
+    segment_text,
+    should_skip_translation,
+)
 
 
 class FakeTranslator:
@@ -88,6 +103,81 @@ def _document(*texts: str) -> ExtractedDocument:
     )
 
 
+def _paragraph_document(*paragraph_texts: str, paragraph_id: str = "p1-b1") -> ExtractedDocument:
+    box = BoundingBox(x0=0, y0=0, x1=100, y1=40)
+    block = TextBlock(
+        id=paragraph_id,
+        text="\n".join(paragraph_texts),
+        bbox=box,
+        original_order=0,
+        normalized_order=0,
+    )
+    fragments = tuple(
+        ParagraphFragment(
+            id=f"{paragraph_id}-l{index:04d}",
+            text=text,
+            bbox=BoundingBox(x0=0, y0=index * 12, x1=100, y1=index * 12 + 10),
+            mapping=SourceBlockMapping(
+                source_block_id=paragraph_id,
+                page_number=1,
+                bbox=box,
+                original_order=0,
+                normalized_order=0,
+                line_ids=(),
+            ),
+            spans=(),
+            column=0,
+        )
+        for index, text in enumerate(paragraph_texts, start=1)
+    )
+    paragraphs = tuple(
+        LogicalParagraph(
+            id=paragraph_id,
+            text=fragment.text,
+            kind=ParagraphKind.BODY,
+            anchor_page_number=1,
+            bbox=fragment.bbox,
+            fragments=(fragment,),
+            spans=(),
+        )
+        for fragment in fragments
+    )
+    return ExtractedDocument(
+        schema_version="1.2",
+        source=SourceDocument(path="C:/input/source.pdf", file_size=100, sha256="0" * 64),
+        page_count=1,
+        selected_pages=(1,),
+        metadata=DocumentMetadata(),
+        encrypted=False,
+        password_required=False,
+        pages=(
+            ExtractedPage(
+                page_number=1,
+                source_index=0,
+                width=100,
+                height=100,
+                rotation=0,
+                classification=PageClassification.TEXT,
+                text_blocks=(block,),
+            ),
+        ),
+        paragraphs=paragraphs,
+        reconstruction=ParagraphReconstruction(
+            mode="conservative",
+            options=ParagraphReconstructionOptions(),
+            metrics=ReconstructionMetrics(
+                raw_blocks=1,
+                raw_lines=len(paragraphs),
+                logical_paragraphs=len(paragraphs),
+                merged_fragments=0,
+                ambiguous_decisions=0,
+                cross_page_merges=0,
+                soft_hyphens_removed=0,
+            ),
+        ),
+    )
+
+
 def test_pipeline_preserves_originals_protected_tokens_and_duplicates(tmp_path: Path) -> None:
     protected = (
         "Visit https://example.com, email a@example.com, use C:\\docs\\a.txt, "
@@ -119,6 +209,38 @@ def test_pipeline_preserves_originals_protected_tokens_and_duplicates(tmp_path: 
     assert result.translation.status == "completed"
     assert result.translation.statistics.cache_hits == 1
     assert result.translation.statistics.skipped_blocks == 1
+
+
+def test_paragraph_pipeline_preserves_pdf_private_use_markers_without_model(
+    tmp_path: Path,
+) -> None:
+    source = _paragraph_document(
+        "\uf646\uf64b", "The Origin of Justice", paragraph_id="p0001-b0008"
+    )
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            source,
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(batch_size=2),
+        )
+
+    assert should_skip_translation("\uf646\uf64b")
+    assert not should_skip_translation("\uf644.\uf647The Logismos Phase")
+    assert [text for batch in translator.batches for text in batch] == ["The Origin of Justice"]
+    assert [item.id for item in result.paragraphs] == ["p0001-b0008", "p0001-b0008"]
+    assert result.paragraphs[0].translated_text == "\uf646\uf64b"
+    assert result.paragraphs[1].translated_text == "RU The Origin of Justice"
+    assert result.translation is not None
+    assert result.translation.statistics.skipped_blocks == 1
+
+    round_tripped = document_from_json(document_to_json(result))
+    assert [item.translated_text for item in round_tripped.paragraphs] == [
+        "\uf646\uf64b",
+        "RU The Origin of Justice",
+    ]
 
 
 def test_cache_prevents_work_across_runs(tmp_path: Path) -> None:
