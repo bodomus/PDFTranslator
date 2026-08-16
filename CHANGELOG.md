@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Made post-save Cyrillic PDF validation render-unit aware, with PDF extraction punctuation
+  normalization and debug-only preservation of failed temporary render PDFs for diagnostics.
 - Prevented PDF private-use marker-only paragraphs from being sent to translation models as prose,
   preserving them as non-empty pass-through text so schema 1.3 rendering no longer reports false
   missing translations for split source blocks.

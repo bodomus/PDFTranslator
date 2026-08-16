@@ -21,7 +21,11 @@ from pdftranslate.rendering import (
     SourceMismatchError,
     validate_font,
 )
-from pdftranslate.rendering.renderer import _normalize_validation_text
+from pdftranslate.rendering.renderer import (
+    _ExpectedText,
+    _normalize_validation_text,
+    _validate_saved_pdf,
+)
 from pdftranslate.serialization import write_document_json
 
 runner = CliRunner()
@@ -29,6 +33,112 @@ runner = CliRunner()
 
 def test_saved_pdf_text_validation_normalizes_embedded_font_hyphens() -> None:
     assert _normalize_validation_text("каким‐либо\n10022‑5299") == ("каким-либо 10022-5299")
+
+
+def test_saved_pdf_text_validation_normalizes_pdf_parenthesis_forms() -> None:
+    assert _normalize_validation_text("текст \ufd3eсм. пример\ufd3f") == "текст (см. пример)"
+
+
+def _expected_text(
+    *,
+    block_id: str,
+    text: str,
+    rect: pymupdf.Rect,
+    font_path: Path,
+) -> _ExpectedText:
+    return _ExpectedText(
+        page_number=1,
+        block_id=block_id,
+        source_text="source",
+        translated_text=text,
+        source_rect=rect,
+        final_rect=rect,
+        font_path=font_path,
+        font_size=12,
+        overflow=False,
+        expanded=False,
+    )
+
+
+def test_saved_pdf_validation_uses_render_unit_clip_when_page_order_differs(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    path = tmp_path / "order.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=420, height=160)
+    shape = page.new_shape()
+    shape.insert_textbox(
+        pymupdf.Rect(40, 40, 220, 70),
+        "Первая строка",
+        fontname="PDFTranslateFont",
+        fontfile=str(cyrillic_font_path),
+        fontsize=12,
+    )
+    shape.insert_textbox(
+        pymupdf.Rect(260, 52, 380, 82),
+        "Помеха",
+        fontname="PDFTranslateFont",
+        fontfile=str(cyrillic_font_path),
+        fontsize=12,
+    )
+    shape.insert_textbox(
+        pymupdf.Rect(40, 76, 220, 106),
+        "Вторая строка",
+        fontname="PDFTranslateFont",
+        fontfile=str(cyrillic_font_path),
+        fontsize=12,
+    )
+    shape.commit()
+    document.save(path)
+    document.close()
+
+    _validate_saved_pdf(
+        path,
+        1,
+        [
+            _expected_text(
+                block_id="p1",
+                text="Первая строка Вторая строка",
+                rect=pymupdf.Rect(35, 40, 230, 110),
+                font_path=cyrillic_font_path,
+            )
+        ],
+    )
+
+
+def test_saved_pdf_validation_rejects_partial_render_unit(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    path = tmp_path / "partial.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=120)
+    shape = page.new_shape()
+    shape.insert_textbox(
+        pymupdf.Rect(40, 40, 240, 70),
+        "Первая строка",
+        fontname="PDFTranslateFont",
+        fontfile=str(cyrillic_font_path),
+        fontsize=12,
+    )
+    shape.commit()
+    document.save(path)
+    document.close()
+
+    with pytest.raises(OutputPdfError, match="block p1"):
+        _validate_saved_pdf(
+            path,
+            1,
+            [
+                _expected_text(
+                    block_id="p1",
+                    text="Первая строка Вторая строка",
+                    rect=pymupdf.Rect(35, 40, 220, 80),
+                    font_path=cyrillic_font_path,
+                )
+            ],
+        )
 
 
 def _source_pdf(path: Path, *, image: bool = False, background: bool = False) -> Path:
@@ -395,3 +505,28 @@ def test_renderer_protects_source_and_existing_output(
     with pytest.raises(OutputPdfError, match="already exists"):
         PdfRenderer().render(source, translated, output, font_path=cyrillic_font_path)
     assert output.read_bytes() == b"existing"
+
+
+def test_debug_layout_preserves_failed_temporary_pdf_without_publishing_output(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    source = _source_pdf(tmp_path / "failed-debug.pdf")
+    translated = _translated(source, "Русский текст должен быть вставлен.")
+    output = tmp_path / "failed-debug.ru.pdf"
+
+    monkeypatch.setattr("pdftranslate.rendering.renderer._insert_page", lambda *_args: None)
+
+    with pytest.raises(OutputPdfError, match="block"):
+        PdfRenderer().render(
+            source,
+            translated,
+            output,
+            font_path=cyrillic_font_path,
+            options=RenderOptions(debug_layout=True),
+        )
+
+    assert not output.exists()
+    assert output.with_name("failed-debug.ru.failed-render.pdf").exists()
+    assert not output.with_name("failed-debug.ru.debug.pdf").exists()

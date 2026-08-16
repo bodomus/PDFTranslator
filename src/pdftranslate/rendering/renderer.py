@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import statistics
 import unicodedata
 from dataclasses import dataclass
@@ -28,14 +29,11 @@ from pdftranslate.repeated import RepeatedElementPolicy
 
 _FONT_NAME = "PDFTranslateFont"
 _COORDINATE_TOLERANCE = 0.5
-_PDF_HYPHENS = str.maketrans(
+_PDF_VALIDATION_TEXT = str.maketrans(
     {
-        "‐": "-",
-        "‑": "-",
-        "‒": "-",
-        "–": "-",
-        "—": "-",
-        "−": "-",
+        **{character: "-" for character in "‐‑‒–—−"},
+        "\ufd3e": "(",
+        "\ufd3f": ")",
     }
 )
 
@@ -55,6 +53,20 @@ class _BlockPlan:
     overflow: bool
 
 
+@dataclass(frozen=True)
+class _ExpectedText:
+    page_number: int
+    block_id: str
+    source_text: str
+    translated_text: str
+    source_rect: pymupdf.Rect
+    final_rect: pymupdf.Rect
+    font_path: Path
+    font_size: float | None
+    overflow: bool
+    expanded: bool
+
+
 class PdfRenderer:
     """Validate, render, verify, and atomically publish translated PDFs."""
 
@@ -71,7 +83,8 @@ class PdfRenderer:
         source = source_path.expanduser().resolve()
         output = output_path.expanduser().resolve()
         debug_output = _debug_output_path(output) if settings.debug_layout else None
-        _validate_output_paths(source, output, debug_output, settings.overwrite)
+        failed_output = _failed_render_output_path(output) if settings.debug_layout else None
+        _validate_output_paths(source, output, debug_output, failed_output, settings.overwrite)
         _validate_document(source, translated, settings.force_source_mismatch)
 
         translations = (
@@ -100,7 +113,7 @@ class PdfRenderer:
         temporary_debug = _temporary_pdf_path(debug_output) if debug_output is not None else None
         plans: list[_BlockPlan] = []
         warnings: list[str] = []
-        expected_cyrillic_text: dict[int, list[str]] = {}
+        expected_cyrillic_text: list[_ExpectedText] = []
         try:
             document = _open_source(source)
             try:
@@ -130,8 +143,19 @@ class PdfRenderer:
                     for plan in page_plans:
                         text = cast(str, plan.block.translated_text)
                         if not plan.overflow and required_cyrillic_characters((text,)):
-                            expected_cyrillic_text.setdefault(page_model.page_number, []).append(
-                                text
+                            expected_cyrillic_text.append(
+                                _ExpectedText(
+                                    page_number=page_model.page_number,
+                                    block_id=plan.block.id,
+                                    source_text=plan.block.text,
+                                    translated_text=text,
+                                    source_rect=plan.source_rect,
+                                    final_rect=plan.final_rect,
+                                    font_path=selected_font,
+                                    font_size=plan.font_size,
+                                    overflow=plan.overflow,
+                                    expanded=plan.expanded,
+                                )
                             )
                 document.save(str(temporary_output), garbage=4, deflate=True)  # type: ignore[no-untyped-call]
             finally:
@@ -141,10 +165,16 @@ class PdfRenderer:
                 temporary_output,
                 translated.page_count,
                 expected_cyrillic_text,
+                failed_output=failed_output,
             )
             if temporary_debug is not None:
                 _write_debug_pdf(temporary_output, temporary_debug, plans)
-                _validate_saved_pdf(temporary_debug, translated.page_count, expected_cyrillic_text)
+                _validate_saved_pdf(
+                    temporary_debug,
+                    translated.page_count,
+                    expected_cyrillic_text,
+                    failed_output=None,
+                )
 
             temporary_output.replace(output)
             if temporary_debug is not None and debug_output is not None:
@@ -236,17 +266,18 @@ def _validate_output_paths(
     source: Path,
     output: Path,
     debug_output: Path | None,
+    failed_output: Path | None,
     overwrite: bool,
 ) -> None:
     if output == source:
         raise OutputPdfError("output path must not be the source PDF")
     if output.suffix.lower() != ".pdf":
         raise OutputPdfError(f"output must have a .pdf extension: {output}")
-    for candidate in (output, debug_output):
+    for candidate in (output, debug_output, failed_output):
         if candidate is None:
             continue
         if candidate == source:
-            raise OutputPdfError("debug output path must not be the source PDF")
+            raise OutputPdfError("diagnostic output path must not be the source PDF")
         if candidate.exists() and not overwrite:
             raise OutputPdfError(f"output already exists; use --overwrite: {candidate}")
         if candidate.exists() and not candidate.is_file():
@@ -598,7 +629,9 @@ def _write_debug_pdf(source: Path, output: Path, plans: list[_BlockPlan]) -> Non
 def _validate_saved_pdf(
     path: Path,
     page_count: int,
-    expected_cyrillic_text: dict[int, list[str]],
+    expected_cyrillic_text: list[_ExpectedText],
+    *,
+    failed_output: Path | None = None,
 ) -> None:
     try:
         document = pymupdf.open(path)  # type: ignore[no-untyped-call]
@@ -607,23 +640,66 @@ def _validate_saved_pdf(
     try:
         if not document.is_pdf or document.page_count != page_count:
             raise OutputPdfError("generated PDF page count or format is invalid")
-        for page_number, expected_values in expected_cyrillic_text.items():
-            extracted = str(
-                document[page_number - 1].get_text("text")  # type: ignore[no-untyped-call]
+        page_text: dict[int, str] = {}
+        for expected in expected_cyrillic_text:
+            page = document[expected.page_number - 1]
+            normalized_page = page_text.setdefault(
+                expected.page_number,
+                _normalize_validation_text(str(page.get_text("text"))),  # type: ignore[no-untyped-call]
             )
-            normalized_extracted = _normalize_validation_text(extracted)
-            for expected in expected_values:
-                normalized_expected = _normalize_validation_text(expected)
-                if normalized_expected not in normalized_extracted:
-                    raise OutputPdfError(
-                        f"generated PDF is missing inserted Cyrillic text on page {page_number}"
-                    )
+            normalized_expected = _normalize_validation_text(expected.translated_text)
+            if normalized_expected in normalized_page:
+                continue
+            clip = _validation_clip(expected.final_rect, page.rect, expected.font_size)
+            clipped = str(page.get_text("text", clip=clip))  # type: ignore[no-untyped-call]
+            normalized_clipped = _normalize_validation_text(clipped)
+            if normalized_expected in normalized_clipped:
+                continue
+            if failed_output is not None:
+                failed_output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, failed_output)
+            raise OutputPdfError(_validation_failure_message(expected, normalized_clipped))
     finally:
         document.close()  # type: ignore[no-untyped-call]
 
 
 def _normalize_validation_text(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", value).translate(_PDF_HYPHENS).split())
+    return " ".join(unicodedata.normalize("NFKC", value).translate(_PDF_VALIDATION_TEXT).split())
+
+
+def _validation_clip(
+    rect: pymupdf.Rect,
+    page_rect: pymupdf.Rect,
+    font_size: float | None,
+) -> pymupdf.Rect:
+    padding = max(2.0, (font_size or 0.0) * 0.8)
+    return pymupdf.Rect(  # type: ignore[no-untyped-call]
+        max(page_rect.x0, rect.x0 - padding),
+        max(page_rect.y0, rect.y0 - padding),
+        min(page_rect.x1, rect.x1 + padding),
+        min(page_rect.y1, rect.y1 + padding),
+    )
+
+
+def _validation_failure_message(expected: _ExpectedText, normalized_clipped: str) -> str:
+    return (
+        "generated PDF is missing inserted Cyrillic text "
+        f"for block {expected.block_id} on page {expected.page_number}; "
+        f"expected={_snippet(_normalize_validation_text(expected.translated_text))!r}; "
+        f"extracted_clip={_snippet(normalized_clipped)!r}; "
+        f"source_bbox={_rect_tuple(expected.source_rect)}; "
+        f"final_bbox={_rect_tuple(expected.final_rect)}; "
+        f"font_path={expected.font_path}; "
+        f"font_size={expected.font_size}; "
+        f"overflow={expected.overflow}; "
+        f"expanded={expected.expanded}"
+    )
+
+
+def _snippet(value: str, limit: int = 240) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}..."
 
 
 def _open_source(path: Path) -> pymupdf.Document:
@@ -652,6 +728,10 @@ def _debug_output_path(output: Path) -> Path:
     return output.with_name(f"{output.stem}.debug.pdf")
 
 
+def _failed_render_output_path(output: Path) -> Path:
+    return output.with_name(f"{output.stem}.failed-render.pdf")
+
+
 def _result_from_plan(plan: _BlockPlan) -> BlockRenderResult:
     return BlockRenderResult(
         page_number=plan.page_number,
@@ -674,6 +754,10 @@ def _rect(box: BoundingBox) -> pymupdf.Rect:
 
 def _bbox(rect: pymupdf.Rect) -> BoundingBox:
     return BoundingBox(x0=rect.x0, y0=rect.y0, x1=rect.x1, y1=rect.y1)
+
+
+def _rect_tuple(rect: pymupdf.Rect) -> tuple[float, float, float, float]:
+    return (round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2), round(rect.y1, 2))
 
 
 def _validate_bbox(box: BoundingBox, width: float, height: float) -> None:
