@@ -10,6 +10,7 @@ from typing import Literal
 from pdftranslate.domain.document import InspectionReport, TranslationStatistics
 from pdftranslate.glossary import GLOSSARY_BEHAVIOR_REVISION, LoadedGlossary
 from pdftranslate.glossary.models import GlossaryTranslationEvidence
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 OcrMode = Literal["auto", "on", "off"]
@@ -135,6 +136,7 @@ class PipelineOptions:
         font = self.font_path.expanduser().resolve() if self.font_path is not None else None
         return {
             "pipeline_behavior_revision": PIPELINE_BEHAVIOR_REVISION,
+            "translation_behavior_revision": TRANSLATION_BEHAVIOR_REVISION,
             "output_path": str(self.output_path.expanduser().resolve()),
             "pages": self.pages,
             "paragraph_reconstruction": self.paragraph_reconstruction,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -21,7 +23,8 @@ from pdftranslate.translation import (
     TranslationOutOfMemoryError,
     translate_document,
 )
-from pdftranslate.translation.text import protect_text, segment_text
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
+from pdftranslate.translation.text import normalize_source_text, protect_text, segment_text
 
 
 class FakeTranslator:
@@ -244,6 +247,110 @@ def test_protected_tokens_use_ascii_placeholders_and_avoid_source_collisions() -
     assert protected.restore(protected.value) == (
         "Copyright 1999; literal __PDFTR_0000__ remains source text."
     )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "men/first",
+        "men/ﬁrst",
+        "he/she",
+        "and/or",
+        "input/output",
+        "true/false",
+        "yes/no",
+        "long-term/short-term",
+        "pro-choice/anti-choice",
+        "nature/agreement",
+        "virtue/pleasure",
+    ],
+)
+def test_slash_separated_prose_is_not_treated_as_protected_path(expression: str) -> None:
+    protected = protect_text(f"Epicurean justice compares {expression} in prose.")
+
+    assert protected.replacements == ()
+    assert "__PDFTR_" not in protected.value
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "./foo/bar",
+        "../foo/bar",
+        "/foo/bar",
+        "src/module/file.py",
+        "assets/images/logo.png",
+        "docs/reference/index.md",
+        "folder/file.json",
+        "C:\\Temp\\data.json",
+        "J:\\Projects\\PDFTranslator\\README.md",
+    ],
+)
+def test_real_paths_remain_protected_after_slash_prose_fix(path: str) -> None:
+    protected = protect_text(f"Read {path} before running.")
+
+    assert protected.replacements == (("__PDFTR_0000__", path),)
+
+
+def test_men_first_ligature_regression_is_normalized_and_not_protected() -> None:
+    assert normalize_source_text("men/ﬁrst") == "men/first"
+
+    protected = protect_text("The men/ﬁrst distinction remains prose.")
+
+    assert protected.value == "The men/first distinction remains prose."
+    assert protected.replacements == ()
+    assert protected.restore(f"RU {protected.value}") == (
+        "RU The men/first distinction remains prose."
+    )
+
+
+def test_pdf_ligatures_are_normalized_inside_protected_paths() -> None:
+    protected = protect_text("The ofﬁce/virtue relation cites docs/ﬁle.pdf.")
+
+    assert "office/virtue" in protected.value
+    assert protected.replacements == (("__PDFTR_0000__", "docs/file.pdf"),)
+
+
+def test_pre_pdftr16_translation_cache_revision_is_not_reused(tmp_path: Path) -> None:
+    cache_path = tmp_path / "cache.sqlite3"
+    source = "The men/ﬁrst distinction remains prose."
+    stale_key = _translation_cache_key_for_revision(
+        TRANSLATION_BEHAVIOR_REVISION - 1,
+        source,
+    )
+    with TranslationCache(cache_path):
+        pass
+    with sqlite3.connect(cache_path) as connection:
+        connection.execute(
+            "INSERT INTO translations(cache_key, translated_text) VALUES (?, ?)",
+            (stale_key, "STALE"),
+        )
+        connection.commit()
+
+    with TranslationCache(cache_path) as cache:
+        assert (
+            cache.get(
+                backend="fake",
+                model="fake-model",
+                source_language="en",
+                target_language="ru",
+                source_text=source,
+            )
+            is None
+        )
+
+
+def _translation_cache_key_for_revision(revision: int, source_text: str) -> str:
+    parts = (
+        str(revision),
+        "fake",
+        "fake-model",
+        "en",
+        "ru",
+        "no-glossary",
+        normalize_source_text(source_text),
+    )
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
 
 
 def test_segmentation_retains_paragraph_breaks() -> None:
