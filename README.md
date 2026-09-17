@@ -30,6 +30,24 @@ adding benchmark commands to the production CLI. See
 [docs/performance-benchmark.md](docs/performance-benchmark.md) for scenarios, commands, metrics,
 and interpretation limits.
 
+## Project knowledge
+
+The repository includes a small Git-tracked ProjectWiki for durable architecture, workflow,
+decision, constraint, failure-mode, integration, and testing knowledge. Start with the curated
+[knowledge index](knowledge/wiki/index.md); source code, tests, current configuration, canonical
+reports, and runtime evidence remain authoritative.
+
+Search and validate the Wiki without network access or extra dependencies:
+
+```powershell
+uv run python scripts/project_wiki/wiki_search.py "PDF extraction"
+uv run python scripts/project_wiki/wiki_lint.py
+```
+
+Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Existing files under
+`knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
+durable new knowledge should change after a non-trivial ticket.
+
 ## Windows setup
 
 From PowerShell, clone or open the repository and run:

@@ -1,0 +1,65 @@
+---
+title: PDFTranslator Knowledge Base
+type: index
+status: active
+created: 2026-09-17
+updated: 2026-09-17
+tags:
+- project-wiki
+- navigation
+sources:
+- ../../Tickets/PDFTR-19.md
+related:
+- overview.md
+- architecture/system-overview.md
+- workflows/development-workflow.md
+---
+
+# PDFTranslator Knowledge Base
+
+This is the curated entry point for durable project knowledge. Current source, tests, configuration,
+canonical reports, and runtime evidence remain authoritative.
+
+## Start here
+
+- [Overview](overview.md) — purpose, boundaries, and how agents use ProjectWiki.
+- [System architecture](architecture/system-overview.md) — verified high-level PDFTranslate flow.
+- [Development workflow](workflows/development-workflow.md) — ticket and quality-gate sequence.
+- [Wiki maintenance](workflows/wiki-maintenance.md) — when and how to update knowledge.
+
+## Architecture
+
+- [System overview](architecture/system-overview.md)
+
+## Components
+
+No component page is needed yet. Add one only when multiple sources support durable component-level
+knowledge that does not belong in the system overview.
+
+## Workflows
+
+- [Development workflow](workflows/development-workflow.md)
+- [Wiki maintenance](workflows/wiki-maintenance.md)
+
+## Decisions and constraints
+
+- [Wiki as Markdown](decisions/wiki-as-markdown.md)
+- [Raw sources are immutable](constraints/raw-sources-immutable.md)
+
+## Known issues
+
+No ProjectWiki-specific failure mode has been confirmed yet. Record one only with evidence.
+
+## Testing
+
+- [Wiki validation](testing/wiki-validation.md)
+- [Phase 1 pilot evaluation](testing/pilot-evaluation.md)
+
+## Integrations
+
+The Wiki integrates with the existing local and CI quality gates through its lint command; details
+are kept in [Wiki validation](testing/wiki-validation.md).
+
+## History
+
+- [Knowledge change log](log.md)

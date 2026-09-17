@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Phase 1 ProjectWiki with Git-tracked source-backed Markdown, curated navigation, agent maintenance
+  rules, dependency-free frontmatter/link/source linting, deterministic lexical search, focused
+  tests, and local/CI quality-gate integration.
 - Versioned JSON and Markdown performance reports for deterministic and real NLLB runs, including
   cold/warm timing, translation-cache reuse, batch-size distributions, RSS, CUDA memory, shared
   model reuse, and output-integrity evidence.

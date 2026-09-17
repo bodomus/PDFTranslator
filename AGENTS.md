@@ -19,6 +19,9 @@
 
 - Before every non-trivial ticket, investigation, implementation, or code review, read and follow
   `.codex/PRE_TICKET_WORKFLOW.md`.
+- For every non-trivial ticket, read `knowledge/wiki/index.md`, search ProjectWiki for the affected
+  subsystem, and source-verify implementation-relevant claims. After implementation, update only
+  affected Wiki pages and run `uv run python scripts/project_wiki/wiki_lint.py`.
 - Use `.agents/skills/graphify-repository-analysis/SKILL.md` for architectural orientation and
   source-verify every important graph conclusion.
 - Use `.agents/skills/code-review-graph-analysis/SKILL.md` for exact symbols, callers, dependants,
