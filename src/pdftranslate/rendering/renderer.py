@@ -17,14 +17,24 @@ from pdftranslate.domain.text_block import BoundingBox, TextBlock
 from pdftranslate.pdf import PdfExtractor
 from pdftranslate.pdf.pymupdf_backend import source_identity
 from pdftranslate.reconstruction import LogicalParagraph
-from pdftranslate.rendering.errors import OutputPdfError, RenderingInputError, SourceMismatchError
+from pdftranslate.rendering.errors import (
+    OutputPdfError,
+    RenderCompletenessError,
+    RenderingInputError,
+    SourceMismatchError,
+)
 from pdftranslate.rendering.fonts import discover_font, required_cyrillic_characters, validate_font
 from pdftranslate.rendering.layout import (
     font_size_candidates,
     initial_font_size,
     safe_expanded_bbox,
 )
-from pdftranslate.rendering.models import BlockRenderResult, RenderOptions, RenderResult
+from pdftranslate.rendering.models import (
+    BlockRenderResult,
+    RenderOptions,
+    RenderResult,
+    RenderState,
+)
 from pdftranslate.repeated import RepeatedElementPolicy
 
 _FONT_NAME = "PDFTranslateFont"
@@ -40,6 +50,7 @@ _PDF_VALIDATION_TEXT = str.maketrans(
 
 @dataclass
 class _BlockPlan:
+    unit_index: int
     block: TextBlock
     page_number: int
     source_rect: pymupdf.Rect
@@ -87,6 +98,7 @@ class PdfRenderer:
         _validate_output_paths(source, output, debug_output, failed_output, settings.overwrite)
         _validate_document(source, translated, settings.force_source_mismatch)
 
+        paragraph_mode = translated.schema_version == "1.3"
         translations = (
             tuple(
                 cast(str, paragraph.translated_text)
@@ -117,26 +129,31 @@ class PdfRenderer:
         try:
             document = _open_source(source)
             try:
-                paragraph_mode = translated.schema_version == "1.3"
-                blocks_by_page = _paragraph_blocks_by_page(translated) if paragraph_mode else {}
+                units_by_page = _render_units_by_page(translated)
+                plans_by_source_index: dict[int, list[_BlockPlan]] = {}
+                for page_model in translated.pages:
+                    page = document[page_model.source_index]
+                    render_units = units_by_page.get(page_model.page_number, ())
+                    page_plans, page_warnings = _plan_page(
+                        page,
+                        page_model.page_number,
+                        tuple(unit[1] for unit in render_units),
+                        selected_font,
+                        settings,
+                        unit_indices=tuple(unit[0] for unit in render_units),
+                    )
+                    plans.extend(page_plans)
+                    plans_by_source_index[page_model.source_index] = page_plans
+                    warnings.extend(page_warnings)
+
+                block_results = _render_results(translated, plans, settings.min_font_size)
+                _ensure_render_complete(block_results, source, failed_output, plans)
+
                 if paragraph_mode:
                     _redact_paragraph_fragments(document, translated, settings, warnings)
                 for page_model in translated.pages:
                     page = document[page_model.source_index]
-                    render_blocks = (
-                        blocks_by_page.get(page_model.page_number, ())
-                        if paragraph_mode
-                        else page_model.text_blocks
-                    )
-                    page_plans, page_warnings = _plan_page(
-                        page,
-                        page_model.page_number,
-                        render_blocks,
-                        selected_font,
-                        settings,
-                    )
-                    plans.extend(page_plans)
-                    warnings.extend(page_warnings)
+                    page_plans = plans_by_source_index[page_model.source_index]
                     if not paragraph_mode:
                         _redact_page(page, page_plans, settings.redaction_padding, warnings)
                     _insert_page(page, page_plans, selected_font, settings.line_height)
@@ -184,14 +201,15 @@ class PdfRenderer:
                 if temporary is not None and temporary.exists():
                     temporary.unlink()
 
-        block_results = tuple(_result_from_plan(plan) for plan in plans)
         return RenderResult(
             output_path=output,
             debug_output_path=debug_output,
             font_path=selected_font,
-            blocks_rendered=sum(not block.overflow for block in block_results),
+            blocks_rendered=sum(block.state is RenderState.RENDERED for block in block_results),
             font_reductions=sum(
-                block.font_size is not None and block.font_size < block.initial_font_size - 1e-6
+                block.font_size is not None
+                and block.initial_font_size is not None
+                and block.font_size < block.initial_font_size - 1e-6
                 for block in block_results
             ),
             expanded_blocks=sum(block.expanded for block in block_results),
@@ -215,18 +233,28 @@ def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
     )
 
 
-def _paragraph_blocks_by_page(
+def _render_units_by_page(
     translated: ExtractedDocument,
-) -> dict[int, tuple[TextBlock, ...]]:
-    grouped: dict[int, list[TextBlock]] = {}
-    for paragraph in translated.paragraphs:
-        if _paragraph_policy(translated, paragraph) in {
-            RepeatedElementPolicy.PRESERVE,
-            RepeatedElementPolicy.SKIP,
-            RepeatedElementPolicy.REMOVE,
-        }:
-            continue
-        grouped.setdefault(paragraph.anchor_page_number, []).append(_paragraph_block(paragraph))
+) -> dict[int, tuple[tuple[int, TextBlock], ...]]:
+    grouped: dict[int, list[tuple[int, TextBlock]]] = {}
+    if translated.schema_version == "1.3":
+        for unit_index, paragraph in enumerate(translated.paragraphs):
+            if _paragraph_policy(translated, paragraph) in {
+                RepeatedElementPolicy.PRESERVE,
+                RepeatedElementPolicy.SKIP,
+                RepeatedElementPolicy.REMOVE,
+            }:
+                continue
+            grouped.setdefault(paragraph.anchor_page_number, []).append(
+                (unit_index, _paragraph_block(paragraph))
+            )
+        return {page: tuple(blocks) for page, blocks in grouped.items()}
+
+    unit_index = 0
+    for page in translated.pages:
+        for block in page.text_blocks:
+            grouped.setdefault(page.page_number, []).append((unit_index, block))
+            unit_index += 1
     return {page: tuple(blocks) for page, blocks in grouped.items()}
 
 
@@ -407,10 +435,15 @@ def _plan_page(
     blocks: tuple[TextBlock, ...],
     font_path: Path,
     options: RenderOptions,
+    *,
+    unit_indices: tuple[int, ...] | None = None,
 ) -> tuple[list[_BlockPlan], list[str]]:
     plans: list[_BlockPlan] = []
     warnings: list[str] = []
-    for block in blocks:
+    indices = unit_indices if unit_indices is not None else tuple(range(len(blocks)))
+    if len(indices) != len(blocks):
+        raise ValueError("render unit indexes must align with blocks")
+    for unit_index, block in zip(indices, blocks, strict=True):
         text = cast(str, block.translated_text)
         source_rect = _rect(block.bbox)
         start_size = initial_font_size(block, options.default_font_size)
@@ -452,6 +485,7 @@ def _plan_page(
             warnings.append(f"block {block.id} on page {page_number} expanded downward")
         plans.append(
             _BlockPlan(
+                unit_index=unit_index,
                 block=block,
                 page_number=page_number,
                 source_rect=source_rect,
@@ -737,17 +771,148 @@ def _failed_render_output_path(output: Path) -> Path:
     return output.with_name(f"{output.stem}.failed-render.pdf")
 
 
-def _result_from_plan(plan: _BlockPlan) -> BlockRenderResult:
+def _render_results(
+    translated: ExtractedDocument,
+    plans: list[_BlockPlan],
+    min_font_size: float,
+) -> tuple[BlockRenderResult, ...]:
+    results = {plan.unit_index: _result_from_plan(plan, min_font_size) for plan in plans}
+    if translated.schema_version == "1.3":
+        for unit_index, paragraph in enumerate(translated.paragraphs):
+            policy = _paragraph_policy(translated, paragraph)
+            if policy is RepeatedElementPolicy.TRANSLATE:
+                if unit_index not in results:
+                    results[unit_index] = _unplanned_result(
+                        unit_index,
+                        paragraph.anchor_page_number,
+                        paragraph.id,
+                        paragraph.bbox,
+                        len(paragraph.translated_text or ""),
+                        min_font_size,
+                    )
+                continue
+            state = (
+                RenderState.PRESERVED
+                if policy is RepeatedElementPolicy.PRESERVE
+                else RenderState.EXCLUDED_BY_POLICY
+            )
+            results[unit_index] = BlockRenderResult(
+                unit_index=unit_index,
+                page_number=paragraph.anchor_page_number,
+                block_id=paragraph.id,
+                policy=policy,
+                state=state,
+                source_bbox=paragraph.bbox,
+                final_bbox=paragraph.bbox,
+                initial_font_size=None,
+                font_size=None,
+                min_font_size=min_font_size,
+                fitting_attempts=0,
+                expanded=False,
+                overflow=False,
+                translated_character_count=len(paragraph.translated_text or ""),
+            )
+    else:
+        unit_index = 0
+        for page in translated.pages:
+            for block in page.text_blocks:
+                if unit_index not in results:
+                    results[unit_index] = _unplanned_result(
+                        unit_index,
+                        page.page_number,
+                        block.id,
+                        block.bbox,
+                        len(block.translated_text or ""),
+                        min_font_size,
+                    )
+                unit_index += 1
+    return tuple(results[index] for index in sorted(results))
+
+
+def _unplanned_result(
+    unit_index: int,
+    page_number: int,
+    block_id: str,
+    bbox: BoundingBox,
+    translated_character_count: int,
+    min_font_size: float,
+) -> BlockRenderResult:
     return BlockRenderResult(
+        unit_index=unit_index,
+        page_number=page_number,
+        block_id=block_id,
+        policy=RepeatedElementPolicy.TRANSLATE,
+        state=RenderState.FAILED,
+        source_bbox=bbox,
+        final_bbox=bbox,
+        initial_font_size=None,
+        font_size=None,
+        min_font_size=min_font_size,
+        fitting_attempts=0,
+        expanded=False,
+        overflow=False,
+        translated_character_count=translated_character_count,
+    )
+
+
+def _ensure_render_complete(
+    results: tuple[BlockRenderResult, ...],
+    source: Path,
+    failed_output: Path | None,
+    plans: list[_BlockPlan],
+) -> None:
+    failures = tuple(
+        result
+        for result in results
+        if result.policy is RepeatedElementPolicy.TRANSLATE
+        and result.state is not RenderState.RENDERED
+    )
+    if not failures:
+        return
+    if failed_output is not None:
+        failed_output.parent.mkdir(parents=True, exist_ok=True)
+        temporary_failed = _temporary_pdf_path(failed_output)
+        try:
+            _write_debug_pdf(source, temporary_failed, plans)
+            temporary_failed.replace(failed_output)
+        finally:
+            if temporary_failed.exists():
+                temporary_failed.unlink()
+    details = "\n".join(_completeness_failure_detail(result) for result in failures)
+    raise RenderCompletenessError(
+        "render completeness failed: "
+        f"{len(failures)} required paragraph(s) could not be rendered completely\n{details}"
+    )
+
+
+def _completeness_failure_detail(result: BlockRenderResult) -> str:
+    return (
+        f"{result.block_id} occurrence={result.unit_index + 1} "
+        f"page={result.page_number} state={result.state.value} "
+        f"source_bbox={_bbox_tuple(result.source_bbox)} "
+        f"final_bbox={_bbox_tuple(result.final_bbox)} "
+        f"font_size={result.font_size} min_font_size={result.min_font_size:g} "
+        f"attempts={result.fitting_attempts} expanded={result.expanded} "
+        f"translated_chars={result.translated_character_count}"
+    )
+
+
+def _result_from_plan(plan: _BlockPlan, min_font_size: float) -> BlockRenderResult:
+    return BlockRenderResult(
+        unit_index=plan.unit_index,
         page_number=plan.page_number,
         block_id=plan.block.id,
+        policy=RepeatedElementPolicy.TRANSLATE,
+        state=RenderState.OVERFLOW if plan.overflow else RenderState.RENDERED,
         source_bbox=_bbox(plan.source_rect),
         final_bbox=_bbox(plan.final_rect),
         initial_font_size=plan.initial_size,
         font_size=plan.font_size,
+        min_font_size=min_font_size,
         fitting_attempts=plan.fitting_attempts,
         expanded=plan.expanded,
         overflow=plan.overflow,
+        translated_character_count=len(cast(str, plan.block.translated_text)),
     )
 
 
@@ -763,6 +928,10 @@ def _bbox(rect: pymupdf.Rect) -> BoundingBox:
 
 def _rect_tuple(rect: pymupdf.Rect) -> tuple[float, float, float, float]:
     return (round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2), round(rect.y1, 2))
+
+
+def _bbox_tuple(box: BoundingBox) -> tuple[float, float, float, float]:
+    return (round(box.x0, 2), round(box.y0, 2), round(box.x1, 2), round(box.y1, 2))
 
 
 def _validate_bbox(box: BoundingBox, width: float, height: float) -> None:

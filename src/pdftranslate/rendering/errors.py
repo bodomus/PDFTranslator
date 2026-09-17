@@ -19,3 +19,7 @@ class FontValidationError(RenderingError):
 
 class OutputPdfError(RenderingError):
     """The requested output is unsafe or failed post-save validation."""
+
+
+class RenderCompletenessError(OutputPdfError):
+    """One or more required render units lack a successful terminal state."""

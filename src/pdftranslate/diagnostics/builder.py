@@ -47,7 +47,17 @@ def build_success_report(
     glossary_by_id = (
         {item.paragraph_id: item for item in glossary.paragraphs} if glossary is not None else {}
     )
-    render_by_id = {item.block_id: item for item in render.blocks} if render else {}
+    render_by_index = {item.unit_index: item for item in render.blocks} if render else {}
+    unit_index_by_identity = (
+        {id(item): index for index, item in enumerate(translated.paragraphs)}
+        if translated.schema_version == "1.3"
+        else {
+            id(item): index
+            for index, item in enumerate(
+                block for page in translated.pages for block in page.text_blocks
+            )
+        }
+    )
     findings: list[DiagnosticFinding] = [
         DiagnosticFinding(
             code=DiagnosticCode.OCR_LOW_TEXT_GAIN, severity="warning", stage="ocr", message=warning
@@ -118,15 +128,19 @@ def build_success_report(
         )
         for block in units:
             repeated = _repeated_for_unit(translated, block)
-            layout = render_by_id.get(block.id)
+            layout = render_by_index.get(unit_index_by_identity[id(block)])
             glossary_unit = glossary_by_id.get(block.id)
             codes: list[DiagnosticCode] = []
             state = "unknown"
             if layout is not None:
-                state = "rendered"
-                if layout.font_size is not None and layout.font_size < layout.initial_font_size:
+                state = layout.state.value
+                if (
+                    layout.font_size is not None
+                    and layout.initial_font_size is not None
+                    and layout.font_size < layout.initial_font_size
+                ):
                     codes.append(DiagnosticCode.FONT_REDUCED)
-                if layout.expanded:
+                if layout.expanded and state == "rendered":
                     state = "expanded"
                     codes.append(DiagnosticCode.BLOCK_EXPANDED)
                 if layout.overflow:

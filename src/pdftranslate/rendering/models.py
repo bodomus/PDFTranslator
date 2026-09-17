@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from pdftranslate.domain.text_block import BoundingBox
+from pdftranslate.repeated import RepeatedElementPolicy
+
+
+class RenderState(StrEnum):
+    """Terminal rendering state for one source-backed render unit."""
+
+    RENDERED = "rendered"
+    PRESERVED = "preserved"
+    EXCLUDED_BY_POLICY = "excluded_by_policy"
+    OVERFLOW = "overflow"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -37,17 +49,22 @@ class RenderOptions:
 
 @dataclass(frozen=True)
 class BlockRenderResult:
-    """Final layout decision for one translated block."""
+    """Authoritative terminal decision for one source-backed render unit."""
 
+    unit_index: int
     page_number: int
     block_id: str
+    policy: RepeatedElementPolicy
+    state: RenderState
     source_bbox: BoundingBox
     final_bbox: BoundingBox
-    initial_font_size: float
+    initial_font_size: float | None
     font_size: float | None
+    min_font_size: float
     fitting_attempts: int
     expanded: bool
     overflow: bool
+    translated_character_count: int
 
 
 @dataclass(frozen=True)
@@ -64,3 +81,23 @@ class RenderResult:
     file_size: int
     warnings: tuple[str, ...]
     blocks: tuple[BlockRenderResult, ...]
+
+    @property
+    def expected_units(self) -> int:
+        return len(self.blocks)
+
+    @property
+    def preserved_units(self) -> int:
+        return sum(block.state is RenderState.PRESERVED for block in self.blocks)
+
+    @property
+    def excluded_units(self) -> int:
+        return sum(block.state is RenderState.EXCLUDED_BY_POLICY for block in self.blocks)
+
+    @property
+    def failed_units(self) -> tuple[BlockRenderResult, ...]:
+        return tuple(
+            block
+            for block in self.blocks
+            if block.state in {RenderState.OVERFLOW, RenderState.FAILED}
+        )

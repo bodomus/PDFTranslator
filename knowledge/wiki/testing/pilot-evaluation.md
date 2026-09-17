@@ -10,6 +10,7 @@ tags:
 - evaluation
 sources:
 - ../../../Tickets/PDFTR-19.md
+- ../../../Tickets/PDFTR-20-strict-render-completeness.md
 related:
 - ../overview.md
 - ../decisions/wiki-as-markdown.md
@@ -34,7 +35,19 @@ actually measured.
 
 ## Trial results
 
-No post-PDFTR-19 ticket has been evaluated yet.
+### PDFTR-20
+
+- Consulted `index.md`, `architecture/system-overview.md`, `workflows/development-workflow.md`,
+  and `testing/wiki-validation.md` before implementation.
+- The Wiki avoided rediscovery of the high-level pipeline/publication boundary and the required
+  validation workflow.
+- Canonical renderer, pipeline, model, diagnostics, test, and prior PDFTR-17/PDFTR-18 report
+  sources still had to be opened to verify paragraph-level behavior.
+- The search exposed a concrete gap: no page documented overflow as a content-completeness failure
+  mode or defined a document-level render invariant.
+- Added `failure-modes/render-completeness.md` and updated navigation and this pilot record.
+- Review must verify that the new page stays aligned with the final implementation and real-PDF
+  result; no measured time or token saving is claimed.
 
 ## Phase 2 decision
 

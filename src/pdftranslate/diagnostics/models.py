@@ -53,7 +53,16 @@ class BlockDiagnostic(DomainModel):
     fitting_attempts: int | None = None
     segmentation_count: int | None = None
     cache_status: Literal["hit", "miss", "skipped", "unknown"] = "unknown"
-    final_state: Literal["rendered", "expanded", "overflow", "skipped", "unknown"]
+    final_state: Literal[
+        "rendered",
+        "expanded",
+        "preserved",
+        "excluded_by_policy",
+        "overflow",
+        "failed",
+        "skipped",
+        "unknown",
+    ]
     warning_codes: tuple[DiagnosticCode, ...] = ()
     source_text: str | None = None
     translated_text: str | None = None

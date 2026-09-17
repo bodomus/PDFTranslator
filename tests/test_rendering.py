@@ -16,8 +16,10 @@ from pdftranslate.rendering import (
     FontValidationError,
     OutputPdfError,
     PdfRenderer,
+    RenderCompletenessError,
     RenderingInputError,
     RenderOptions,
+    RenderState,
     SourceMismatchError,
     validate_font,
 )
@@ -25,6 +27,14 @@ from pdftranslate.rendering.renderer import (
     _ExpectedText,
     _normalize_validation_text,
     _validate_saved_pdf,
+)
+from pdftranslate.repeated import (
+    RepeatedBlockClassification,
+    RepeatedElementAnalysis,
+    RepeatedElementKind,
+    RepeatedElementMetrics,
+    RepeatedElementOptions,
+    RepeatedElementPolicy,
 )
 from pdftranslate.serialization import write_document_json
 
@@ -304,6 +314,43 @@ def _schema_1_3_with_split_paragraphs(
     )
 
 
+def _schema_1_3_with_policy(source: Path, policy: RepeatedElementPolicy):
+    extracted = PdfExtractor().extract(source)
+    paragraph = extracted.paragraphs[0]
+    translated_text = paragraph.text if policy is RepeatedElementPolicy.PRESERVE else ""
+    paragraphs = (paragraph.model_copy(update={"translated_text": translated_text}),)
+    source_block = extracted.pages[0].text_blocks[0]
+    repeated = RepeatedElementAnalysis(
+        mode="auto",
+        options=RepeatedElementOptions(),
+        blocks=(
+            RepeatedBlockClassification(
+                block_id=source_block.id,
+                page_number=1,
+                bbox=source_block.bbox,
+                kind=RepeatedElementKind.REPEATED_BOILERPLATE,
+                confidence=1.0,
+                policy=policy,
+            ),
+        ),
+        metrics=RepeatedElementMetrics(
+            total_blocks=1,
+            classified_blocks=1,
+            ambiguous_blocks=0,
+            groups=0,
+            counts={policy.value: 1},
+        ),
+    )
+    return extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": paragraphs,
+            "repeated_elements": repeated,
+            "translation": _translation_metadata(1),
+        }
+    )
+
+
 def test_render_replaces_text_and_preserves_source_geometry_images_and_vectors(
     tmp_path: Path,
     cyrillic_font_path: Path,
@@ -360,6 +407,8 @@ def test_schema_1_3_render_accepts_split_block_when_marker_translation_is_presen
     )
 
     assert result.blocks_rendered == 2
+    assert result.expected_units == 2
+    assert all(item.state is RenderState.RENDERED for item in result.blocks)
     assert [item.block_id for item in result.blocks] == [
         translated.paragraphs[0].id,
         translated.paragraphs[1].id,
@@ -409,24 +458,102 @@ def test_font_size_is_reduced_for_longer_translation(
     assert all(block.font_size is not None for block in result.blocks)
 
 
-def test_overflow_is_reported_without_silent_clipping(
+def test_required_overflow_fails_without_publishing_partial_pdf(
     tmp_path: Path,
     cyrillic_font_path: Path,
 ) -> None:
     source = _source_pdf(tmp_path / "overflow.pdf")
     translated = _translated(source, "Очень длинный русский текст " * 100)
 
+    output = tmp_path / "overflow.ru.pdf"
+    previous = b"previous validated output"
+    output.write_bytes(previous)
+    with pytest.raises(RenderCompletenessError) as captured:
+        PdfRenderer().render(
+            source,
+            translated,
+            output,
+            font_path=cyrillic_font_path,
+            options=RenderOptions(min_font_size=10, font_size_step=1, overwrite=True),
+        )
+
+    message = str(captured.value)
+    assert "render completeness failed" in message
+    assert "p0001-b0001" in message
+    assert "state=overflow" in message
+    assert "min_font_size=10" in message
+    assert "translated_chars=2800" in message
+    assert output.read_bytes() == previous
+
+
+def test_one_overflow_aborts_an_otherwise_renderable_schema_1_3_document(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+) -> None:
+    source = _split_block_pdf(tmp_path / "partial.pdf")
+    translated = _schema_1_3_with_split_paragraphs(
+        source,
+        marker_translation="68.",
+        heading_translation="Очень длинный русский перевод " * 100,
+    )
+    output = tmp_path / "partial.ru.pdf"
+
+    with pytest.raises(RenderCompletenessError, match="required paragraph"):
+        PdfRenderer().render(
+            source,
+            translated,
+            output,
+            font_path=cyrillic_font_path,
+            options=RenderOptions(min_font_size=10, font_size_step=1, debug_layout=True),
+        )
+
+    assert not output.exists()
+    assert not (tmp_path / "partial.ru.debug.pdf").exists()
+    failed_layout = tmp_path / "partial.ru.failed-render.pdf"
+    assert failed_layout.is_file()
+    diagnostic = pymupdf.open(failed_layout)
+    try:
+        assert diagnostic.page_count == 1
+    finally:
+        diagnostic.close()
+
+
+@pytest.mark.parametrize(
+    ("policy", "state", "source_remains"),
+    [
+        (RepeatedElementPolicy.PRESERVE, RenderState.PRESERVED, True),
+        (RepeatedElementPolicy.SKIP, RenderState.EXCLUDED_BY_POLICY, True),
+        (RepeatedElementPolicy.REMOVE, RenderState.EXCLUDED_BY_POLICY, False),
+    ],
+)
+def test_policy_excluded_paragraphs_are_accounted_without_false_failure(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+    policy: RepeatedElementPolicy,
+    state: RenderState,
+    source_remains: bool,
+) -> None:
+    source = _source_pdf(tmp_path / f"{policy.value}.pdf")
+    translated = _schema_1_3_with_policy(source, policy)
+    output = tmp_path / f"{policy.value}.ru.pdf"
+
     result = PdfRenderer().render(
         source,
         translated,
-        tmp_path / "overflow.ru.pdf",
+        output,
         font_path=cyrillic_font_path,
-        options=RenderOptions(min_font_size=10, font_size_step=1),
     )
 
-    assert result.overflow_blocks >= 1
-    assert any("overflows" in warning for warning in result.warnings)
-    assert any(block.font_size is None for block in result.blocks)
+    assert result.expected_units == 1
+    assert result.blocks[0].policy is policy
+    assert result.blocks[0].state is state
+    assert result.failed_units == ()
+    rendered = pymupdf.open(output)
+    try:
+        has_source = "English source paragraph" in rendered[0].get_text("text")
+    finally:
+        rendered.close()
+    assert has_source is source_remains
 
 
 def test_allow_expand_uses_safe_downward_space(

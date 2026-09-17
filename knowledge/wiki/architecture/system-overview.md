@@ -12,9 +12,11 @@ sources:
 - ../../../README.md
 - ../../../pyproject.toml
 - ../../../.codex/PRE_TICKET_WORKFLOW.md
+- ../../../src/pdftranslate/rendering/renderer.py
 related:
 - ../overview.md
 - ../workflows/development-workflow.md
+- ../failure-modes/render-completeness.md
 ---
 
 # PDFTranslate system overview
@@ -34,6 +36,10 @@ The root command orchestrates six user-visible stages:
 4. translate logical text through a reusable local backend and cache;
 5. render into a workspace candidate;
 6. validate and atomically publish the final PDF.
+
+For schema 1.3, stage 5 first plans and accounts for every logical paragraph occurrence. Required
+overflow fails before PDF mutation or candidate creation; see
+[Rendering completeness](../failure-modes/render-completeness.md).
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived
 workspace per document. Advanced inspect, extract, translate, render, benchmark, and validation

@@ -409,7 +409,7 @@ not semantic adequacy or fluency. Optional human scores use a documented 1–5 s
 
 ## Render translated PDFs
 
-Render a completed schema 1.1 translation into a new PDF:
+Render a completed schema 1.1 or schema 1.3 translation into a new PDF:
 
 ```powershell
 uv run pdftranslate render .\manual.pdf .\manual.ru.json `
@@ -442,10 +442,13 @@ Layout options are:
 ```
 
 Text is wrapped inside the extracted block rectangle and reduced in deterministic steps. Optional
-expansion stops at the page edge or the next horizontally overlapping text block. Unresolved
-overflow is reported and is not silently clipped. `--debug-layout` writes a separate sibling named
-`<output-stem>.debug.pdf`; it marks source rectangles in blue, fitted rectangles in green,
-expanded rectangles in orange, and overflow in red.
+expansion stops at the page edge or the next horizontally overlapping text block. For schema 1.3,
+every logical paragraph receives an explicit terminal state. Unresolved required overflow fails
+the render before any incomplete PDF is published; the error identifies each paragraph occurrence
+and its layout evidence. `PRESERVE`, `SKIP`, and `REMOVE` units are accounted for by policy rather
+than treated as missing translations. `--debug-layout` writes `<output-stem>.debug.pdf` after a
+successful render; a completeness failure instead writes `<output-stem>.failed-render.pdf` with
+the source and planned rectangles when debug mode is enabled.
 
 Original text regions are redacted while PyMuPDF is instructed to retain overlapping image and
 vector objects. A median color sampled from the source rectangle is used instead of assuming a

@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Enforced strict schema 1.3 paragraph render completeness: every logical paragraph now has an
+  explicit terminal state, required overflow aborts before publication with occurrence-level
+  diagnostics, policy-excluded units are accounted for, and failed debug layouts remain separate
+  from the requested output.
 - Made post-save Cyrillic PDF validation render-unit aware, with PDF extraction punctuation
   normalization and debug-only preservation of failed temporary render PDFs for diagnostics.
 - Prevented PDF private-use marker-only paragraphs from being sent to translation models as prose,

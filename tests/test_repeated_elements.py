@@ -14,7 +14,7 @@ from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextLine, TextSpan
 from pdftranslate.pdf import PdfExtractor
 from pdftranslate.reconstruction import ParagraphKind, reconstruct_paragraphs
-from pdftranslate.rendering import PdfRenderer
+from pdftranslate.rendering import PdfRenderer, RenderState
 from pdftranslate.repeated import (
     RepeatedElementKind,
     RepeatedElementOptions,
@@ -310,13 +310,42 @@ def test_rendering_keeps_repeated_units_on_their_source_pages(tmp_path: Path) ->
         )
     output = tmp_path / "repeated-output.pdf"
     render_result = PdfRenderer().render(source, translated, output)
-    rendered_ids = {item.block_id for item in render_result.blocks}
+    rendered_ids = {
+        item.block_id for item in render_result.blocks if item.state is RenderState.RENDERED
+    }
     preserved_ids = {
         paragraph.id
         for paragraph in translated.paragraphs
         if paragraph.kind is ParagraphKind.PAGE_NUMBER
     }
     assert rendered_ids.isdisjoint(preserved_ids)
+    preserved_results = tuple(
+        item for item in render_result.blocks if item.state is RenderState.PRESERVED
+    )
+    assert {item.block_id for item in preserved_results} == preserved_ids
+    assert render_result.preserved_units == len(preserved_ids)
+    assert render_result.failed_units == ()
+    now = datetime.now(UTC)
+    report = build_success_report(
+        run_id="pdftr20-render-evidence",
+        started_at=now,
+        finished_at=now,
+        input_path=source,
+        output_path=output,
+        translated=translated,
+        render=render_result,
+        ocr_pages=(),
+        ocr_warnings=(),
+        elapsed_seconds=0.1,
+        stage_durations={},
+        peak_ram_bytes=None,
+        include_text=False,
+        debug_layout_path=None,
+        block_evidence={},
+    )
+    assert sum(
+        block.final_state == "preserved" for page in report.pages for block in page.blocks
+    ) == len(preserved_ids)
 
     rendered = pymupdf.open(output)
     try:
