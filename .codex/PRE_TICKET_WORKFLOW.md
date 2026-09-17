@@ -120,21 +120,23 @@ When uncertain, choose Level 2.
 1. Read instructions.
 2. Resolve repository root and record Git state.
 3. Classify workflow level.
-4. Identify affected modules and runtime boundaries.
-5. Check Graphify when applicable.
-6. Check CRG when applicable.
-7. Gather scoped graph context.
-8. Validate findings in Python source, tests, `pyproject.toml`, lockfile, scripts, and docs.
-9. Assess PDF integrity, model, cache, OCR, device, and filesystem safety.
-10. Produce `investigation.md` and `implementation-plan.md` for Level 2.
-11. Implement the smallest coherent change.
-12. Update CRG when available.
-13. Inspect blast radius and review context.
-14. Run checks from narrowest to broadest.
-15. Perform controlled manual or integration validation when required and available.
-16. Refresh Graphify only for structural changes.
-17. Update documentation and changelog when required.
-18. Produce an implementation report.
+4. Read `knowledge/wiki/index.md` and search ProjectWiki for the affected subsystem.
+5. Identify affected modules and runtime boundaries.
+6. Check Graphify when applicable.
+7. Check CRG when applicable.
+8. Gather scoped graph context and inspect relevant canonical/raw sources.
+9. Validate findings in Python source, tests, `pyproject.toml`, lockfile, scripts, and docs.
+10. Assess PDF integrity, model, cache, OCR, device, and filesystem safety.
+11. Produce `investigation.md` and `implementation-plan.md` for Level 2.
+12. Implement the smallest coherent change.
+13. Update CRG when available.
+14. Inspect blast radius and review context.
+15. Run checks from narrowest to broadest.
+16. Perform controlled manual or integration validation when required and available.
+17. Refresh Graphify only for structural changes.
+18. Update documentation, changelog, and affected ProjectWiki pages when required.
+19. Run `uv run python scripts/project_wiki/wiki_lint.py` after Wiki changes.
+20. Produce an implementation report.
 
 Do not skip directly to implementation.
 
@@ -177,6 +179,11 @@ Identify:
 - model and device requirements;
 - test commands;
 - pre-existing user changes.
+
+For non-trivial work, use `knowledge/wiki/index.md` as the curated knowledge entry point. Search
+with `uv run python scripts/project_wiki/wiki_search.py "<subsystem or decision>"`, then verify
+important claims in current source, tests, configuration, runtime evidence, or canonical documents.
+Treat existing `knowledge/raw/` files as immutable evidence during normal Wiki maintenance.
 
 Never clean, reset, stash, revert, delete, or overwrite unrelated user changes.
 
@@ -552,6 +559,8 @@ Evaluate:
 - OCR installation documentation;
 - Windows setup documentation;
 - troubleshooting documentation.
+- affected `knowledge/wiki/` pages and `knowledge/wiki/log.md` when durable project knowledge
+  changed.
 
 User-visible, operational, dependency, schema, CLI, model, OCR, or packaging changes require
 documentation updates.

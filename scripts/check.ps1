@@ -20,6 +20,7 @@ $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 
 Push-Location $RepositoryRoot
 try {
+    Invoke-Uv -Arguments @("run", "python", "scripts/project_wiki/wiki_lint.py")
     Invoke-Uv -Arguments @("run", "ruff", "format", "--check", ".")
     Invoke-Uv -Arguments @("run", "ruff", "check", ".")
     Invoke-Uv -Arguments @("run", "mypy", "src")
