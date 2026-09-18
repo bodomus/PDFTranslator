@@ -128,6 +128,13 @@ uv run pdftranslate batch .\manuals --glossary .\docs\glossary.example.json
 ```
 
 See [docs/glossary.md](docs/glossary.md) for schema, precedence, matching, privacy, and limitations.
+Independently of an optional glossary, translation conservatively preserves confidently identified
+Latin or Greek quotation paragraphs verbatim. In otherwise translatable prose, Greek-script spans
+and a small set of academic foreign terms stay outside model inference and are restored exactly.
+Ambiguous Latin-script text remains on the normal translation path; an explicit glossary `translate` match takes
+precedence over automatic whole-paragraph preservation. Preservation classifications and counts
+are serialized into translation metadata and exposed in privacy-safe reports.
+
 JSON is written as UTF-8 through an atomic sibling file; existing output and the source PDF are
 protected unless the applicable explicit option is supplied.
 

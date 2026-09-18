@@ -61,6 +61,7 @@ from pdftranslate.translation import (
     Translator,
     translate_document,
 )
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
 
 TranslatorFactory = Callable[[PipelineOptions, Path], Translator]
 OutputValidator = Callable[[Path, int], int]
@@ -937,6 +938,7 @@ def _validate_completed_translation(
         or metadata.model != options.model
         or metadata.batch_size != options.batch_size
         or metadata.max_input_tokens != options.max_input_tokens
+        or metadata.behavior_revision != TRANSLATION_BEHAVIOR_REVISION
     ):
         raise PipelineStateError("translated artifact is incompatible or incomplete")
 

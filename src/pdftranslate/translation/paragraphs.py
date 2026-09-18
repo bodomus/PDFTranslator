@@ -9,10 +9,15 @@ from typing import TYPE_CHECKING, Literal
 
 from pdftranslate.domain.document import (
     ExtractedDocument,
+    ForeignLanguageClassification,
+    ForeignLanguageStatistics,
+    ForeignLanguageTranslationEvidence,
+    ForeignLanguageUnitEvidence,
     TranslationMetadata,
     TranslationStatistics,
 )
 from pdftranslate.glossary import (
+    GlossaryEntryMode,
     ParagraphGlossaryEvidence,
     PreparedGlossaryText,
     build_glossary_evidence,
@@ -21,11 +26,15 @@ from pdftranslate.glossary import (
 )
 from pdftranslate.reconstruction import LogicalParagraph
 from pdftranslate.repeated import RepeatedElementPolicy
-from pdftranslate.translation.cache import TranslationCache
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION, TranslationCache
 from pdftranslate.translation.errors import (
     ResumeMismatchError,
     TranslationBackendError,
     TranslationInterruptedError,
+)
+from pdftranslate.translation.foreign_language import (
+    PreparedForeignLanguageText,
+    prepare_foreign_language_text,
 )
 from pdftranslate.translation.protocol import Translator
 from pdftranslate.translation.text import (
@@ -48,9 +57,11 @@ if TYPE_CHECKING:
 @dataclass
 class _Work:
     source_text: str
-    protected: ProtectedText
+    protected_parts: tuple[ProtectedText, ...]
     segments: tuple[Segment, ...]
+    segment_counts: tuple[int, ...]
     glossary: PreparedGlossaryText | None = None
+    foreign_language: PreparedForeignLanguageText | None = None
     targets: list[tuple[int, str]] = field(default_factory=list)
     translated: list[str] = field(default_factory=list)
 
@@ -80,21 +91,34 @@ def translate_paragraphs(
     completed = skipped = hits = misses = translated_segments = 0
     warnings: list[str] = []
     glossary_evidence: dict[str, ParagraphGlossaryEvidence] = {}
+    foreign_language_evidence: dict[int, ForeignLanguageUnitEvidence] = {}
 
     if resume_document is not None:
         _validate_resume(document, resume_document, translator, options)
         paragraphs = list(resume_document.paragraphs)
         metadata = resume_document.translation
         assert metadata is not None
+        if metadata.behavior_revision != TRANSLATION_BEHAVIOR_REVISION:
+            raise ResumeMismatchError("resume translation behavior revision does not match")
         started_at = metadata.started_at
         completed = sum(item.translated_text is not None for item in paragraphs)
+        if metadata.foreign_language is not None:
+            foreign_language_evidence.update(
+                (item.unit_index, item) for item in metadata.foreign_language.units
+            )
+        preserved_indices = {
+            item.unit_index
+            for item in foreign_language_evidence.values()
+            if item.classification is ForeignLanguageClassification.PRESERVE_FOREIGN_UNIT
+        }
         skipped = sum(
             item.translated_text is not None
             and (
-                _paragraph_policy(resume_document, item) is not RepeatedElementPolicy.TRANSLATE
+                index in preserved_indices
+                or _paragraph_policy(resume_document, item) is not RepeatedElementPolicy.TRANSLATE
                 or should_skip_translation(item.text)
             )
-            for item in paragraphs
+            for index, item in enumerate(paragraphs)
         )
         hits = metadata.statistics.cache_hits
         misses = metadata.statistics.cache_misses
@@ -107,6 +131,9 @@ def translate_paragraphs(
 
     def build(status: Literal["in_progress", "interrupted", "completed"]) -> ExtractedDocument:
         now = clock()
+        foreign_units = tuple(
+            foreign_language_evidence[index] for index in sorted(foreign_language_evidence)
+        )
         statistics = TranslationStatistics(
             total_blocks=total,
             completed_blocks=completed,
@@ -124,6 +151,7 @@ def translate_paragraphs(
             effective_device=translator.device,
             batch_size=batch_size,
             max_input_tokens=max_input_tokens,
+            behavior_revision=TRANSLATION_BEHAVIOR_REVISION,
             started_at=started_at,
             updated_at=now,
             completed_at=now if status == "completed" else None,
@@ -133,6 +161,22 @@ def translate_paragraphs(
                 build_glossary_evidence(options.glossary, tuple(glossary_evidence.values()))
                 if options.glossary is not None
                 else None
+            ),
+            foreign_language=ForeignLanguageTranslationEvidence(
+                behavior_revision=TRANSLATION_BEHAVIOR_REVISION,
+                units=foreign_units,
+                statistics=ForeignLanguageStatistics(
+                    preserved_units=sum(
+                        item.classification is ForeignLanguageClassification.PRESERVE_FOREIGN_UNIT
+                        for item in foreign_units
+                    ),
+                    translated_with_preserved_spans=sum(
+                        item.classification
+                        is ForeignLanguageClassification.TRANSLATE_WITH_PRESERVED_SPANS
+                        for item in foreign_units
+                    ),
+                    preserved_spans=sum(item.preserved_span_count for item in foreign_units),
+                ),
             ),
         )
         return document.model_copy(
@@ -193,6 +237,33 @@ def translate_paragraphs(
                 if options.glossary is not None
                 else None
             )
+            allow_whole_unit = not (
+                prepared is not None
+                and any(
+                    match.entry.mode is GlossaryEntryMode.TRANSLATE for match in prepared.matches
+                )
+            )
+            foreign_language = prepare_foreign_language_text(
+                prepared.value if prepared is not None else paragraph.text,
+                allow_whole_unit=allow_whole_unit,
+                whole_unit_text=paragraph.text,
+            )
+            if (
+                foreign_language.decision.classification
+                is ForeignLanguageClassification.PRESERVE_FOREIGN_UNIT
+            ):
+                paragraphs[index] = paragraph.model_copy(update={"translated_text": paragraph.text})
+                foreign_language_evidence[index] = _foreign_evidence(
+                    index,
+                    paragraph,
+                    foreign_language,
+                    translator_called=False,
+                )
+                completed += 1
+                skipped += 1
+                notify(index, "skipped", 0)
+                save()
+                continue
             cached = cache.get(
                 backend=translator.backend_name,
                 model=translator.model_name,
@@ -202,6 +273,7 @@ def translate_paragraphs(
                 glossary_fingerprint=options.glossary.fingerprint if options.glossary else None,
             )
             if cached is not None:
+                foreign_language.validate_restored(cached, paragraph.id)
                 paragraphs[index] = paragraph.model_copy(update={"translated_text": cached})
                 if prepared is not None:
                     glossary_evidence[paragraph.id] = validate_glossary_output(
@@ -209,6 +281,12 @@ def translate_paragraphs(
                         paragraph.id,
                         prepared.matches,
                     )
+                foreign_language_evidence[index] = _foreign_evidence(
+                    index,
+                    paragraph,
+                    foreign_language,
+                    translator_called=False,
+                )
                 completed += 1
                 hits += 1
                 notify(index, "hit")
@@ -218,22 +296,56 @@ def translate_paragraphs(
                 work_by_text[normalized].targets.append((index, "hit"))
                 hits += 1
                 continue
-            protected = protect_text(prepared.value if prepared is not None else paragraph.text)
-            segmentation = segment_text(
-                protected.value,
-                count_tokens=translator.count_tokens,
-                max_tokens=max_input_tokens,
-            )
-            if segmentation.quality_warning:
-                warnings.append(
-                    f"paragraph {paragraph.id}: forced splitting may reduce translation quality"
+            protected_parts: list[ProtectedText] = []
+            segments: list[Segment] = []
+            segment_counts: list[int] = []
+            for part in foreign_language.translatable_parts():
+                protected = protect_text(part)
+                protected_parts.append(protected)
+                if not protected.value:
+                    segment_counts.append(0)
+                    continue
+                segmentation = segment_text(
+                    protected.value,
+                    count_tokens=translator.count_tokens,
+                    max_tokens=max_input_tokens,
                 )
+                segments.extend(segmentation.segments)
+                segment_counts.append(len(segmentation.segments))
+                if segmentation.quality_warning:
+                    warnings.append(
+                        f"paragraph {paragraph.id}: forced splitting may reduce translation quality"
+                    )
+            if not segments:
+                translated_text = foreign_language.restore_parts(
+                    tuple("" for _ in protected_parts), paragraph.id
+                )
+                if prepared is not None:
+                    translated_text, glossary_evidence[paragraph.id] = (
+                        prepared.restore_and_validate(translated_text, paragraph.id)
+                    )
+                paragraphs[index] = paragraph.model_copy(
+                    update={"translated_text": translated_text}
+                )
+                foreign_language_evidence[index] = _foreign_evidence(
+                    index,
+                    paragraph,
+                    foreign_language,
+                    translator_called=False,
+                )
+                completed += 1
+                skipped += 1
+                notify(index, "skipped", 0)
+                save()
+                continue
             work_by_text[normalized] = _Work(
                 source_text=normalized,
-                protected=protected,
-                segments=segmentation.segments,
+                protected_parts=tuple(protected_parts),
+                segments=tuple(segments),
+                segment_counts=tuple(segment_counts),
                 targets=[(index, "miss")],
                 glossary=prepared,
+                foreign_language=foreign_language,
             )
             misses += 1
 
@@ -250,8 +362,22 @@ def translate_paragraphs(
                 work.translated.append(translated)
                 if len(work.translated) != len(work.segments):
                     continue
-                translated_text = work.protected.restore(
-                    recombine_segments(work.segments, work.translated)
+                first_paragraph = document.paragraphs[work.targets[0][0]]
+                translated_parts: list[str] = []
+                cursor = 0
+                for protected, segment_count in zip(
+                    work.protected_parts, work.segment_counts, strict=True
+                ):
+                    part_segments = work.segments[cursor : cursor + segment_count]
+                    part_translations = work.translated[cursor : cursor + segment_count]
+                    translated_parts.append(
+                        protected.restore(recombine_segments(part_segments, part_translations))
+                    )
+                    cursor += segment_count
+                if work.foreign_language is None:
+                    raise TranslationBackendError("foreign-language preparation is missing")
+                translated_text = work.foreign_language.restore_parts(
+                    tuple(translated_parts), first_paragraph.id
                 )
                 evidence: ParagraphGlossaryEvidence | None = None
                 if work.glossary is not None:
@@ -271,13 +397,21 @@ def translate_paragraphs(
                     ),
                 )
                 for index, cache_status in work.targets:
-                    paragraphs[index] = document.paragraphs[index].model_copy(
+                    source_paragraph = document.paragraphs[index]
+                    paragraphs[index] = source_paragraph.model_copy(
                         update={"translated_text": translated_text}
                     )
                     completed += 1
                     if evidence is not None:
                         glossary_evidence[document.paragraphs[index].id] = evidence.model_copy(
                             update={"paragraph_id": document.paragraphs[index].id}
+                        )
+                    if work.foreign_language is not None:
+                        foreign_language_evidence[index] = _foreign_evidence(
+                            index,
+                            source_paragraph,
+                            work.foreign_language,
+                            translator_called=True,
                         )
                     notify(index, cache_status, len(work.segments))
                 save()
@@ -315,6 +449,24 @@ def _paragraph_policy(
     return next(iter(policies))
 
 
+def _foreign_evidence(
+    unit_index: int,
+    paragraph: LogicalParagraph,
+    prepared: PreparedForeignLanguageText,
+    *,
+    translator_called: bool,
+) -> ForeignLanguageUnitEvidence:
+    return ForeignLanguageUnitEvidence(
+        unit_index=unit_index,
+        paragraph_id=paragraph.id,
+        page_number=paragraph.anchor_page_number,
+        classification=prepared.decision.classification,
+        reasons=prepared.decision.reasons,
+        preserved_span_count=prepared.preserved_span_count,
+        translator_called=translator_called,
+    )
+
+
 def _validate_resume(
     source: ExtractedDocument,
     resumed: ExtractedDocument,
@@ -334,6 +486,7 @@ def _validate_resume(
         options.batch_size,
         options.max_input_tokens,
         options.glossary.fingerprint if options.glossary is not None else None,
+        TRANSLATION_BEHAVIOR_REVISION,
     )
     actual = (
         metadata.backend,
@@ -343,6 +496,7 @@ def _validate_resume(
         metadata.batch_size,
         metadata.max_input_tokens,
         metadata.glossary.fingerprint if metadata.glossary is not None else None,
+        metadata.behavior_revision,
     )
     if expected != actual:
         raise ResumeMismatchError("resume settings do not match the partial output")

@@ -3,7 +3,7 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-18
 tags:
 - project-wiki
 - log
@@ -17,6 +17,12 @@ related:
 # ProjectWiki knowledge change log
 
 This records meaningful knowledge-base changes, not every Git commit or formatting edit.
+
+## 2026-09-18
+
+- Documented conservative whole-unit and inline foreign-language preservation, glossary and
+  protected-token precedence, privacy-safe diagnostics, and translation revision invalidation
+  after the PDFTR-21 pilot.
 
 ## 2026-09-17
 

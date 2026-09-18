@@ -3,7 +3,7 @@ title: ProjectWiki Phase 1 pilot evaluation
 type: testing
 status: active
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-18
 tags:
 - project-wiki
 - pilot
@@ -11,6 +11,7 @@ tags:
 sources:
 - ../../../Tickets/PDFTR-19.md
 - ../../../Tickets/PDFTR-20-strict-render-completeness.md
+- ../../../Tickets/PDFTR-21-preserve-foreign-language-text.md
 related:
 - ../overview.md
 - ../decisions/wiki-as-markdown.md
@@ -34,6 +35,23 @@ Use concrete observations. Do not claim time, token, or percentage improvements 
 actually measured.
 
 ## Trial results
+
+### PDFTR-21
+
+- Consulted `index.md`, `architecture/system-overview.md`,
+  `failure-modes/render-completeness.md`, and `testing/pilot-evaluation.md`; lexical searches also
+  covered translation, protected tokens, glossary, paragraph reconstruction, rendering
+  completeness, and foreign language.
+- The Wiki preserved the pipeline/publication boundary and the PDFTR-20 fail-closed rendering
+  constraint, so the translation fix did not weaken rendering to obtain a pilot PDF.
+- Canonical translation, glossary, cache, reconstruction, diagnostics, tests, CRG/Graphify output,
+  and the persisted Robitzsch workspace still had to be inspected for exact behavior.
+- The searches exposed a concrete gap: there was no durable page describing foreign-language
+  classification, protected-span composition, glossary precedence, or cache compatibility.
+- Added `components/foreign-language-preservation.md` and updated navigation, architecture, and
+  this pilot record. No measured time or token saving is claimed.
+- Review should verify the Wiki against deterministic and real Robitzsch evidence before the
+  ticket is closed.
 
 ### PDFTR-20
 

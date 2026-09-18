@@ -75,6 +75,15 @@ class BlockDiagnostic(DomainModel):
     glossary_occurrences: int = Field(default=0, ge=0)
     glossary_modes: tuple[str, ...] = ()
     glossary_compliance: Literal["not_applicable", "compliant", "violation"] = "not_applicable"
+    foreign_language_classification: Literal[
+        "not_applicable",
+        "translate",
+        "preserve_foreign_unit",
+        "translate_with_preserved_spans",
+    ] = "not_applicable"
+    foreign_language_reasons: tuple[str, ...] = ()
+    preserved_foreign_spans: int = Field(default=0, ge=0)
+    translator_called: bool | None = None
 
 
 class PageDiagnostic(DomainModel):
@@ -127,6 +136,9 @@ class ReportSummary(DomainModel):
     glossary_violations: int = Field(default=0, ge=0)
     glossary_conflicts: int = Field(default=0, ge=0)
     glossary_ambiguous_matches: int = Field(default=0, ge=0)
+    preserved_foreign_units: int = Field(default=0, ge=0)
+    translated_with_preserved_foreign_spans: int = Field(default=0, ge=0)
+    preserved_foreign_spans: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):
