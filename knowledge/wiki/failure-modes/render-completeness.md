@@ -17,6 +17,7 @@ sources:
 - ../../../tests/test_rendering.py
 related:
 - ../architecture/system-overview.md
+- ../architecture/reflow-layout.md
 - ../testing/pilot-evaluation.md
 ---
 
@@ -57,6 +58,8 @@ Neither check substitutes for the other.
 
 The Robitzsch regression contained 61 logical paragraphs under the current schema 1.3 artifact.
 Replaying the production fixed-layout planner produced 40 rendered and 21 overflow occurrences;
-the overflow units matched the missing regions observed on pages 1, 3, and 4. PDFTR-20 therefore
-rejects that incomplete fixed-layout result. Full reflow, cross-page flow, repagination, and new-page
-creation remain future work.
+the overflow units matched the missing regions observed on pages 1, 3, and 4. PDFTR-22 later
+source-verified that all 21 current overflow occurrences are classified as footnotes; all 26 body
+occurrences render under the shrink-to-fit policy. PDFTR-20 correctly rejects the incomplete result.
+The separate [Body-text reflow architecture](../architecture/reflow-layout.md) proves cross-page
+body flow but deliberately leaves footnote pagination fail-closed.

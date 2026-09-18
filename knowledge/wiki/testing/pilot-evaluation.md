@@ -12,9 +12,11 @@ sources:
 - ../../../Tickets/PDFTR-19.md
 - ../../../Tickets/PDFTR-20-strict-render-completeness.md
 - ../../../Tickets/PDFTR-21-preserve-foreign-language-text.md
+- ../../../Tickets/PDFTR-22-reflow-architecture-poc.md
 related:
 - ../overview.md
 - ../decisions/wiki-as-markdown.md
+- ../architecture/reflow-layout.md
 - ../workflows/wiki-maintenance.md
 ---
 
@@ -35,6 +37,25 @@ Use concrete observations. Do not claim time, token, or percentage improvements 
 actually measured.
 
 ## Trial results
+
+### PDFTR-22
+
+- Consulted `index.md`, `architecture/system-overview.md`,
+  `failure-modes/render-completeness.md`, `components/foreign-language-preservation.md`, and this
+  pilot page; searches covered rendering completeness, foreign-language preservation, paragraph
+  reconstruction, layout/overflow, and atomic publication.
+- The Wiki preserved the occurrence-based completeness, source immutability, publication, and
+  foreign-language exactness constraints before the new planner boundary was designed.
+- Canonical reconstruction/repeated/rendering/diagnostic/pipeline source, tests, prior reports,
+  Graphify/CRG output, the source PDF, and persisted schema 1.3 artifact were still required for
+  exact geometry and planner behavior.
+- The review exposed a material evidence gap: the Wiki repeated the 40-rendered/21-overflow count
+  but did not say that all 21 current overflows are footnotes. Added
+  `architecture/reflow-layout.md` and corrected the completeness boundary.
+- Visual PDF review found a continuation/baseline collision that extraction checks passed. The
+  PoC and architecture now require visual inspection and one-line baseline safety.
+- Updated navigation, system overview, completeness, this evaluation, and the Wiki log. No measured
+  time or token saving is claimed.
 
 ### PDFTR-21
 
@@ -69,6 +90,12 @@ actually measured.
 
 ## Phase 2 decision
 
-Status: To be documented after 2–3 qualifying tickets. Choose `keep as-is`, `adjust`, `expand`, or
-`abandon`, and explain the evidence. Semantic search, embeddings, MCP, QMD, automated ingestion,
-and graph generation remain out of scope until that decision.
+Decision: **keep as-is**.
+
+Across PDFTR-20, PDFTR-21, and PDFTR-22, curated source-backed Markdown plus deterministic lexical
+search consistently preserved high-level safety boundaries and exposed missing durable knowledge.
+Exact implementation and runtime claims still required canonical source and artifact validation,
+which is the intended authority model rather than a failure of the Wiki. The pilot does not provide
+measured evidence that embeddings, semantic search, MCP, QMD, automated ingestion, or graph
+generation would improve this workflow. Continue the current maintenance process and reassess only
+when a concrete retrieval failure justifies expansion.

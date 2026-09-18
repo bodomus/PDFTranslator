@@ -19,6 +19,7 @@ related:
 - ../workflows/development-workflow.md
 - ../failure-modes/render-completeness.md
 - ../components/foreign-language-preservation.md
+- reflow-layout.md
 ---
 
 # PDFTranslate system overview
@@ -47,6 +48,12 @@ The root command orchestrates six user-visible stages:
 For schema 1.3, stage 5 first plans and accounts for every logical paragraph occurrence. Required
 overflow fails before PDF mutation or candidate creation; see
 [Rendering completeness](../failure-modes/render-completeness.md).
+
+PDFTR-22 keeps that fixed-layout production path unchanged and proves a separate typed body-reflow
+planner. It maps paragraph occurrences to ordered continuation segments across explicit safe page
+regions; see [Body-text reflow architecture](reflow-layout.md). The recommended production path is
+hybrid existing-page plus bounded inserted-page flow. Unsafe or unclassified pages remain
+fail-closed.
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived
 workspace per document. Advanced inspect, extract, translate, render, benchmark, and validation

@@ -30,6 +30,8 @@ canonical reports, and runtime evidence remain authoritative.
 ## Architecture
 
 - [System overview](architecture/system-overview.md)
+- [Body-text reflow architecture](architecture/reflow-layout.md) — typed regions, paragraph
+  continuations, hybrid page creation, preserved anchors, and explicit unsupported layouts.
 
 ## Components
 
@@ -52,7 +54,8 @@ canonical reports, and runtime evidence remain authoritative.
 
 - Fixed-layout rendering can be unable to fit required translated paragraphs. See
   [Rendering completeness](failure-modes/render-completeness.md) for the enforced fail-closed
-  behavior and the boundary with future reflow work.
+  behavior and [Body-text reflow architecture](architecture/reflow-layout.md) for the proven
+  single-column body-flow direction and its footnote boundary.
 
 ## Testing
 
