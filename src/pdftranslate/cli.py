@@ -1007,8 +1007,10 @@ def render_pdf(
 
     elapsed = time.perf_counter() - started
     console.print(
-        f"Rendered {result.blocks_rendered}/{len(result.blocks)} block(s) to "
-        f"[path]{result.output_path}[/path]; font reductions {result.font_reductions}; "
+        f"Rendered and accounted for {result.expected_units} render unit(s): "
+        f"rendered {result.blocks_rendered}, preserved {result.preserved_units}, "
+        f"policy-excluded {result.excluded_units}; [path]{result.output_path}[/path]; "
+        f"font reductions {result.font_reductions}; "
         f"expanded {result.expanded_blocks}; overflow {result.overflow_blocks}; "
         f"size {result.file_size} bytes; elapsed {elapsed:.2f}s"
     )

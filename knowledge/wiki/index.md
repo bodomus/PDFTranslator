@@ -33,8 +33,8 @@ canonical reports, and runtime evidence remain authoritative.
 
 ## Components
 
-No component page is needed yet. Add one only when multiple sources support durable component-level
-knowledge that does not belong in the system overview.
+- [Rendering completeness](failure-modes/render-completeness.md) — strict schema 1.3 paragraph
+  accounting and fail-closed overflow behavior.
 
 ## Workflows
 
@@ -48,7 +48,9 @@ knowledge that does not belong in the system overview.
 
 ## Known issues
 
-No ProjectWiki-specific failure mode has been confirmed yet. Record one only with evidence.
+- Fixed-layout rendering can be unable to fit required translated paragraphs. See
+  [Rendering completeness](failure-modes/render-completeness.md) for the enforced fail-closed
+  behavior and the boundary with future reflow work.
 
 ## Testing
 
