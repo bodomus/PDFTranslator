@@ -3,7 +3,7 @@ title: PDFTranslator Knowledge Base
 type: index
 status: active
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-18
 tags:
 - project-wiki
 - navigation
@@ -33,6 +33,8 @@ canonical reports, and runtime evidence remain authoritative.
 
 ## Components
 
+- [Foreign-language preservation](components/foreign-language-preservation.md) — conservative
+  whole-unit and inline-span preservation across translation, glossary, cache, and diagnostics.
 - [Rendering completeness](failure-modes/render-completeness.md) — strict schema 1.3 paragraph
   accounting and fail-closed overflow behavior.
 

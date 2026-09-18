@@ -13,7 +13,7 @@ from pdftranslate.domain.document import (
     TranslationStatistics,
 )
 from pdftranslate.glossary import LoadedGlossary
-from pdftranslate.translation.cache import TranslationCache
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION, TranslationCache
 from pdftranslate.translation.errors import (
     ResumeMismatchError,
     TranslationBackendError,
@@ -177,6 +177,7 @@ def translate_document(
             effective_device=translator.device,
             batch_size=options.batch_size,
             max_input_tokens=options.max_input_tokens,
+            behavior_revision=TRANSLATION_BEHAVIOR_REVISION,
             started_at=started_at,
             updated_at=now,
             completed_at=now if status == "completed" else None,
@@ -348,6 +349,7 @@ def _validate_resume(
         options.target_language,
         options.batch_size,
         options.max_input_tokens,
+        TRANSLATION_BEHAVIOR_REVISION,
     )
     actual = (
         metadata.backend,
@@ -356,6 +358,7 @@ def _validate_resume(
         metadata.target_language,
         metadata.batch_size,
         metadata.max_input_tokens,
+        metadata.behavior_revision,
     )
     if expected != actual:
         raise ResumeMismatchError("resume settings do not match the partial output")

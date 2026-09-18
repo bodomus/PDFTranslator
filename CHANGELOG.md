@@ -21,6 +21,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Conservative, explicit foreign-language classification now preserves confidently Latin/Greek
+  quotation paragraphs without model inference and protects Greek spans plus selected academic
+  foreign terms inside translated prose, with serialized per-unit evidence and report totals.
+- Foreign-language preservation keeps inline spans outside model inference, composes with glossary
+  and protected-token placeholders, honors explicit glossary translation, fails closed on
+  inconsistent span assembly, and invalidates pre-PDFTR-21 translation cache/resume/workspace
+  artifacts through behavior revision 5.
 - Phase 1 ProjectWiki with Git-tracked source-backed Markdown, curated navigation, agent maintenance
   rules, dependency-free frontmatter/link/source linting, deterministic lexical search, focused
   tests, and local/CI quality-gate integration.

@@ -44,10 +44,18 @@ def build_success_report(
 ) -> TranslationReport:
     statistics = _statistics(translated)
     glossary = translated.translation.glossary if translated.translation is not None else None
+    foreign_language = (
+        translated.translation.foreign_language if translated.translation is not None else None
+    )
     glossary_by_id = (
         {item.paragraph_id: item for item in glossary.paragraphs} if glossary is not None else {}
     )
     render_by_index = {item.unit_index: item for item in render.blocks} if render else {}
+    foreign_by_index = (
+        {item.unit_index: item for item in foreign_language.units}
+        if foreign_language is not None
+        else {}
+    )
     unit_index_by_identity = (
         {id(item): index for index, item in enumerate(translated.paragraphs)}
         if translated.schema_version == "1.3"
@@ -128,7 +136,9 @@ def build_success_report(
         )
         for block in units:
             repeated = _repeated_for_unit(translated, block)
-            layout = render_by_index.get(unit_index_by_identity[id(block)])
+            unit_index = unit_index_by_identity[id(block)]
+            layout = render_by_index.get(unit_index)
+            foreign_unit = foreign_by_index.get(unit_index)
             glossary_unit = glossary_by_id.get(block.id)
             codes: list[DiagnosticCode] = []
             state = "unknown"
@@ -198,6 +208,20 @@ def build_success_report(
                         glossary_unit.compliance
                         if glossary_unit is not None and glossary_unit.compliance != "not_matched"
                         else "not_applicable"
+                    ),
+                    foreign_language_classification=(
+                        foreign_unit.classification.value
+                        if foreign_unit is not None
+                        else "not_applicable"
+                    ),
+                    foreign_language_reasons=(
+                        foreign_unit.reasons if foreign_unit is not None else ()
+                    ),
+                    preserved_foreign_spans=(
+                        foreign_unit.preserved_span_count if foreign_unit is not None else 0
+                    ),
+                    translator_called=(
+                        foreign_unit.translator_called if foreign_unit is not None else None
                     ),
                 )
             )
@@ -293,6 +317,17 @@ def build_success_report(
             glossary_conflicts=(glossary.statistics.conflicts if glossary is not None else 0),
             glossary_ambiguous_matches=(
                 glossary.statistics.ambiguous_matches if glossary is not None else 0
+            ),
+            preserved_foreign_units=(
+                foreign_language.statistics.preserved_units if foreign_language is not None else 0
+            ),
+            translated_with_preserved_foreign_spans=(
+                foreign_language.statistics.translated_with_preserved_spans
+                if foreign_language is not None
+                else 0
+            ),
+            preserved_foreign_spans=(
+                foreign_language.statistics.preserved_spans if foreign_language is not None else 0
             ),
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,

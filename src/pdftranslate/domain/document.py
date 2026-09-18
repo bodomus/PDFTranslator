@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -54,6 +55,40 @@ class TranslationStatistics(DomainModel):
     translated_segments: int = Field(ge=0)
 
 
+class ForeignLanguageClassification(StrEnum):
+    """Explicit terminal decision for foreign-language source material."""
+
+    TRANSLATE = "translate"
+    PRESERVE_FOREIGN_UNIT = "preserve_foreign_unit"
+    TRANSLATE_WITH_PRESERVED_SPANS = "translate_with_preserved_spans"
+
+
+class ForeignLanguageUnitEvidence(DomainModel):
+    """Privacy-safe classification evidence for one logical paragraph occurrence."""
+
+    unit_index: int = Field(ge=0)
+    paragraph_id: str = Field(min_length=1)
+    page_number: int = Field(ge=1)
+    classification: ForeignLanguageClassification
+    reasons: tuple[str, ...] = Field(min_length=1)
+    preserved_span_count: int = Field(ge=0)
+    translator_called: bool
+
+
+class ForeignLanguageStatistics(DomainModel):
+    preserved_units: int = Field(ge=0)
+    translated_with_preserved_spans: int = Field(ge=0)
+    preserved_spans: int = Field(ge=0)
+
+
+class ForeignLanguageTranslationEvidence(DomainModel):
+    """Document-level preservation evidence persisted with translation metadata."""
+
+    behavior_revision: int = Field(ge=1)
+    units: tuple[ForeignLanguageUnitEvidence, ...] = ()
+    statistics: ForeignLanguageStatistics
+
+
 class TranslationMetadata(DomainModel):
     """Identity and lifecycle of a translation run."""
 
@@ -65,12 +100,17 @@ class TranslationMetadata(DomainModel):
     effective_device: Literal["cpu", "cuda"]
     batch_size: int = Field(ge=1)
     max_input_tokens: int = Field(ge=8)
+    behavior_revision: int = Field(default=1, ge=1)
     started_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
     statistics: TranslationStatistics
     warnings: tuple[str, ...] = ()
     glossary: GlossaryTranslationEvidence | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    foreign_language: ForeignLanguageTranslationEvidence | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )

@@ -3,17 +3,28 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from pdftranslate.diagnostics.builder import build_success_report
 from pdftranslate.domain.document import (
     DocumentMetadata,
     ExtractedDocument,
+    ForeignLanguageClassification,
     SourceDocument,
 )
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox, TextBlock
+from pdftranslate.glossary.models import (
+    GlossaryDocument,
+    GlossaryEntry,
+    GlossaryEntryMode,
+    GlossaryInflection,
+    GlossaryMatchType,
+    LoadedGlossary,
+)
 from pdftranslate.reconstruction import (
     LogicalParagraph,
     ParagraphFragment,
@@ -26,11 +37,13 @@ from pdftranslate.reconstruction import (
 from pdftranslate.serialization import document_from_json, document_to_json
 from pdftranslate.translation import (
     ProtectedTokenError,
+    ResumeMismatchError,
     TranslationCache,
     TranslationCacheError,
     TranslationInterruptedError,
     TranslationOptions,
     TranslationOutOfMemoryError,
+    prepare_foreign_language_text,
     translate_document,
 )
 from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
@@ -243,6 +256,207 @@ def test_paragraph_pipeline_preserves_pdf_private_use_markers_without_model(
     ]
 
 
+def test_whole_latin_passages_are_explicitly_preserved_without_model(tmp_path: Path) -> None:
+    first = (
+        "praesidium reges ipsi sibi perfugiumque, et pecudes et agros divisere atque "
+        "dedere pro facie cuiusque et viribus ingenioque."
+    )
+    second = (
+        "inde magistratum partim docuere creare iuraque constituere, ut vellent legibus "
+        "uti. nam genus humanum, defessum vi colere aevum, ex inimicitiis languebat; "
+        "quo magis ipsum sponte sua cecidit sub leges artaque iura."
+    )
+    ordinary = "The ordinary English paragraph must still be translated by the model."
+    source = _paragraph_document(first, second, ordinary)
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            source,
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(),
+        )
+
+    assert [item.translated_text for item in result.paragraphs] == [
+        first,
+        second,
+        f"RU {ordinary}",
+    ]
+    assert [text for batch in translator.batches for text in batch] == [ordinary]
+    assert result.translation is not None
+    evidence = result.translation.foreign_language
+    assert evidence is not None
+    assert evidence.statistics.preserved_units == 2
+    assert [item.unit_index for item in evidence.units] == [0, 1, 2]
+    assert all(
+        item.classification is ForeignLanguageClassification.PRESERVE_FOREIGN_UNIT
+        and not item.translator_called
+        for item in evidence.units[:2]
+    )
+    assert evidence.units[2].classification is ForeignLanguageClassification.TRANSLATE
+    assert evidence.units[2].translator_called
+
+
+def test_whole_greek_quotation_is_preserved_without_model(tmp_path: Path) -> None:
+    greek = "Ἐν ἀρχῇ ἦν ὁ λόγος, καὶ ὁ λόγος ἦν πρὸς τὸν θεόν."
+    source = _paragraph_document(greek)
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            source,
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(),
+        )
+
+    assert result.paragraphs[0].translated_text == greek
+    assert translator.batches == []
+    assert result.translation is not None
+    assert result.translation.foreign_language is not None
+    assert result.translation.foreign_language.units[0].reasons == ("greek_script_unit",)
+
+
+def test_mixed_prose_translates_and_restores_latin_and_greek_spans(tmp_path: Path) -> None:
+    latin = "The passage distinguishes lex from ius and refers to ipsi and sibi."
+    greek = "Epicurus writes ἡ φύσις while the English explanation continues."
+    source = _paragraph_document(latin, greek)
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            source,
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(),
+        )
+
+    translated = [item.translated_text or "" for item in result.paragraphs]
+    assert all(item.startswith("RU ") for item in translated)
+    assert all(term in translated[0] for term in ("lex", "ius", "ipsi", "sibi"))
+    assert "ἡ" in translated[1]
+    assert "φύσις" in translated[1]
+    model_inputs = [text for batch in translator.batches for text in batch]
+    assert all(
+        term not in model_input
+        for model_input in model_inputs
+        for term in ("lex", "ius", "ipsi", "sibi")
+    )
+    assert all("__PDFTR_FOREIGN_" not in item for item in model_inputs)
+    assert all("ἡ" not in item and "φύσις" not in item for item in model_inputs)
+    assert result.translation is not None
+    evidence = result.translation.foreign_language
+    assert evidence is not None
+    assert evidence.statistics.translated_with_preserved_spans == 2
+    assert evidence.statistics.preserved_spans == 6
+    assert all(item.translator_called for item in evidence.units)
+
+    round_tripped = document_from_json(document_to_json(result))
+    assert round_tripped.translation is not None
+    assert round_tripped.translation.foreign_language == evidence
+
+
+def test_explicit_glossary_translation_overrides_whole_latin_preservation(tmp_path: Path) -> None:
+    latin = (
+        "inde magistratum partim docuere creare iuraque constituere, ut vellent legibus uti. "
+        "nam genus humanum ex inimicitiis languebat quo magis sua sub leges."
+    )
+    target = "обязательный перевод латинской цитаты"
+    glossary = LoadedGlossary(
+        document=GlossaryDocument(
+            schema_version="1.0",
+            glossary_version="1.0.0",
+            source_language="en",
+            target_language="ru",
+            entries=(
+                GlossaryEntry(
+                    id="translate-latin-quotation",
+                    source=latin,
+                    target=target,
+                    mode=GlossaryEntryMode.TRANSLATE,
+                    case_sensitive=True,
+                    match=GlossaryMatchType.EXACT,
+                    inflection=GlossaryInflection.FIXED,
+                    priority=100,
+                ),
+            ),
+        ),
+        fingerprint="1" * 64,
+    )
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            _paragraph_document(latin),
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(glossary=glossary),
+        )
+
+    assert translator.batches
+    assert result.paragraphs[0].translated_text == f"RU {target}"
+    assert result.translation is not None
+    assert result.translation.foreign_language is not None
+    evidence = result.translation.foreign_language.units[0]
+    assert evidence.classification is ForeignLanguageClassification.TRANSLATE
+    assert evidence.translator_called
+
+
+def test_missing_foreign_span_placeholder_fails_closed() -> None:
+    prepared = prepare_foreign_language_text("The argument uses lex and ἡ φύσις here.")
+
+    with pytest.raises(ProtectedTokenError, match="foreign-language span"):
+        prepared.restore("Перевод без плейсхолдеров", "p1-b1")
+
+    repeated = prepare_foreign_language_text("English lex between another lex example.")
+    with pytest.raises(ProtectedTokenError, match="cached translation"):
+        repeated.validate_restored("Перевод только с одним lex.", "p1-b2")
+
+
+def test_foreign_language_evidence_is_exposed_in_diagnostics(tmp_path: Path) -> None:
+    source = _paragraph_document(
+        "The argument contrasts lex with ius.",
+        "This ordinary English sentence is translated.",
+    )
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        translated = translate_document(
+            source,
+            translator=FakeTranslator(),
+            cache=cache,
+            options=TranslationOptions(),
+        )
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"pdf")
+    now = datetime.now(UTC)
+
+    report = build_success_report(
+        run_id="foreign-language-test",
+        started_at=now,
+        finished_at=now,
+        input_path=tmp_path / "input.pdf",
+        output_path=output,
+        translated=translated,
+        render=None,
+        ocr_pages=(),
+        ocr_warnings=(),
+        elapsed_seconds=0.1,
+        stage_durations={},
+        peak_ram_bytes=None,
+        include_text=False,
+        debug_layout_path=None,
+        block_evidence={},
+    )
+
+    assert report.summary.translated_with_preserved_foreign_spans == 1
+    assert report.summary.preserved_foreign_spans == 2
+    assert report.pages[0].blocks[0].foreign_language_classification == (
+        "translate_with_preserved_spans"
+    )
+    assert report.pages[0].blocks[0].preserved_foreign_spans == 2
+    assert report.pages[0].blocks[1].foreign_language_classification == "translate"
+
+
 def test_cache_prevents_work_across_runs(tmp_path: Path) -> None:
     source = _document("Repeated source sentence.")
     cache_path = tmp_path / "cache.sqlite3"
@@ -339,6 +553,45 @@ def test_interruption_checkpoint_can_resume(tmp_path: Path) -> None:
     assert resumed.translation is not None
     assert resumed.translation.status == "completed"
     assert resumed.translation.started_at == partial.translation.started_at
+
+
+def test_resume_rejects_pre_foreign_language_behavior_revision(tmp_path: Path) -> None:
+    source = _paragraph_document("Translate this ordinary English sentence.")
+    checkpoints: list[ExtractedDocument] = []
+    cache_path = tmp_path / "cache.sqlite3"
+
+    with (
+        TranslationCache(cache_path) as cache,
+        pytest.raises(TranslationInterruptedError) as caught,
+    ):
+        translate_document(
+            source,
+            translator=InterruptingTranslator(),
+            cache=cache,
+            options=TranslationOptions(),
+            checkpoint=checkpoints.append,
+        )
+
+    partial = caught.value.partial_document
+    assert partial.translation is not None
+    stale = partial.model_copy(
+        update={
+            "translation": partial.translation.model_copy(
+                update={"behavior_revision": TRANSLATION_BEHAVIOR_REVISION - 1}
+            )
+        }
+    )
+    with (
+        TranslationCache(cache_path) as cache,
+        pytest.raises(ResumeMismatchError, match="resume settings do not match"),
+    ):
+        translate_document(
+            source,
+            translator=FakeTranslator(),
+            cache=cache,
+            options=TranslationOptions(),
+            resume_document=stale,
+        )
 
 
 def test_cache_corruption_is_recoverable_error(tmp_path: Path) -> None:

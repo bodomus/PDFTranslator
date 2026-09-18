@@ -3,7 +3,7 @@ title: PDFTranslate system overview
 type: architecture
 status: active
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-18
 tags:
 - architecture
 - pipeline
@@ -13,10 +13,12 @@ sources:
 - ../../../pyproject.toml
 - ../../../.codex/PRE_TICKET_WORKFLOW.md
 - ../../../src/pdftranslate/rendering/renderer.py
+- ../../../src/pdftranslate/translation/foreign_language.py
 related:
 - ../overview.md
 - ../workflows/development-workflow.md
 - ../failure-modes/render-completeness.md
+- ../components/foreign-language-preservation.md
 ---
 
 # PDFTranslate system overview
@@ -25,6 +27,11 @@ PDFTranslate uses a `src/pdftranslate` package with a Typer/Rich CLI and domain 
 the CLI boundary. PyMuPDF owns PDF inspection, extraction, rendering, and validation adapters;
 local NLLB translation is isolated behind translation modules; OCRmyPDF/Tesseract are optional
 external preprocessing dependencies.
+
+Before NLLB inference, paragraph translation conservatively preserves confidently Latin/Greek
+whole units and protects selected foreign-language spans inside English prose. The explicit
+classification, evidence, and cache compatibility rules are documented in
+[Foreign-language preservation](../components/foreign-language-preservation.md).
 
 ## Main processing flow
 
