@@ -20,6 +20,10 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-18
 
+- Added the PDFTR-22 body-text reflow architecture, typed region/continuation model, hybrid page
+  strategy, Robitzsch PoC evidence, explicit footnote boundary, and unsupported-layout policy.
+- Completed the three-ticket Phase 1 pilot and selected `keep as-is`: curated source-backed Markdown
+  plus lexical search remains useful without semantic-search or automated-ingestion expansion.
 - Documented conservative whole-unit and inline foreign-language preservation, glossary and
   protected-token precedence, privacy-safe diagnostics, and translation revision invalidation
   after the PDFTR-21 pilot.

@@ -48,6 +48,28 @@ Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Exi
 `knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
 durable new knowledge should change after a non-trivial ticket.
 
+## Reflow architecture proof of concept
+
+PDFTR-22 provides an isolated, non-production body-text reflow demonstrator under
+`scripts/reflow_poc/`. It consumes a completed schema 1.3 artifact, an explicit reviewed body region,
+and explicit paragraph occurrence indexes; it emits a selectable diagnostic PDF plus a typed JSON
+layout plan without changing the normal renderer.
+
+```powershell
+uv run python -m scripts.reflow_poc SOURCE.pdf TRANSLATED.json `
+  --source-page 3 `
+  --occurrences 38-41 `
+  --allow-ambiguous-occurrences 38-41 `
+  --region 67.35,53.78,378.32,463.23 `
+  --output .\temp\pdftr22\reflow-poc.pdf `
+  --plan .\temp\pdftr22\layout-plan.json `
+  --debug-output .\temp\pdftr22\reflow-debug.pdf
+```
+
+This command is intentionally fail-closed and limited to reviewed single-column body prose. It is
+not wired into `pdftranslate`; see [`docs/reflow-architecture.md`](docs/reflow-architecture.md) for
+the evidence, unsupported layouts, and proposed PDFTR-23 production boundary.
+
 ## Windows setup
 
 From PowerShell, clone or open the repository and run:

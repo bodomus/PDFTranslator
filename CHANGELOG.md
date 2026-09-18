@@ -21,6 +21,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Isolated PDFTR-22 body-text reflow proof of concept with typed flow regions, occurrence-preserving
+  continuation segments, exact character accounting, bounded hybrid page creation, selectable PDF
+  output, machine-readable plans, debug visualization, and deterministic tests.
+- Durable reflow architecture and Robitzsch evidence for pages 1, 3, and 4, including the corrected
+  finding that all 21 current fixed-layout overflows are footnotes and remain outside PDFTR-23 body
+  reflow scope.
 - Conservative, explicit foreign-language classification now preserves confidently Latin/Greek
   quotation paragraphs without model inference and protects Greek spans plus selected academic
   foreign terms inside translated prose, with serialized per-unit evidence and report totals.
