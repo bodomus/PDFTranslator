@@ -14,6 +14,7 @@ from pdftranslate.rendering.models import (
     RenderOptions,
     RenderResult,
     RenderState,
+    RenderStrategy,
 )
 from pdftranslate.rendering.renderer import PdfRenderer
 from pdftranslate.rendering.validation import validate_output_pdf
@@ -27,6 +28,7 @@ __all__ = [
     "RenderOptions",
     "RenderResult",
     "RenderState",
+    "RenderStrategy",
     "RenderingError",
     "RenderingInputError",
     "SourceMismatchError",

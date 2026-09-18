@@ -11,8 +11,13 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-23-production-body-reflow.md
 - ../../../Tickets/PDFTR-22-reflow-architecture-poc.md
 - ../../../docs/reflow-architecture.md
+- ../../../src/pdftranslate/rendering/reflow/models.py
+- ../../../src/pdftranslate/rendering/reflow/planner.py
+- ../../../src/pdftranslate/rendering/reflow/regions.py
+- ../../../src/pdftranslate/rendering/reflow/pymupdf_layout.py
 - ../../../scripts/reflow_poc/models.py
 - ../../../scripts/reflow_poc/planner.py
 - ../../../scripts/reflow_poc/pymupdf_adapter.py
@@ -25,7 +30,8 @@ related:
 
 # Body-text reflow architecture
 
-PDFTR-22 proves a forward-only, region-based layout boundary for single-column body prose. A logical
+PDFTR-23 implements the PDFTR-22 forward-only, region-based layout boundary in production for
+confident single-column body prose and one basic heading style. A logical
 paragraph occurrence is the semantic flow unit; a typed continuation segment is the physical
 placement unit. Each segment retains occurrence identity, exact character offsets, target page and
 rectangle, continuation index, font evidence, and terminal continuation state.
@@ -44,12 +50,14 @@ partial plan. Saved output is reopened, every segment is checked in a padded cli
 target rectangle, and a separate debug PDF can show regions and continuation boxes. Region-wide
 extraction is diagnostic only and cannot establish segment success.
 
-## Page policy
+## Production page policy
 
-The recommended production strategy is hybrid: consume safe body regions on existing pages, then
-insert bounded continuation pages with matching geometry. Anchored headers, page numbers, figures,
-drawings, backgrounds, captions, and footnotes remain outside body flow according to explicit
-policy. A page that cannot be safely classified receives no flow content.
+The production hybrid uses Strategy A: consume the safe body region on the source page, then insert
+bounded blank continuation pages immediately after it. Inserted pages match source geometry and do
+not regenerate a running header or page number. Final indexes account for previous insertions, so
+earlier continuation cannot overwrite later source content. Anchored headers, page numbers,
+figures, drawings, backgrounds, captions, and footnotes remain outside body flow. A page that cannot
+be safely classified receives no flow content and remains fixed-layout only when complete.
 
 ## Robitzsch evidence
 
@@ -65,8 +73,16 @@ after PNG review found an overlap that extraction-only validation did not reveal
 
 ## Production boundary
 
-PDFTR-23 should implement body prose plus one basic heading style for confidently classified
-single-column book pages, anchored-object preservation, hybrid continuation, strict segment
-completeness, and selectable post-save validation. Footnote pagination, tables, arbitrary columns,
-sidebars, floating figures, verse, and complex mathematical layout remain explicit fail-closed
-follow-ups. See `docs/reflow-architecture.md` for the full decision record and PoC command.
+`pdftranslate.rendering.reflow` separates typed contracts, pure planning, conservative region
+discovery, PyMuPDF measurement/mutation, and saved validation. Eligibility requires stable
+single-column geometry, known body/heading occurrences, column zero, translate policy, and no
+intersecting unselected text, images, or drawings. Partial or isolated reconstruction ambiguity is
+rejected; only an all-ambiguous group of at least three occurrences may be resolved by stronger
+homogeneous page-level geometry. Planning reserves the last baseline, keeps headings with minimal
+following body content, and enforces exact offsets.
+Render diagnostics expose strategy, target pages/rectangles, segment and continuation counts,
+inserted pages, unsupported pages, and unplaced count.
+
+Footnote pagination, tables, arbitrary columns, sidebars, floating figures, verse, and complex
+mathematical layout remain explicit fail-closed follow-ups. See `docs/reflow-architecture.md` for
+the full decision record and historical PoC command.

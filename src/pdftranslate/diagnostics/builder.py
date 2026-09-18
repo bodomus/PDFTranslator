@@ -223,6 +223,14 @@ def build_success_report(
                     translator_called=(
                         foreign_unit.translator_called if foreign_unit is not None else None
                     ),
+                    render_strategy=(
+                        layout.strategy.value if layout is not None else "unsupported"
+                    ),
+                    target_pages=layout.target_pages if layout is not None else (),
+                    segment_count=layout.segment_count if layout is not None else 0,
+                    continuation_count=layout.continuation_count if layout is not None else 0,
+                    target_rects=layout.target_rects if layout is not None else (),
+                    text_offsets=layout.text_offsets if layout is not None else (),
                 )
             )
         page_codes = (
@@ -329,6 +337,13 @@ def build_success_report(
             preserved_foreign_spans=(
                 foreign_language.statistics.preserved_spans if foreign_language is not None else 0
             ),
+            reflowed_paragraphs=render.reflowed_paragraphs if render else 0,
+            reflow_segments=render.reflow_segments if render else 0,
+            continued_paragraphs=render.continued_paragraphs if render else 0,
+            inserted_pages=render.inserted_pages if render else 0,
+            fixed_layout_paragraphs=render.fixed_layout_paragraphs if render else 0,
+            unsupported_pages=render.unsupported_pages if render else 0,
+            unplaced_text_count=render.unplaced_text_count if render else 0,
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,
             output_size=output_path.stat().st_size,
