@@ -382,15 +382,25 @@ def _validate_saved_output(path: Path, layout: LayoutPlan) -> int:
                 str(page.get_text("text", clip=clip))
             )
         for segment in layout.segments:
+            page = output[segment.target_page_number - 1]
+            padding = max(2.0, segment.font_size * 0.8)
+            clip = pymupdf.Rect(
+                max(page.rect.x0, segment.target_rect.x0 - padding),
+                max(page.rect.y0, segment.target_rect.y0 - padding),
+                min(page.rect.x1, segment.target_rect.x1 + padding),
+                min(page.rect.y1, segment.target_rect.y1 + padding),
+            )
             expected_normalized = _normalize_text(segment.text)
-            extracted_normalized = region_text[segment.target_page_number]
-            if expected_normalized not in extracted_normalized:
+            local_extracted_normalized = _normalize_text(str(page.get_text("text", clip=clip)))
+            if expected_normalized not in local_extracted_normalized:
+                region_extracted_normalized = region_text[segment.target_page_number]
                 raise PocValidationError(
                     "saved PoC PDF is missing selectable text for "
                     f"occurrence {segment.occurrence_index}, "
                     f"continuation {segment.continuation_index}; "
                     f"expected={expected_normalized[:160]!r}; "
-                    f"extracted={extracted_normalized[:160]!r}"
+                    f"local_extracted={local_extracted_normalized[:160]!r}; "
+                    f"region_diagnostic={region_extracted_normalized[:160]!r}"
                 )
     finally:
         output.close()

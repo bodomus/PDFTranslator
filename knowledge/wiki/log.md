@@ -20,6 +20,9 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-18
 
+- Hardened PDFTR-22 post-save validation from region-wide substring checks to padded
+  segment-target clips, preventing duplicate text elsewhere in a region from masking a missing
+  placement.
 - Added the PDFTR-22 body-text reflow architecture, typed region/continuation model, hybrid page
   strategy, Robitzsch PoC evidence, explicit footnote boundary, and unsupported-layout policy.
 - Completed the three-ticket Phase 1 pilot and selected `keep as-is`: curated source-backed Markdown

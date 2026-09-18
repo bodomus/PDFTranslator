@@ -7,7 +7,16 @@ from pathlib import Path
 
 import pymupdf
 import pytest
-from scripts.reflow_poc.models import ContentDisposition, FlowParagraph, FlowRegion, Rect
+from scripts.reflow_poc.models import (
+    ContentDisposition,
+    FlowParagraph,
+    FlowRegion,
+    LayoutMetrics,
+    LayoutPlan,
+    PlacementSegment,
+    PlacementState,
+    Rect,
+)
 from scripts.reflow_poc.planner import (
     CapacityError,
     Measurement,
@@ -15,7 +24,11 @@ from scripts.reflow_poc.planner import (
     UnsupportedLayoutError,
     plan_flow,
 )
-from scripts.reflow_poc.pymupdf_adapter import run_poc
+from scripts.reflow_poc.pymupdf_adapter import (
+    PocValidationError,
+    _validate_saved_output,
+    run_poc,
+)
 
 from pdftranslate.domain.document import TranslationMetadata, TranslationStatistics
 from pdftranslate.pdf import PdfExtractor
@@ -200,6 +213,72 @@ def test_poc_pdf_is_selectable_and_continues_to_a_new_page(
         assert rendered.page_count == 1 + plan.metrics.new_pages_created
     finally:
         rendered.close()
+
+
+def test_saved_output_validation_rejects_missing_duplicate_segment(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "duplicate-segments.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=300)
+    page.insert_textbox(pymupdf.Rect(40, 40, 260, 80), "duplicate text", fontsize=12)
+    document.save(output)
+    document.close()
+    first_rect = Rect(40, 40, 260, 80)
+    missing_rect = Rect(40, 140, 260, 180)
+    segments = (
+        PlacementSegment(
+            occurrence_index=1,
+            paragraph_id="first",
+            source_page_number=1,
+            target_page_number=1,
+            target_rect=first_rect,
+            continuation_index=0,
+            font_size=12,
+            measured_height=40,
+            line_count=1,
+            text_start=0,
+            text_end=14,
+            text="duplicate text",
+            state=PlacementState.COMPLETE,
+        ),
+        PlacementSegment(
+            occurrence_index=2,
+            paragraph_id="missing",
+            source_page_number=1,
+            target_page_number=1,
+            target_rect=missing_rect,
+            continuation_index=0,
+            font_size=12,
+            measured_height=40,
+            line_count=1,
+            text_start=0,
+            text_end=14,
+            text="duplicate text",
+            state=PlacementState.COMPLETE,
+        ),
+    )
+    layout = LayoutPlan(
+        schema_version="1.0",
+        source_page_number=1,
+        font_path="unused.ttf",
+        font_size=12,
+        line_height=1.2,
+        paragraph_spacing=0,
+        regions=(FlowRegion(1, Rect(30, 30, 270, 200), 0, 0),),
+        paragraphs=(),
+        segments=segments,
+        metrics=LayoutMetrics(2, 28, 2, 0, 2, 0, 0, 0),
+    )
+
+    with pytest.raises(
+        PocValidationError,
+        match=(
+            r"occurrence 2, continuation 0.*local_extracted=''.*"
+            r"region_diagnostic=.*duplicate text"
+        ),
+    ):
+        _validate_saved_output(output, layout)
 
 
 def _source_pdf(path: Path) -> Path:

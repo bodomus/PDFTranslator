@@ -164,13 +164,16 @@ Validation has three levels:
 
 1. Pre-mutation exact accounting: concatenated segment text and offsets must equal each input
    paragraph exactly once.
-2. Post-save validation: reopen the PDF, validate page count, extract each planned body region,
-   and require every normalized segment to be present on its planned target page.
+2. Post-save validation: reopen the PDF, validate page count, extract each segment from a padded
+   clip around its exact target rectangle, and require its normalized text in that local clip.
+   Region-wide extraction remains diagnostic and contributes aggregate metrics, but is not success
+   evidence.
 3. Visual validation: render normal and debug PDFs to images and inspect boundaries, ordering,
    clipping, collisions, anchors, and page transitions.
 
 For production split paragraphs, validation should retain exact pre-save offsets plus post-save
-per-region segment evidence. A whole-page substring is not enough because it cannot prove locality.
+segment-local evidence. Region/page-wide substrings are not success evidence because they cannot
+distinguish identical segment text placed at different target rectangles.
 
 ## PoC result
 
@@ -218,8 +221,9 @@ destination conflicts.
 7. **New pages:** create them after safe existing regions are exhausted and only under bounded,
    explicit single-column rules.
 8. **Paragraph identity:** occurrence index + paragraph ID + exact segment character offsets.
-9. **Post-save split validation:** validate every segment in its target region and reconstruct the
-   paragraph from ordered offsets.
+9. **Post-save split validation:** validate every segment in a padded clip around its exact target
+   rectangle and reconstruct the paragraph from ordered offsets. Region/page extraction is
+   diagnostic only.
 10. **Diagnostics mapping:** `LayoutPlan.paragraphs` and `segments` provide the direct source-to-
     target relation; metrics summarize completeness.
 11. **Unsupported in PDFTR-23:** unsafe/unknown pages, arbitrary multi-column layouts, tables,

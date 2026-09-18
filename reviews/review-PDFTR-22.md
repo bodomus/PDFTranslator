@@ -28,8 +28,8 @@ emits JSON evidence, and produces selectable normal/debug PDFs.
 - Page policy: hybrid existing safe regions, then bounded inserted pages.
 - Anchors: headers, page numbers, figures, drawings, captions, and footnotes stay outside body flow.
 - Unsupported/ambiguous layouts: fail closed.
-- Post-save validation: target-region segment presence plus exact pre-save reconstruction and visual
-  inspection.
+- Post-save validation: segment-local padded-rectangle presence plus exact pre-save reconstruction
+  and visual inspection. Region-wide extraction is diagnostics only.
 
 The PoC uses composition through a small measurement protocol: pure planning is deterministic and
 fake-testable, while PyMuPDF-specific behavior remains in one adapter. No production CLI or
@@ -46,8 +46,8 @@ renderer coupling was introduced.
 
 ## Validation summary
 
-- Full repository gate: 256 passed, 1 skipped, coverage 88.70%.
-- Focused reflow/rendering suite: 26 passed.
+- Full repository gate: 257 passed, 1 skipped, coverage 88.70%.
+- Focused reflow/rendering suite: 27 passed.
 - Wiki lint: 13 pages, 69 links, no errors/warnings.
 - Ruff and production/PoC mypy checks: passed.
 - CRG rebuilt; Graphify refreshed and queried; important conclusions source-verified.
@@ -55,13 +55,17 @@ renderer coupling was introduced.
 
 ## Review findings
 
-1. The ticket hypothesis was refined rather than assumed: current Robitzsch overflow is a footnote
+1. A follow-up regression found that region-wide substring validation could falsely accept a
+   missing segment when another segment in the same region had identical text. Validation now
+   requires each segment in its own padded target rectangle; a duplicate-text regression proves
+   that a physically missing second segment fails closed.
+2. The ticket hypothesis was refined rather than assumed: current Robitzsch overflow is a footnote
    problem, not a body-prose overflow problem.
-2. Short-document repeated-element evidence misclassifies running matter as body; PDFTR-23 must not
+3. Short-document repeated-element evidence misclassifies running matter as body; PDFTR-23 must not
    auto-flow by `ParagraphKind.BODY` alone.
-3. Extraction success is necessary but insufficient for layout quality; visual rendering remains a
+4. Extraction success is necessary but insufficient for layout quality; visual rendering remains a
    required gate.
-4. PDFTR-23 body reflow should not claim that it will make the present Robitzsch artifact
+5. PDFTR-23 body reflow should not claim that it will make the present Robitzsch artifact
    publishable while footnote pagination remains deferred.
 
 ## Recommended PDFTR-23 scope

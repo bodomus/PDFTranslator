@@ -40,8 +40,9 @@ or otherwise unsafe layouts fail closed.
 
 Planning is pure and precedes PDF mutation. Concatenating ordered segment ranges must reproduce
 each exact translated paragraph once. Exhausted regions raise a capacity error rather than return a
-partial plan. Saved output is reopened, segment text is checked in its target body region, and a
-separate debug PDF can show regions and continuation boxes.
+partial plan. Saved output is reopened, every segment is checked in a padded clip around its exact
+target rectangle, and a separate debug PDF can show regions and continuation boxes. Region-wide
+extraction is diagnostic only and cannot establish segment success.
 
 ## Page policy
 

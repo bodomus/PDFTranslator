@@ -90,6 +90,10 @@ ProjectWiki, and changelog. No cache/schema/translation/OCR/production CLI contr
 
 ## Changes
 
+- Hardened follow-up: post-save success evidence is now segment-local. Each placement is extracted
+  from a padded clip around `PlacementSegment.target_rect`; region-wide extraction remains only an
+  aggregate diagnostic. A duplicate-text regression proves that one physical occurrence cannot
+  satisfy two planned segments.
 - Added typed content disposition, region, paragraph, continuation, metrics, and plan models.
 - Added a pure planner with word-boundary binary search, single-token character fallback, exact
   range reconstruction, one-column validation, and capacity failure rather than partial output.
@@ -147,10 +151,10 @@ remain under ignored repository-local `temp/pdftr22/` and are not committed.
 
 ## Validation
 
-- Focused tests: `tests/test_reflow_poc.py tests/test_rendering.py` — 26 passed.
-- PoC-specific tests: 6 passed.
+- Focused tests: `tests/test_reflow_poc.py tests/test_rendering.py` — 27 passed.
+- PoC-specific tests: 7 passed, including the duplicate-text segment-local regression.
 - Controlled real-artifact run: passed without model/CUDA execution.
-- PDF reopen/selectable-text/segment-region validation: passed.
+- PDF reopen/selectable-text/segment-local validation: passed.
 - Poppler PNG visual validation: initial overlap found; corrected output and debug pages inspected
   with no remaining overlap/clipping.
 - Wiki lint: 13 pages, 69 links, 0 errors, 0 warnings.
@@ -159,7 +163,7 @@ remain under ignored repository-local `temp/pdftr22/` and are not committed.
 - mypy production source: passed for 84 source files.
 - mypy isolated PoC: passed for 5 source files; PyMuPDF's untyped calls are explicitly scoped out
   in its adapter while typed project boundaries remain checked.
-- Full `scripts/check.ps1`: 256 passed, 1 skipped, total coverage 88.70%.
+- Full `scripts/check.ps1`: 257 passed, 1 skipped, total coverage 88.70%.
 - Real-model validation: not rerun; reused completed artifact as required.
 - CUDA validation: not rerun; no model/device change.
 - OCR integration validation: not applicable.

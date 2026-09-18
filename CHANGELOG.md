@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Made the PDFTR-22 reflow PoC post-save validation segment-local, so identical text in another
+  placement cannot falsely prove that a missing segment was saved; region extraction is now
+  diagnostic-only evidence.
 - Enforced strict schema 1.3 paragraph render completeness: every logical paragraph now has an
   explicit terminal state, required overflow aborts before publication with occurrence-level
   diagnostics, policy-excluded units are accounted for, and failed debug layouts remain separate
