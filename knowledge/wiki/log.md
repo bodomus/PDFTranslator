@@ -20,6 +20,9 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-18
 
+- Promoted single-column body/heading reflow into production with conservative eligibility,
+  Strategy A inserted continuation pages, baseline-safe exact segments, anchor protection,
+  segment-local validation, and explicit footnote/unsupported-layout limits.
 - Hardened PDFTR-22 post-save validation from region-wide substring checks to padded
   segment-target clips, preventing duplicate text elsewhere in a region from masking a missing
   placement.

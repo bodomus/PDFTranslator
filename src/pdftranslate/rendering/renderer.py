@@ -34,7 +34,17 @@ from pdftranslate.rendering.models import (
     RenderOptions,
     RenderResult,
     RenderState,
+    RenderStrategy,
 )
+from pdftranslate.rendering.reflow.models import FlowRegion, LayoutPlan, Rect
+from pdftranslate.rendering.reflow.planner import CapacityError, plan_flow
+from pdftranslate.rendering.reflow.pymupdf_layout import (
+    PyMuPdfMeasurer,
+    insert_continuation_pages,
+    insert_reflow_segments,
+    validate_saved_segments,
+)
+from pdftranslate.rendering.reflow.regions import discover_reflow_page
 from pdftranslate.repeated import RepeatedElementPolicy
 
 _FONT_NAME = "PDFTranslateFont"
@@ -129,7 +139,15 @@ class PdfRenderer:
         try:
             document = _open_source(source)
             try:
-                units_by_page = _render_units_by_page(translated)
+                (
+                    reflow_plans,
+                    reflow_occurrences,
+                    final_page_by_source,
+                    unsupported_pages,
+                ) = _plan_reflow_document(document, translated, selected_font, settings)
+                units_by_page = _render_units_by_page(
+                    translated, excluded_occurrences=reflow_occurrences
+                )
                 plans_by_source_index: dict[int, list[_BlockPlan]] = {}
                 for page_model in translated.pages:
                     page = document[page_model.source_index]
@@ -146,7 +164,13 @@ class PdfRenderer:
                     plans_by_source_index[page_model.source_index] = page_plans
                     warnings.extend(page_warnings)
 
-                block_results = _render_results(translated, plans, settings.min_font_size)
+                block_results = _render_results(
+                    translated,
+                    plans,
+                    settings.min_font_size,
+                    reflow_plans,
+                    final_page_by_source,
+                )
                 _ensure_render_complete(block_results, source, failed_output, plans)
 
                 if paragraph_mode:
@@ -162,7 +186,7 @@ class PdfRenderer:
                         if not plan.overflow and required_cyrillic_characters((text,)):
                             expected_cyrillic_text.append(
                                 _ExpectedText(
-                                    page_number=page_model.page_number,
+                                    page_number=final_page_by_source[page_model.page_number],
                                     block_id=plan.block.id,
                                     source_text=plan.block.text,
                                     translated_text=text,
@@ -174,24 +198,33 @@ class PdfRenderer:
                                     expanded=plan.expanded,
                                 )
                             )
+                insert_continuation_pages(document, reflow_plans)
+                insert_reflow_segments(document, reflow_plans, selected_font)
                 document.save(str(temporary_output), garbage=4, deflate=True)  # type: ignore[no-untyped-call]
             finally:
                 document.close()  # type: ignore[no-untyped-call]
 
             _validate_saved_pdf(
                 temporary_output,
-                translated.page_count,
+                translated.page_count + sum(item.inserted_pages for item in reflow_plans),
                 expected_cyrillic_text,
                 failed_output=failed_output,
             )
+            validate_saved_segments(temporary_output, reflow_plans)
             if temporary_debug is not None:
-                _write_debug_pdf(temporary_output, temporary_debug, plans)
+                _write_debug_pdf(
+                    temporary_output,
+                    temporary_debug,
+                    plans,
+                    page_numbers=final_page_by_source,
+                )
                 _validate_saved_pdf(
                     temporary_debug,
-                    translated.page_count,
+                    translated.page_count + sum(item.inserted_pages for item in reflow_plans),
                     expected_cyrillic_text,
                     failed_output=None,
                 )
+                validate_saved_segments(temporary_debug, reflow_plans)
 
             temporary_output.replace(output)
             if temporary_debug is not None and debug_output is not None:
@@ -217,7 +250,96 @@ class PdfRenderer:
             file_size=output.stat().st_size,
             warnings=tuple(dict.fromkeys(warnings)),
             blocks=block_results,
+            reflowed_paragraphs=len(reflow_occurrences),
+            reflow_segments=sum(len(item.segments) for item in reflow_plans),
+            continued_paragraphs=sum(item.continued_occurrences for item in reflow_plans),
+            inserted_pages=sum(item.inserted_pages for item in reflow_plans),
+            fixed_layout_paragraphs=sum(
+                item.strategy is RenderStrategy.FIXED_LAYOUT for item in block_results
+            ),
+            unsupported_pages=unsupported_pages,
+            unplaced_text_count=sum(item.unplaced_text_count for item in reflow_plans),
         )
+
+
+def _plan_reflow_document(
+    document: pymupdf.Document,
+    translated: ExtractedDocument,
+    font_path: Path,
+    options: RenderOptions,
+) -> tuple[tuple[LayoutPlan, ...], frozenset[int], dict[int, int], int]:
+    if translated.schema_version != "1.3":
+        return (
+            (),
+            frozenset(),
+            {page.page_number: page.source_index + 1 for page in translated.pages},
+            0,
+        )
+    plans: list[LayoutPlan] = []
+    selected_occurrences: set[int] = set()
+    final_page_by_source: dict[int, int] = {}
+    inserted_before = 0
+    unsupported_pages = 0
+    for page_model in translated.pages:
+        final_page = page_model.source_index + 1 + inserted_before
+        final_page_by_source[page_model.page_number] = final_page
+        source_page = document[page_model.source_index]
+        discovered = discover_reflow_page(
+            translated,
+            page_model,
+            source_page,
+            default_font_size=options.default_font_size,
+            min_font_size=options.min_font_size,
+            line_height=options.line_height,
+        )
+        if discovered is None:
+            if _page_has_flow_candidate(translated, page_model.page_number):
+                unsupported_pages += 1
+            continue
+        remaining_pages = options.max_reflow_pages - inserted_before
+        last_capacity_error: CapacityError | None = None
+        with PyMuPdfMeasurer(
+            float(source_page.rect.width), float(source_page.rect.height), font_path
+        ) as measurer:
+            for added_pages in range(remaining_pages + 1):
+                regions = tuple(
+                    FlowRegion(
+                        target_page_number=final_page + offset,
+                        rect=discovered.region_rect,
+                        column_index=0,
+                        order=offset,
+                        source_page_number=page_model.page_number,
+                        created_page=offset > 0,
+                    )
+                    for offset in range(added_pages + 1)
+                )
+                try:
+                    plan = plan_flow(discovered.paragraphs, regions, measurer)
+                except CapacityError as error:
+                    last_capacity_error = error
+                    continue
+                plans.append(plan)
+                selected_occurrences.update(discovered.occurrence_indexes)
+                inserted_before += plan.inserted_pages
+                break
+            else:
+                assert last_capacity_error is not None
+                raise RenderCompletenessError(str(last_capacity_error)) from last_capacity_error
+    return (
+        tuple(plans),
+        frozenset(selected_occurrences),
+        final_page_by_source,
+        unsupported_pages,
+    )
+
+
+def _page_has_flow_candidate(document: ExtractedDocument, page_number: int) -> bool:
+    return any(
+        paragraph.anchor_page_number == page_number
+        and paragraph.kind.value in {"body", "heading"}
+        and _paragraph_policy(document, paragraph) is RepeatedElementPolicy.TRANSLATE
+        for paragraph in document.paragraphs
+    )
 
 
 def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
@@ -235,10 +357,14 @@ def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
 
 def _render_units_by_page(
     translated: ExtractedDocument,
+    *,
+    excluded_occurrences: frozenset[int] = frozenset(),
 ) -> dict[int, tuple[tuple[int, TextBlock], ...]]:
     grouped: dict[int, list[tuple[int, TextBlock]]] = {}
     if translated.schema_version == "1.3":
         for unit_index, paragraph in enumerate(translated.paragraphs):
+            if unit_index in excluded_occurrences:
+                continue
             if _paragraph_policy(translated, paragraph) in {
                 RepeatedElementPolicy.PRESERVE,
                 RepeatedElementPolicy.SKIP,
@@ -637,11 +763,22 @@ def _block_color(block: TextBlock) -> tuple[float, float, float]:
     )
 
 
-def _write_debug_pdf(source: Path, output: Path, plans: list[_BlockPlan]) -> None:
+def _write_debug_pdf(
+    source: Path,
+    output: Path,
+    plans: list[_BlockPlan],
+    *,
+    page_numbers: dict[int, int] | None = None,
+) -> None:
     document = pymupdf.open(source)  # type: ignore[no-untyped-call]
     try:
         for plan in plans:
-            page = document[plan.page_number - 1]
+            target_page = (
+                page_numbers.get(plan.page_number, plan.page_number)
+                if page_numbers
+                else plan.page_number
+            )
+            page = document[target_page - 1]
             page.draw_rect(plan.source_rect, color=(0.1, 0.4, 1.0), width=0.8, overlay=True)
             final_color = (1.0, 0.1, 0.1) if plan.overflow else (0.1, 0.7, 0.2)
             if plan.expanded:
@@ -775,8 +912,46 @@ def _render_results(
     translated: ExtractedDocument,
     plans: list[_BlockPlan],
     min_font_size: float,
+    reflow_plans: tuple[LayoutPlan, ...] = (),
+    final_page_by_source: dict[int, int] | None = None,
 ) -> tuple[BlockRenderResult, ...]:
-    results = {plan.unit_index: _result_from_plan(plan, min_font_size) for plan in plans}
+    results = {
+        plan.unit_index: _result_from_plan(
+            plan,
+            min_font_size,
+            target_page=(final_page_by_source or {}).get(plan.page_number, plan.page_number),
+        )
+        for plan in plans
+    }
+    for layout in reflow_plans:
+        for flow_paragraph in layout.paragraphs:
+            segments = tuple(
+                item
+                for item in layout.segments
+                if item.occurrence_index == flow_paragraph.occurrence_index
+            )
+            results[flow_paragraph.occurrence_index] = BlockRenderResult(
+                unit_index=flow_paragraph.occurrence_index,
+                page_number=flow_paragraph.source_page_number,
+                block_id=flow_paragraph.paragraph_id,
+                policy=RepeatedElementPolicy.TRANSLATE,
+                state=RenderState.RENDERED,
+                source_bbox=_bbox(_reflow_rect(flow_paragraph.source_rect)),
+                final_bbox=_bbox(_reflow_rect(segments[0].target_rect)),
+                initial_font_size=flow_paragraph.style.font_size,
+                font_size=flow_paragraph.style.font_size,
+                min_font_size=min_font_size,
+                fitting_attempts=1,
+                expanded=False,
+                overflow=False,
+                translated_character_count=len(flow_paragraph.text),
+                strategy=RenderStrategy.REFLOW_LAYOUT,
+                target_pages=tuple(dict.fromkeys(item.target_page_number for item in segments)),
+                segment_count=len(segments),
+                continuation_count=max(0, len(segments) - 1),
+                target_rects=tuple(_bbox(_reflow_rect(item.target_rect)) for item in segments),
+                text_offsets=tuple((item.text_start, item.text_end) for item in segments),
+            )
     if translated.schema_version == "1.3":
         for unit_index, paragraph in enumerate(translated.paragraphs):
             policy = _paragraph_policy(translated, paragraph)
@@ -811,6 +986,12 @@ def _render_results(
                 expanded=False,
                 overflow=False,
                 translated_character_count=len(paragraph.translated_text or ""),
+                strategy=RenderStrategy.ANCHORED_PRESERVED,
+                target_pages=(
+                    (final_page_by_source or {}).get(
+                        paragraph.anchor_page_number, paragraph.anchor_page_number
+                    ),
+                ),
             )
     else:
         unit_index = 0
@@ -852,6 +1033,7 @@ def _unplanned_result(
         expanded=False,
         overflow=False,
         translated_character_count=translated_character_count,
+        strategy=RenderStrategy.UNSUPPORTED,
     )
 
 
@@ -897,7 +1079,9 @@ def _completeness_failure_detail(result: BlockRenderResult) -> str:
     )
 
 
-def _result_from_plan(plan: _BlockPlan, min_font_size: float) -> BlockRenderResult:
+def _result_from_plan(
+    plan: _BlockPlan, min_font_size: float, *, target_page: int | None = None
+) -> BlockRenderResult:
     return BlockRenderResult(
         unit_index=plan.unit_index,
         page_number=plan.page_number,
@@ -913,7 +1097,16 @@ def _result_from_plan(plan: _BlockPlan, min_font_size: float) -> BlockRenderResu
         expanded=plan.expanded,
         overflow=plan.overflow,
         translated_character_count=len(cast(str, plan.block.translated_text)),
+        strategy=RenderStrategy.FIXED_LAYOUT,
+        target_pages=(target_page or plan.page_number,),
+        segment_count=0 if plan.overflow else 1,
+        target_rects=() if plan.overflow else (_bbox(plan.final_rect),),
+        text_offsets=(() if plan.overflow else ((0, len(cast(str, plan.block.translated_text))),)),
     )
+
+
+def _reflow_rect(rect: Rect) -> pymupdf.Rect:
+    return pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y1)  # type: ignore[no-untyped-call]
 
 
 def _rect(box: BoundingBox) -> pymupdf.Rect:

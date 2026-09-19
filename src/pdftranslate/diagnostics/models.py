@@ -84,6 +84,14 @@ class BlockDiagnostic(DomainModel):
     foreign_language_reasons: tuple[str, ...] = ()
     preserved_foreign_spans: int = Field(default=0, ge=0)
     translator_called: bool | None = None
+    render_strategy: Literal[
+        "fixed_layout", "reflow_layout", "anchored_preserved", "unsupported"
+    ] = "fixed_layout"
+    target_pages: tuple[int, ...] = ()
+    segment_count: int = Field(default=0, ge=0)
+    continuation_count: int = Field(default=0, ge=0)
+    target_rects: tuple[BoundingBox, ...] = ()
+    text_offsets: tuple[tuple[int, int], ...] = ()
 
 
 class PageDiagnostic(DomainModel):
@@ -139,6 +147,13 @@ class ReportSummary(DomainModel):
     preserved_foreign_units: int = Field(default=0, ge=0)
     translated_with_preserved_foreign_spans: int = Field(default=0, ge=0)
     preserved_foreign_spans: int = Field(default=0, ge=0)
+    reflowed_paragraphs: int = Field(default=0, ge=0)
+    reflow_segments: int = Field(default=0, ge=0)
+    continued_paragraphs: int = Field(default=0, ge=0)
+    inserted_pages: int = Field(default=0, ge=0)
+    fixed_layout_paragraphs: int = Field(default=0, ge=0)
+    unsupported_pages: int = Field(default=0, ge=0)
+    unplaced_text_count: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

@@ -61,5 +61,7 @@ Replaying the production fixed-layout planner produced 40 rendered and 21 overfl
 the overflow units matched the missing regions observed on pages 1, 3, and 4. PDFTR-22 later
 source-verified that all 21 current overflow occurrences are classified as footnotes; all 26 body
 occurrences render under the shrink-to-fit policy. PDFTR-20 correctly rejects the incomplete result.
-The separate [Body-text reflow architecture](../architecture/reflow-layout.md) proves cross-page
-body flow but deliberately leaves footnote pagination fail-closed.
+The production [Body-text reflow architecture](../architecture/reflow-layout.md) adds exact
+cross-page segments for confidently classified body/heading occurrences. Its zero-unplaced plan and
+segment-local saved checks compose with this gate; footnote pagination deliberately remains
+fail-closed.

@@ -48,9 +48,23 @@ Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Exi
 `knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
 durable new knowledge should change after a non-trivial ticket.
 
+## Production body-text reflow
+
+Schema 1.3 rendering automatically uses production reflow for confidently classified
+single-column book pages. Body prose and one basic heading style flow through the existing source
+body region and then through bounded blank continuation pages inserted immediately after the
+source page. Headers, page numbers, images, drawings, captions, and footnotes remain anchored or on
+the fixed-layout path. Ambiguous, multi-column, intersecting, and otherwise unsafe pages never enter
+reflow automatically.
+
+Each continuation is recorded as an exact occurrence-backed segment and validated after save in a
+padded clip around its own target rectangle. Any unplaced text, fixed-layout overflow, or missing
+saved segment prevents atomic publication. Footnote pagination is not included, so footnote
+overflow remains fatal.
+
 ## Reflow architecture proof of concept
 
-PDFTR-22 provides an isolated, non-production body-text reflow demonstrator under
+PDFTR-22 also provides an isolated historical body-text reflow demonstrator under
 `scripts/reflow_poc/`. It consumes a completed schema 1.3 artifact, an explicit reviewed body region,
 and explicit paragraph occurrence indexes; it emits a selectable diagnostic PDF plus a typed JSON
 layout plan without changing the normal renderer.
@@ -66,9 +80,10 @@ uv run python -m scripts.reflow_poc SOURCE.pdf TRANSLATED.json `
   --debug-output .\temp\pdftr22\reflow-debug.pdf
 ```
 
-This command is intentionally fail-closed and limited to reviewed single-column body prose. It is
-not wired into `pdftranslate`; see [`docs/reflow-architecture.md`](docs/reflow-architecture.md) for
-the evidence, unsupported layouts, and proposed PDFTR-23 production boundary.
+This command is intentionally fail-closed and limited to reviewed single-column body prose. Normal
+production rendering does not import it; see
+[`docs/reflow-architecture.md`](docs/reflow-architecture.md) for the production boundary, evidence,
+and unsupported layouts.
 
 ## Windows setup
 

@@ -2,9 +2,11 @@
 
 ## Status
 
-PDFTR-22 proves an isolated architecture for single-column body prose. It does not replace or
-weaken the production fixed-layout renderer. The executable proof of concept is under
-`scripts/reflow_poc/`; production integration belongs to PDFTR-23.
+PDFTR-23 promotes the PDFTR-22 proof into a production boundary under
+`src/pdftranslate/rendering/reflow/`. The normal renderer automatically selects reflow only for
+confidently classified single-column body prose and one basic heading style. The fixed-layout
+renderer remains authoritative for other content, and the isolated executable PoC remains under
+`scripts/reflow_poc/` as historical evidence rather than a production dependency.
 
 ## Problem and verified boundary
 
@@ -47,7 +49,7 @@ segments are the physical placements.
 
 ## Content classification
 
-| Category | PoC | PDFTR-23 |
+| Category | PoC | Production PDFTR-23 |
 | --- | --- | --- |
 | Body prose | flowable | flowable |
 | Section/chapter headings | anchored | flowable with one basic heading style |
@@ -62,9 +64,12 @@ segments are the physical placements.
 | Figures/images | anchored | preserve and exclude occupied geometry from flow regions |
 | Unknown/ambiguous | unsupported by default | fail closed |
 
-An explicit reviewed PoC selection can override reconstruction ambiguity for named occurrences. It
-cannot override paragraph kind, repeated-element translation policy, source-page identity, region
-containment, or image/drawing intersection checks.
+Production has no manual ambiguity override. Partial/isolated ambiguous reconstruction, multiple
+columns, unstable body geometry, unrecognized policies, or an image/drawing intersection make a
+page ineligible. A group of at least three occurrences whose boundaries are all ambiguous may
+become eligible only when the complete page-level evidence still proves one stable column, known
+exclusions, and no object intersection. Such content otherwise stays on the fixed path only when
+that path is complete; otherwise publication fails.
 
 ## Robitzsch page evidence
 
@@ -122,14 +127,14 @@ The PyMuPDF adapter reserves one line of baseline safety beyond reported used he
 found that this is necessary: extraction succeeded with a smaller reserve while the final line of
 one continuation visually collided with the next paragraph.
 
-## Page strategy
+## Production page strategy
 
-Existing pages best preserve pagination and anchors but cannot guarantee translated capacity. New
-pages only simplify layout but discard source-page relationships. PDFTR-23 should therefore use a
-**hybrid** strategy: consume explicitly classified body regions on existing pages in document order,
-then insert pages only when safe source capacity is exhausted. Inserted pages inherit page geometry
-and a defined body region/style. Headers and page numbers may be regenerated only under a separate
-explicit policy. A page that cannot be classified does not receive flow content.
+Production uses **Strategy A**: consume the explicit body region on a source page, then insert a
+bounded number of blank continuation pages immediately after that source page. Each inserted page
+inherits its source page geometry and body region but does not regenerate a running header or page
+number. Final page indexes are computed with earlier insertions included, so continuation from page
+N cannot overwrite source content from page N+1. A page that cannot be classified receives no flow
+content.
 
 The PoC uses this rule in a controlled form: it copies source page 3, preserves its running title,
 page number, and footnotes, redacts only selected body fragments, fills the reviewed body region,
@@ -137,13 +142,15 @@ and appends one blank continuation page with the same geometry.
 
 ## Source-content preservation
 
-- Source body text is redacted only through retained schema 1.3 fragment rectangles.
-- Anchored text is left untouched in the PoC.
+- Source body text is redacted only through retained schema 1.3 fragment rectangles and only after
+  both fixed and reflow plans are complete.
+- Repeated headers/page numbers with preserve policy are left untouched; other non-flow units retain
+  fixed-layout completeness behavior.
 - Images and vector drawings are preserved; a candidate region intersecting either fails before
   planning.
 - The PoC does not rasterize or flatten pages. Inserted text remains selectable.
-- The controlled source page has a white body background. Production must sample/preserve
-  backgrounds or reject unsafe regions rather than assume white.
+- Existing-page redactions reuse production background sampling. Inserted blank pages are white by
+  explicit PDFTR-23 policy.
 - The source PDF is immutable. PoC PDF, debug PDF, and JSON plan use separate destinations and
   temporary sibling writes.
 
@@ -230,9 +237,9 @@ destination conflicts.
     sidebars, floating figures, verse, complex math, and footnote pagination.
 12. **Unclassifiable page:** fail closed without redaction, insertion, or final publication.
 
-## Proposed PDFTR-23 scope
+## Implemented PDFTR-23 boundary
 
-Implement production body-text reflow for confidently classified single-column book pages:
+Production body-text reflow covers confidently classified single-column book pages:
 
 - body prose and one basic heading style;
 - ordered existing-page regions with bounded inserted-page continuation;
@@ -241,6 +248,12 @@ Implement production body-text reflow for confidently classified single-column b
 - selectable/searchable output and split-segment saved-PDF validation;
 - deterministic fake-backed tests plus controlled real-PDF validation.
 
-Footnote pagination remains outside PDFTR-23 and must continue to fail closed. Consequently,
-PDFTR-23 body reflow alone is not expected to make the current four-page Robitzsch artifact pass;
-a separate footnote-layout scope is required.
+The pure planner reserves a baseline before measurement, applies a minimal heading-plus-following-
+body orphan rule, and emits exact segment offsets. Saved candidates are reopened once and every
+segment is checked only in its padded target clip; page-wide text is diagnostic. Render results and
+reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
+pages, unsupported pages, and zero-unplaced state.
+
+Footnote pagination remains outside PDFTR-23 and continues to fail closed. Consequently, body
+reflow alone does not make the current four-page Robitzsch artifact publishable; PDFTR-24 owns the
+remaining footnote-layout scope.

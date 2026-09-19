@@ -20,6 +20,15 @@ class RenderState(StrEnum):
     FAILED = "failed"
 
 
+class RenderStrategy(StrEnum):
+    """Physical placement strategy selected for a logical occurrence."""
+
+    FIXED_LAYOUT = "fixed_layout"
+    REFLOW_LAYOUT = "reflow_layout"
+    ANCHORED_PRESERVED = "anchored_preserved"
+    UNSUPPORTED = "unsupported"
+
+
 @dataclass(frozen=True)
 class RenderOptions:
     """Deterministic layout and publication behavior."""
@@ -33,6 +42,7 @@ class RenderOptions:
     force_source_mismatch: bool = False
     debug_layout: bool = False
     default_font_size: float = 11.0
+    max_reflow_pages: int = 4
 
     def __post_init__(self) -> None:
         if self.min_font_size <= 0:
@@ -45,6 +55,8 @@ class RenderOptions:
             raise ValueError("redaction_padding cannot be negative")
         if self.default_font_size < self.min_font_size:
             raise ValueError("default_font_size cannot be below min_font_size")
+        if self.max_reflow_pages < 0:
+            raise ValueError("max_reflow_pages cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,12 @@ class BlockRenderResult:
     expanded: bool
     overflow: bool
     translated_character_count: int
+    strategy: RenderStrategy = RenderStrategy.FIXED_LAYOUT
+    target_pages: tuple[int, ...] = ()
+    segment_count: int = 0
+    continuation_count: int = 0
+    target_rects: tuple[BoundingBox, ...] = ()
+    text_offsets: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +99,13 @@ class RenderResult:
     file_size: int
     warnings: tuple[str, ...]
     blocks: tuple[BlockRenderResult, ...]
+    reflowed_paragraphs: int = 0
+    reflow_segments: int = 0
+    continued_paragraphs: int = 0
+    inserted_pages: int = 0
+    fixed_layout_paragraphs: int = 0
+    unsupported_pages: int = 0
+    unplaced_text_count: int = 0
 
     @property
     def expected_units(self) -> int:

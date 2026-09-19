@@ -49,11 +49,11 @@ For schema 1.3, stage 5 first plans and accounts for every logical paragraph occ
 overflow fails before PDF mutation or candidate creation; see
 [Rendering completeness](../failure-modes/render-completeness.md).
 
-PDFTR-22 keeps that fixed-layout production path unchanged and proves a separate typed body-reflow
-planner. It maps paragraph occurrences to ordered continuation segments across explicit safe page
-regions; see [Body-text reflow architecture](reflow-layout.md). The recommended production path is
-hybrid existing-page plus bounded inserted-page flow. Unsafe or unclassified pages remain
-fail-closed.
+PDFTR-23 composes a dedicated production body-reflow boundary with the fixed-layout renderer. It
+maps confidently classified paragraph occurrences to exact ordered continuation segments, consumes
+the source body region, and inserts bounded continuation pages immediately after that source page;
+see [Body-text reflow architecture](reflow-layout.md). Unsafe or unclassified pages remain fixed
+only when complete, and required overflow remains fail-closed.
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived
 workspace per document. Advanced inspect, extract, translate, render, benchmark, and validation

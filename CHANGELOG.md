@@ -24,6 +24,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Production single-column body reflow with conservative structured eligibility, one basic heading
+  style, exact occurrence-backed continuation segments, bounded pages inserted after their source
+  page, protected anchors, zero-unplaced planning, segment-local saved-PDF validation, strategy
+  diagnostics, and fail-closed fallback for footnotes and unsafe layouts.
+
 - Isolated PDFTR-22 body-text reflow proof of concept with typed flow regions, occurrence-preserving
   continuation segments, exact character accounting, bounded hybrid page creation, selectable PDF
   output, machine-readable plans, debug visualization, and deterministic tests.
