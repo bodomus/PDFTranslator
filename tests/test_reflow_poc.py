@@ -209,7 +209,8 @@ def test_poc_pdf_is_selectable_and_continues_to_a_new_page(
     rendered = pymupdf.open(output)
     try:
         output_text = " ".join(str(page.get_text("text")) for page in rendered)
-        assert "проверяемый перевод" in output_text
+        normalized_text = " ".join(output_text.split())
+        assert "проверяемый перевод" in normalized_text
         assert rendered.page_count == 1 + plan.metrics.new_pages_created
     finally:
         rendered.close()

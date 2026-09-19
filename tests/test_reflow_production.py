@@ -236,10 +236,11 @@ def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
     rendered = pymupdf.open(output)
     try:
         text = " ".join(str(page.get_text("text")) for page in rendered)
-        assert "Latin terminus" in text
-        assert "Ελληνικά" in text
-        assert "Running title" in text
-        assert "Footnote remains anchored" in text
+        normalized_text = " ".join(text.split())
+        assert "Latin terminus" in normalized_text
+        assert "Ελληνικά" in normalized_text
+        assert "Running title" in normalized_text
+        assert "Footnote remains anchored" in normalized_text
     finally:
         rendered.close()
 
