@@ -1,4 +1,4 @@
-# Body-text reflow architecture
+# Body and footnote reflow architecture
 
 ## Status
 
@@ -7,6 +7,10 @@ PDFTR-23 promotes the PDFTR-22 proof into a production boundary under
 confidently classified single-column body prose and one basic heading style. The fixed-layout
 renderer remains authoritative for other content, and the isolated executable PoC remains under
 `scripts/reflow_poc/` as historical evidence rather than a production dependency.
+
+PDFTR-24 extends that boundary to conservatively discovered, ordered footnote groups. It uses the
+source footnote region first and then bounded dedicated continuation pages, coordinated through one
+document layout plan with body continuation pages.
 
 ## Problem and verified boundary
 
@@ -29,9 +33,9 @@ logical-paragraph occurrence identity across continuations, accounts for every t
 before PDF mutation, keeps text selectable, preserves anchored source content by policy, emits
 typed evidence, and fails closed for unsafe layouts or insufficient capacity.
 
-The first implementation does not solve arbitrary columns, tables, sidebars, floating figures,
+The production implementation does not solve arbitrary columns, tables, sidebars, floating figures,
 mathematical layout, verse, bibliography layout, automatic font matching, full typography,
-complete footnote pagination, OCR, translation, GUI, or cloud layout services.
+multi-column footnotes, endnotes, marginal notes, OCR, translation, GUI, or cloud layout services.
 
 ## Terminology and units
 
@@ -55,7 +59,7 @@ segments are the physical placements.
 | Section/chapter headings | anchored | flowable with one basic heading style |
 | Block quotations | deferred | unsupported unless explicitly classified |
 | Verse/poetry | unsupported | fail closed |
-| Footnotes | anchored/deferred | fail closed; dedicated pagination follows later |
+| Footnotes | anchored/deferred | ordered source-region flow plus bounded dedicated continuation |
 | Running headers | anchored/preserved | preserve or regenerate by explicit policy |
 | Page numbers | anchored/preserved | preserve or regenerate by explicit policy |
 | Watermarks | anchored/preserved | preserve |
@@ -140,6 +144,29 @@ The PoC uses this rule in a controlled form: it copies source page 3, preserves 
 page number, and footnotes, redacts only selected body fragments, fills the reviewed body region,
 and appends one blank continuation page with the same geometry.
 
+## PDFTR-24 footnote continuation strategy
+
+Production uses a hybrid source-attached strategy: each source page's ordered footnote group first
+uses the safely discovered lower-page region. If it does not fit, the remainder continues on one or
+more blank pages inserted before the next original source page. The deterministic order is source
+page, body continuation pages, footnote continuation pages, then the next source page. Continuation
+pages match source geometry and use a conservative full-width region from 8% to 90% of page height;
+they contain no body content and do not regenerate a running header, source page number, or
+separator.
+
+Eligibility requires schema 1.3 `ParagraphKind.FOOTNOTE` occurrences, translate policy, source-page
+and column-zero mappings, an ordered single-column x-range, a safe body-to-footnote gap, bottom
+margin, and no conflicting image or drawing. An existing horizontal separator is treated as an
+anchor: body capacity stops above it, footnote redaction touches only source text fragments, and
+the rule itself remains in the PDF.
+
+`DocumentLayoutPlan` is the single authority for body and footnote plans, inserted-page count, and
+source-to-output page mapping. Body and footnote segment rectangles, fixed-layout units, and
+unselected anchors are checked for collisions before any redaction or insertion. Body and footnote
+continuations have independent document-wide bounds (`max_reflow_pages=4` and
+`max_footnote_pages=8`) because the four-page Robitzsch artifact needs one body page and four
+footnote pages; sharing the body limit would reject otherwise complete content.
+
 ## Source-content preservation
 
 - Source body text is redacted only through retained schema 1.3 fragment rectangles and only after
@@ -182,6 +209,21 @@ For production split paragraphs, validation should retain exact pre-save offsets
 segment-local evidence. Region/page-wide substrings are not success evidence because they cannot
 distinguish identical segment text placed at different target rectangles.
 
+Footnote occurrences are reported with `reflow_footnote`, source occurrence index and page,
+paragraph ID, target pages and rectangles, segment count, continuation count, offsets, and terminal
+state. Document totals distinguish reflowed footnotes, footnote segments and continuations,
+continuation pages, fixed-layout and unsupported footnote units, and unplaced text.
+
+## PDFTR-24 controlled result
+
+The current four-page Robitzsch artifact now publishes as nine pages. All 61 required occurrences
+reach terminal rendered states: 7 body-reflow occurrences, 35 footnote-reflow occurrences, and 19
+fixed-layout occurrences. Planning inserts one body continuation page and four footnote
+continuation pages, with zero overflow and zero unplaced text. The 21 footnote overflows measured
+before PDFTR-24 are reduced to zero. Poppler PNG review covered output pages 1 and 3 plus body and
+footnote continuation pages; it confirmed preserved anchors, deterministic transitions, selectable
+text, and no clipping or overlap.
+
 ## PoC result
 
 Controlled input: Robitzsch page 3, occurrence indexes 38–41, reviewed region
@@ -222,7 +264,8 @@ destination conflicts.
    object-intersection checks; never whitespace alone.
 3. **Headings:** distinguish by reconstruction/style evidence; anchor them in the PoC and support a
    basic explicit heading style in PDFTR-23.
-4. **Footnotes:** preserve/anchor and fail closed in PDFTR-23; do not inject them into body flow.
+4. **Footnotes:** keep them separate from body flow; PDFTR-24 uses an ordered source-page group and
+   bounded dedicated continuation pages.
 5. **Images/drawings:** keep them anchored and subtract/reject intersecting regions.
 6. **Cross-page flow:** yes, only through ordered, safely classified regions.
 7. **New pages:** create them after safe existing regions are exhausted and only under bounded,
@@ -233,11 +276,11 @@ destination conflicts.
    diagnostic only.
 10. **Diagnostics mapping:** `LayoutPlan.paragraphs` and `segments` provide the direct source-to-
     target relation; metrics summarize completeness.
-11. **Unsupported in PDFTR-23:** unsafe/unknown pages, arbitrary multi-column layouts, tables,
-    sidebars, floating figures, verse, complex math, and footnote pagination.
+11. **Unsupported:** unsafe/unknown pages, arbitrary multi-column layouts, multi-column footnotes,
+    endnotes, marginal notes, tables, sidebars, floating figures, verse, and complex math.
 12. **Unclassifiable page:** fail closed without redaction, insertion, or final publication.
 
-## Implemented PDFTR-23 boundary
+## Implemented production boundary
 
 Production body-text reflow covers confidently classified single-column book pages:
 
@@ -247,6 +290,10 @@ Production body-text reflow covers confidently classified single-column book pag
 - paragraph occurrence/segment diagnostics and strict zero-unplaced completeness;
 - selectable/searchable output and split-segment saved-PDF validation;
 - deterministic fake-backed tests plus controlled real-PDF validation.
+- ordered source-page footnote groups with source-region-first placement and bounded dedicated
+  continuation pages;
+- one authoritative body/footnote page map, pre-mutation collision checks, source separator
+  preservation, and footnote-specific diagnostics.
 
 The pure planner reserves a baseline before measurement, applies a minimal heading-plus-following-
 body orphan rule, and emits exact segment offsets. Saved candidates are reopened once and every
@@ -254,6 +301,6 @@ segment is checked only in its padded target clip; page-wide text is diagnostic.
 reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
 pages, unsupported pages, and zero-unplaced state.
 
-Footnote pagination remains outside PDFTR-23 and continues to fail closed. Consequently, body
-reflow alone does not make the current four-page Robitzsch artifact publishable; PDFTR-24 owns the
-remaining footnote-layout scope.
+PDFTR-24 adds ordered footnote-group pagination without broadening the body eligibility boundary.
+Unsafe or multi-column footnotes remain fixed-layout only when complete; otherwise strict render
+completeness aborts publication before mutation.

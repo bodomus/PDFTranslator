@@ -25,6 +25,7 @@ class RenderStrategy(StrEnum):
 
     FIXED_LAYOUT = "fixed_layout"
     REFLOW_LAYOUT = "reflow_layout"
+    REFLOW_FOOTNOTE = "reflow_footnote"
     ANCHORED_PRESERVED = "anchored_preserved"
     UNSUPPORTED = "unsupported"
 
@@ -43,6 +44,7 @@ class RenderOptions:
     debug_layout: bool = False
     default_font_size: float = 11.0
     max_reflow_pages: int = 4
+    max_footnote_pages: int = 8
 
     def __post_init__(self) -> None:
         if self.min_font_size <= 0:
@@ -57,6 +59,8 @@ class RenderOptions:
             raise ValueError("default_font_size cannot be below min_font_size")
         if self.max_reflow_pages < 0:
             raise ValueError("max_reflow_pages cannot be negative")
+        if self.max_footnote_pages < 0:
+            raise ValueError("max_footnote_pages cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,13 @@ class RenderResult:
     fixed_layout_paragraphs: int = 0
     unsupported_pages: int = 0
     unplaced_text_count: int = 0
+    footnotes_reflowed: int = 0
+    footnote_segments: int = 0
+    continued_footnotes: int = 0
+    footnote_continuation_pages: int = 0
+    footnote_fixed_layout_units: int = 0
+    footnote_unsupported_pages: int = 0
+    footnote_unplaced_text_count: int = 0
 
     @property
     def expected_units(self) -> int:

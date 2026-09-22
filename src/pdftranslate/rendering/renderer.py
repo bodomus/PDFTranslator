@@ -16,7 +16,7 @@ from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.text_block import BoundingBox, TextBlock
 from pdftranslate.pdf import PdfExtractor
 from pdftranslate.pdf.pymupdf_backend import source_identity
-from pdftranslate.reconstruction import LogicalParagraph
+from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
 from pdftranslate.rendering.errors import (
     OutputPdfError,
     RenderCompletenessError,
@@ -36,7 +36,15 @@ from pdftranslate.rendering.models import (
     RenderState,
     RenderStrategy,
 )
-from pdftranslate.rendering.reflow.models import FlowRegion, LayoutPlan, Rect
+from pdftranslate.rendering.reflow.footnotes import discover_footnote_page
+from pdftranslate.rendering.reflow.models import (
+    DocumentLayoutPlan,
+    FlowParagraph,
+    FlowRegion,
+    LayoutPlan,
+    Rect,
+    ReflowContentKind,
+)
 from pdftranslate.rendering.reflow.planner import CapacityError, plan_flow
 from pdftranslate.rendering.reflow.pymupdf_layout import (
     PyMuPdfMeasurer,
@@ -139,12 +147,10 @@ class PdfRenderer:
         try:
             document = _open_source(source)
             try:
-                (
-                    reflow_plans,
-                    reflow_occurrences,
-                    final_page_by_source,
-                    unsupported_pages,
-                ) = _plan_reflow_document(document, translated, selected_font, settings)
+                layout = _plan_reflow_document(document, translated, selected_font, settings)
+                reflow_plans = layout.plans
+                reflow_occurrences = layout.selected_occurrences
+                final_page_by_source = layout.page_map
                 units_by_page = _render_units_by_page(
                     translated, excluded_occurrences=reflow_occurrences
                 )
@@ -163,6 +169,8 @@ class PdfRenderer:
                     plans.extend(page_plans)
                     plans_by_source_index[page_model.source_index] = page_plans
                     warnings.extend(page_warnings)
+
+                _validate_layout_collisions(translated, layout, plans)
 
                 block_results = _render_results(
                     translated,
@@ -206,7 +214,7 @@ class PdfRenderer:
 
             _validate_saved_pdf(
                 temporary_output,
-                translated.page_count + sum(item.inserted_pages for item in reflow_plans),
+                translated.page_count + layout.inserted_pages,
                 expected_cyrillic_text,
                 failed_output=failed_output,
             )
@@ -220,7 +228,7 @@ class PdfRenderer:
                 )
                 _validate_saved_pdf(
                     temporary_debug,
-                    translated.page_count + sum(item.inserted_pages for item in reflow_plans),
+                    translated.page_count + layout.inserted_pages,
                     expected_cyrillic_text,
                     failed_output=None,
                 )
@@ -250,15 +258,28 @@ class PdfRenderer:
             file_size=output.stat().st_size,
             warnings=tuple(dict.fromkeys(warnings)),
             blocks=block_results,
-            reflowed_paragraphs=len(reflow_occurrences),
-            reflow_segments=sum(len(item.segments) for item in reflow_plans),
-            continued_paragraphs=sum(item.continued_occurrences for item in reflow_plans),
-            inserted_pages=sum(item.inserted_pages for item in reflow_plans),
+            reflowed_paragraphs=sum(len(item.paragraphs) for item in layout.body_plans),
+            reflow_segments=sum(len(item.segments) for item in layout.body_plans),
+            continued_paragraphs=sum(item.continued_occurrences for item in layout.body_plans),
+            inserted_pages=layout.inserted_pages,
             fixed_layout_paragraphs=sum(
                 item.strategy is RenderStrategy.FIXED_LAYOUT for item in block_results
             ),
-            unsupported_pages=unsupported_pages,
+            unsupported_pages=layout.unsupported_body_pages,
             unplaced_text_count=sum(item.unplaced_text_count for item in reflow_plans),
+            footnotes_reflowed=sum(len(item.paragraphs) for item in layout.footnote_plans),
+            footnote_segments=sum(len(item.segments) for item in layout.footnote_plans),
+            continued_footnotes=sum(item.continued_occurrences for item in layout.footnote_plans),
+            footnote_continuation_pages=sum(item.inserted_pages for item in layout.footnote_plans),
+            footnote_fixed_layout_units=sum(
+                block_results[index].strategy is RenderStrategy.FIXED_LAYOUT
+                for index, paragraph in enumerate(translated.paragraphs)
+                if paragraph.kind is ParagraphKind.FOOTNOTE
+            ),
+            footnote_unsupported_pages=layout.unsupported_footnote_pages,
+            footnote_unplaced_text_count=sum(
+                item.unplaced_text_count for item in layout.footnote_plans
+            ),
         )
 
 
@@ -267,24 +288,26 @@ def _plan_reflow_document(
     translated: ExtractedDocument,
     font_path: Path,
     options: RenderOptions,
-) -> tuple[tuple[LayoutPlan, ...], frozenset[int], dict[int, int], int]:
+) -> DocumentLayoutPlan:
     if translated.schema_version != "1.3":
-        return (
-            (),
-            frozenset(),
-            {page.page_number: page.source_index + 1 for page in translated.pages},
-            0,
+        return DocumentLayoutPlan(
+            plans=(),
+            final_page_by_source=tuple(
+                (page.page_number, page.source_index + 1) for page in translated.pages
+            ),
         )
     plans: list[LayoutPlan] = []
-    selected_occurrences: set[int] = set()
-    final_page_by_source: dict[int, int] = {}
+    final_page_by_source: list[tuple[int, int]] = []
     inserted_before = 0
-    unsupported_pages = 0
+    inserted_body_pages = 0
+    inserted_footnote_pages = 0
+    unsupported_body_pages = 0
+    unsupported_footnote_pages = 0
     for page_model in translated.pages:
         final_page = page_model.source_index + 1 + inserted_before
-        final_page_by_source[page_model.page_number] = final_page
+        final_page_by_source.append((page_model.page_number, final_page))
         source_page = document[page_model.source_index]
-        discovered = discover_reflow_page(
+        body = discover_reflow_page(
             translated,
             page_model,
             source_page,
@@ -292,45 +315,114 @@ def _plan_reflow_document(
             min_font_size=options.min_font_size,
             line_height=options.line_height,
         )
-        if discovered is None:
+        body_plan: LayoutPlan | None = None
+        if body is None:
             if _page_has_flow_candidate(translated, page_model.page_number):
-                unsupported_pages += 1
+                unsupported_body_pages += 1
+        else:
+            remaining_pages = options.max_reflow_pages - inserted_body_pages
+            with PyMuPdfMeasurer(
+                float(source_page.rect.width), float(source_page.rect.height), font_path
+            ) as measurer:
+                body_plan = _plan_bounded_flow(
+                    body.paragraphs,
+                    body.region_rect,
+                    body.region_rect,
+                    final_page,
+                    final_page + 1,
+                    remaining_pages,
+                    page_model.page_number,
+                    measurer,
+                    ReflowContentKind.BODY,
+                )
+            plans.append(body_plan)
+            inserted_before += body_plan.inserted_pages
+            inserted_body_pages += body_plan.inserted_pages
+
+        footnotes = discover_footnote_page(
+            translated,
+            page_model,
+            source_page,
+            body_region=body.region_rect if body is not None else None,
+            default_font_size=options.default_font_size,
+            min_font_size=options.min_font_size,
+            line_height=options.line_height,
+        )
+        if footnotes is None:
+            if _page_has_footnote_candidate(translated, page_model.page_number):
+                unsupported_footnote_pages += 1
             continue
-        remaining_pages = options.max_reflow_pages - inserted_before
-        last_capacity_error: CapacityError | None = None
+        remaining_pages = options.max_footnote_pages - inserted_footnote_pages
+        first_continuation_page = final_page + (body_plan.inserted_pages if body_plan else 0) + 1
         with PyMuPdfMeasurer(
             float(source_page.rect.width), float(source_page.rect.height), font_path
         ) as measurer:
-            for added_pages in range(remaining_pages + 1):
-                regions = tuple(
-                    FlowRegion(
-                        target_page_number=final_page + offset,
-                        rect=discovered.region_rect,
-                        column_index=0,
-                        order=offset,
-                        source_page_number=page_model.page_number,
-                        created_page=offset > 0,
-                    )
-                    for offset in range(added_pages + 1)
-                )
-                try:
-                    plan = plan_flow(discovered.paragraphs, regions, measurer)
-                except CapacityError as error:
-                    last_capacity_error = error
-                    continue
-                plans.append(plan)
-                selected_occurrences.update(discovered.occurrence_indexes)
-                inserted_before += plan.inserted_pages
-                break
-            else:
-                assert last_capacity_error is not None
-                raise RenderCompletenessError(str(last_capacity_error)) from last_capacity_error
-    return (
-        tuple(plans),
-        frozenset(selected_occurrences),
-        final_page_by_source,
-        unsupported_pages,
+            footnote_plan = _plan_bounded_flow(
+                footnotes.paragraphs,
+                footnotes.source_region_rect,
+                footnotes.continuation_region_rect,
+                final_page,
+                first_continuation_page,
+                remaining_pages,
+                page_model.page_number,
+                measurer,
+                ReflowContentKind.FOOTNOTE,
+            )
+        plans.append(footnote_plan)
+        inserted_before += footnote_plan.inserted_pages
+        inserted_footnote_pages += footnote_plan.inserted_pages
+    return DocumentLayoutPlan(
+        plans=tuple(plans),
+        final_page_by_source=tuple(final_page_by_source),
+        unsupported_body_pages=unsupported_body_pages,
+        unsupported_footnote_pages=unsupported_footnote_pages,
     )
+
+
+def _plan_bounded_flow(
+    paragraphs: tuple[FlowParagraph, ...],
+    source_region: Rect,
+    continuation_region: Rect,
+    source_target_page: int,
+    first_continuation_page: int,
+    max_added_pages: int,
+    source_page_number: int,
+    measurer: PyMuPdfMeasurer,
+    content_kind: ReflowContentKind,
+) -> LayoutPlan:
+    last_capacity_error: CapacityError | None = None
+    for added_pages in range(max_added_pages + 1):
+        regions = (
+            FlowRegion(
+                target_page_number=source_target_page,
+                rect=source_region,
+                column_index=0,
+                order=0,
+                source_page_number=source_page_number,
+            ),
+            *(
+                FlowRegion(
+                    target_page_number=first_continuation_page + offset,
+                    rect=continuation_region,
+                    column_index=0,
+                    order=offset + 1,
+                    source_page_number=source_page_number,
+                    created_page=True,
+                )
+                for offset in range(added_pages)
+            ),
+        )
+        try:
+            return plan_flow(
+                paragraphs,
+                regions,
+                measurer,
+                content_kind=content_kind,
+            )
+        except CapacityError as error:
+            last_capacity_error = error
+    assert last_capacity_error is not None
+    raise RenderCompletenessError(str(last_capacity_error)) from last_capacity_error
 
 
 def _page_has_flow_candidate(document: ExtractedDocument, page_number: int) -> bool:
@@ -340,6 +432,70 @@ def _page_has_flow_candidate(document: ExtractedDocument, page_number: int) -> b
         and _paragraph_policy(document, paragraph) is RepeatedElementPolicy.TRANSLATE
         for paragraph in document.paragraphs
     )
+
+
+def _page_has_footnote_candidate(document: ExtractedDocument, page_number: int) -> bool:
+    return any(
+        paragraph.anchor_page_number == page_number
+        and paragraph.kind is ParagraphKind.FOOTNOTE
+        and _paragraph_policy(document, paragraph) is RepeatedElementPolicy.TRANSLATE
+        for paragraph in document.paragraphs
+    )
+
+
+def _validate_layout_collisions(
+    translated: ExtractedDocument,
+    layout: DocumentLayoutPlan,
+    fixed_plans: list[_BlockPlan],
+) -> None:
+    body_segments = tuple(item for plan in layout.body_plans for item in plan.segments)
+    footnote_segments = tuple(item for plan in layout.footnote_plans for item in plan.segments)
+    for footnote in footnote_segments:
+        for body in body_segments:
+            if (
+                footnote.target_page_number == body.target_page_number
+                and footnote.target_rect.intersects(body.target_rect)
+            ):
+                raise RenderCompletenessError(
+                    "body and footnote reflow segments overlap before PDF mutation"
+                )
+
+    page_map = layout.page_map
+    for footnote in footnote_segments:
+        for fixed in fixed_plans:
+            if page_map.get(fixed.page_number, fixed.page_number) != footnote.target_page_number:
+                continue
+            fixed_rect = Rect(
+                float(fixed.final_rect.x0),
+                float(fixed.final_rect.y0),
+                float(fixed.final_rect.x1),
+                float(fixed.final_rect.y1),
+            )
+            if footnote.target_rect.intersects(fixed_rect):
+                raise RenderCompletenessError(
+                    "footnote reflow segment overlaps a fixed-layout render unit "
+                    "before PDF mutation"
+                )
+
+    selected = layout.selected_occurrences
+    for index, paragraph in enumerate(translated.paragraphs):
+        if index in selected:
+            continue
+        anchor_page = page_map.get(paragraph.anchor_page_number, paragraph.anchor_page_number)
+        anchor_rect = Rect(
+            float(paragraph.bbox.x0),
+            float(paragraph.bbox.y0),
+            float(paragraph.bbox.x1),
+            float(paragraph.bbox.y1),
+        )
+        if any(
+            segment.target_page_number == anchor_page
+            and segment.target_rect.intersects(anchor_rect)
+            for segment in footnote_segments
+        ):
+            raise RenderCompletenessError(
+                "footnote reflow segment overlaps an anchored paragraph before PDF mutation"
+            )
 
 
 def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
@@ -945,7 +1101,11 @@ def _render_results(
                 expanded=False,
                 overflow=False,
                 translated_character_count=len(flow_paragraph.text),
-                strategy=RenderStrategy.REFLOW_LAYOUT,
+                strategy=(
+                    RenderStrategy.REFLOW_FOOTNOTE
+                    if layout.content_kind is ReflowContentKind.FOOTNOTE
+                    else RenderStrategy.REFLOW_LAYOUT
+                ),
                 target_pages=tuple(dict.fromkeys(item.target_page_number for item in segments)),
                 segment_count=len(segments),
                 continuation_count=max(0, len(segments) - 1),

@@ -24,6 +24,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Production footnote-group reflow with structured lower-page region discovery, source-derived
+  minimal styling, bounded dedicated continuation pages, unified body/footnote page mapping,
+  collision checks, segment-local validation, footnote-specific diagnostics, and fail-closed
+  handling of unsafe anchored objects.
 - Production single-column body reflow with conservative structured eligibility, one basic heading
   style, exact occurrence-backed continuation segments, bounded pages inserted after their source
   page, protected anchors, zero-unplaced planning, segment-local saved-PDF validation, strategy

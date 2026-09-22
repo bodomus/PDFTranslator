@@ -9,6 +9,7 @@ from enum import StrEnum
 class ContentDisposition(StrEnum):
     FLOWABLE_BODY = "flowable_body"
     FLOWABLE_HEADING = "flowable_heading"
+    FLOWABLE_FOOTNOTE = "flowable_footnote"
     ANCHORED_PRESERVE = "anchored_preserve"
     FIXED_LAYOUT = "fixed_layout"
     DEFERRED_UNSUPPORTED = "deferred_unsupported"
@@ -17,6 +18,11 @@ class ContentDisposition(StrEnum):
 class PlacementState(StrEnum):
     CONTINUED = "continued"
     COMPLETE = "complete"
+
+
+class ReflowContentKind(StrEnum):
+    BODY = "body"
+    FOOTNOTE = "footnote"
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,7 @@ class LayoutPlan:
     segments: tuple[PlacementSegment, ...]
     inserted_pages: int
     unplaced_text_count: int = 0
+    content_kind: ReflowContentKind = ReflowContentKind.BODY
 
     @property
     def continuation_count(self) -> int:
@@ -134,3 +141,35 @@ class LayoutPlan:
     @property
     def continued_occurrences(self) -> int:
         return len({item.occurrence_index for item in self.segments if item.continuation_index > 0})
+
+
+@dataclass(frozen=True)
+class DocumentLayoutPlan:
+    """Authoritative pre-mutation layout and source-to-output page mapping."""
+
+    plans: tuple[LayoutPlan, ...]
+    final_page_by_source: tuple[tuple[int, int], ...]
+    unsupported_body_pages: int = 0
+    unsupported_footnote_pages: int = 0
+
+    @property
+    def body_plans(self) -> tuple[LayoutPlan, ...]:
+        return tuple(item for item in self.plans if item.content_kind is ReflowContentKind.BODY)
+
+    @property
+    def footnote_plans(self) -> tuple[LayoutPlan, ...]:
+        return tuple(item for item in self.plans if item.content_kind is ReflowContentKind.FOOTNOTE)
+
+    @property
+    def selected_occurrences(self) -> frozenset[int]:
+        return frozenset(
+            paragraph.occurrence_index for plan in self.plans for paragraph in plan.paragraphs
+        )
+
+    @property
+    def page_map(self) -> dict[int, int]:
+        return dict(self.final_page_by_source)
+
+    @property
+    def inserted_pages(self) -> int:
+        return sum(item.inserted_pages for item in self.plans)

@@ -3,7 +3,7 @@ title: PDFTranslate system overview
 type: architecture
 status: active
 created: 2026-09-17
-updated: 2026-09-18
+updated: 2026-09-22
 tags:
 - architecture
 - pipeline
@@ -49,11 +49,12 @@ For schema 1.3, stage 5 first plans and accounts for every logical paragraph occ
 overflow fails before PDF mutation or candidate creation; see
 [Rendering completeness](../failure-modes/render-completeness.md).
 
-PDFTR-23 composes a dedicated production body-reflow boundary with the fixed-layout renderer. It
-maps confidently classified paragraph occurrences to exact ordered continuation segments, consumes
-the source body region, and inserts bounded continuation pages immediately after that source page;
-see [Body-text reflow architecture](reflow-layout.md). Unsafe or unclassified pages remain fixed
-only when complete, and required overflow remains fail-closed.
+PDFTR-23 and PDFTR-24 compose production body and footnote reflow with the fixed-layout renderer.
+One layout plan maps confidently classified occurrences to exact ordered continuation segments and
+one final page map. Each source page is followed by its bounded body continuations and then its
+bounded footnote continuations; see [Body and footnote reflow architecture](reflow-layout.md).
+Unsafe or unclassified layouts remain fixed only when complete, and required overflow remains
+fail-closed.
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived
 workspace per document. Advanced inspect, extract, translate, render, benchmark, and validation

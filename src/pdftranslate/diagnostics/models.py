@@ -45,6 +45,7 @@ class DiagnosticFinding(DomainModel):
 
 class BlockDiagnostic(DomainModel):
     block_id: str
+    source_occurrence_index: int | None = Field(default=None, ge=0)
     page_number: int = Field(ge=1)
     source_bbox: BoundingBox
     final_bbox: BoundingBox | None = None
@@ -85,7 +86,11 @@ class BlockDiagnostic(DomainModel):
     preserved_foreign_spans: int = Field(default=0, ge=0)
     translator_called: bool | None = None
     render_strategy: Literal[
-        "fixed_layout", "reflow_layout", "anchored_preserved", "unsupported"
+        "fixed_layout",
+        "reflow_layout",
+        "reflow_footnote",
+        "anchored_preserved",
+        "unsupported",
     ] = "fixed_layout"
     target_pages: tuple[int, ...] = ()
     segment_count: int = Field(default=0, ge=0)
@@ -154,6 +159,13 @@ class ReportSummary(DomainModel):
     fixed_layout_paragraphs: int = Field(default=0, ge=0)
     unsupported_pages: int = Field(default=0, ge=0)
     unplaced_text_count: int = Field(default=0, ge=0)
+    footnotes_reflowed: int = Field(default=0, ge=0)
+    footnote_segments: int = Field(default=0, ge=0)
+    continued_footnotes: int = Field(default=0, ge=0)
+    footnote_continuation_pages: int = Field(default=0, ge=0)
+    footnote_fixed_layout_units: int = Field(default=0, ge=0)
+    footnote_unsupported_pages: int = Field(default=0, ge=0)
+    footnote_unplaced_text_count: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

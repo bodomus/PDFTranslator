@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from pdftranslate.diagnostics import (
+    BlockDiagnostic,
     DiagnosticCode,
     ReportSummary,
     TranslationReport,
     write_report,
 )
+from pdftranslate.domain.text_block import BoundingBox
 from pdftranslate.pipeline import PipelineOptions
 
 
@@ -63,6 +65,25 @@ def test_report_options_do_not_change_translation_artifact_identity() -> None:
     assert repeated_off.identity_values() != base.identity_values()
 
 
+def test_footnote_diagnostic_preserves_occurrence_identity() -> None:
+    diagnostic = BlockDiagnostic(
+        block_id="footnote-shared-id",
+        source_occurrence_index=7,
+        page_number=3,
+        source_bbox=BoundingBox(x0=40, y0=400, x1=260, y1=450),
+        final_state="rendered",
+        render_strategy="reflow_footnote",
+        target_pages=(3, 4),
+        segment_count=2,
+        continuation_count=1,
+        text_offsets=((0, 20), (20, 38)),
+    )
+
+    assert diagnostic.source_occurrence_index == 7
+    assert diagnostic.render_strategy == "reflow_footnote"
+    assert diagnostic.target_pages == (3, 4)
+
+
 def test_report_writer_never_replaces_an_existing_artifact(tmp_path: Path) -> None:
     summary = ReportSummary(
         page_count=0,
@@ -81,6 +102,18 @@ def test_report_writer_never_replaces_an_existing_artifact(tmp_path: Path) -> No
         output_size=1,
         elapsed_seconds=0.1,
         stage_durations={},
+    )
+    assert summary.footnotes_reflowed == 0
+    assert summary.footnote_segments == 0
+    assert summary.footnote_continuation_pages == 0
+    assert summary.footnote_unplaced_text_count == 0
+    populated = summary.model_copy(
+        update={
+            "footnotes_reflowed": 3,
+            "footnote_segments": 5,
+            "footnote_continuation_pages": 2,
+            "footnote_unplaced_text_count": 0,
+        }
     )
     first = TranslationReport(
         run_id="first",
@@ -102,3 +135,10 @@ def test_report_writer_never_replaces_an_existing_artifact(tmp_path: Path) -> No
 
     assert path.read_bytes() == original
     assert '"run_id": "first"' in path.read_text("utf-8")
+
+    html_report = first.model_copy(update={"run_id": "html", "summary": populated})
+    (html_path,) = write_report(html_report, tmp_path / "html", report_format="html")
+    html = html_path.read_text("utf-8")
+    assert "Footnotes reflowed</th><td>3" in html
+    assert "Footnote segments</th><td>5" in html
+    assert "Footnote continuation pages</th><td>2" in html
