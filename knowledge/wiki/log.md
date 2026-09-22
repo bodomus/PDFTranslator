@@ -3,7 +3,7 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-18
+updated: 2026-09-22
 tags:
 - project-wiki
 - log
@@ -17,6 +17,15 @@ related:
 # ProjectWiki knowledge change log
 
 This records meaningful knowledge-base changes, not every Git commit or formatting edit.
+
+## 2026-09-22
+
+- Extended the production reflow architecture with ordered footnote groups, source-region-first
+  placement, bounded dedicated continuation pages, one body/footnote page map, pre-mutation
+  collision checks, separator/anchor preservation, and footnote-specific diagnostics.
+- Recorded the controlled Robitzsch result: all 61 required occurrences are terminally placed,
+  the prior 21 footnote overflows are zero, and one body plus four footnote continuation pages
+  produce a nine-page output with zero unplaced text.
 
 ## 2026-09-18
 

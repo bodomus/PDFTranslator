@@ -55,7 +55,7 @@ def discover_reflow_page(
         ):
             continue
         if (
-            _paragraph_policy(document, paragraph) is not RepeatedElementPolicy.TRANSLATE
+            paragraph_policy(document, paragraph) is not RepeatedElementPolicy.TRANSLATE
             or paragraph.translated_text is None
             or not paragraph.translated_text.strip()
             or any(
@@ -74,8 +74,8 @@ def discover_reflow_page(
     if headings and not _single_heading_style(headings):
         return None
 
-    body_rects = [_rect_from_bbox(item.bbox) for _, item in body]
-    flow_rects = [_rect_from_bbox(item.bbox) for _, item in candidates]
+    body_rects = [rect_from_bbox(item.bbox) for _, item in body]
+    flow_rects = [rect_from_bbox(item.bbox) for _, item in candidates]
     x0 = min(item.x0 for item in body_rects)
     x1 = max(item.x1 for item in body_rects)
     y0 = min(item.y0 for item in flow_rects)
@@ -91,23 +91,32 @@ def discover_reflow_page(
         ),
         default=page_model.height * 0.90,
     )
-    y1 = min(page_model.height * 0.90, footnote_top - max(4.0, default_font_size * 0.5))
+    separator_top = _nearest_horizontal_separator_top(
+        page,
+        footnote_top,
+        max(item.y1 for item in flow_rects),
+    )
+    footnote_boundary = min(footnote_top, separator_top or footnote_top)
+    y1 = min(
+        page_model.height * 0.90,
+        footnote_boundary - max(4.0, default_font_size * 0.5),
+    )
     y1 = max(y1, max(item.y1 for item in flow_rects))
     if y1 <= y0 or x1 <= x0:
         return None
     region = Rect(x0, y0, x1, y1)
     selected = {index for index, _ in candidates}
-    if _intersects_unselected(document, page_model.page_number, selected, region):
+    if intersects_unselected(document, page_model.page_number, selected, region):
         return None
     if _intersects_pdf_objects(page, region):
         return None
 
     flow: list[FlowParagraph] = []
     for index, paragraph in sorted(candidates, key=lambda item: item[0]):
-        source_rect = _rect_from_bbox(paragraph.bbox)
+        source_rect = rect_from_bbox(paragraph.bbox)
         if not region.contains(source_rect):
             return None
-        source_size = _paragraph_font_size(paragraph, default_font_size)
+        source_size = paragraph_font_size(paragraph, default_font_size)
         is_heading = paragraph.kind is ParagraphKind.HEADING
         font_size = max(min_font_size, source_size)
         if is_heading:
@@ -126,7 +135,7 @@ def discover_reflow_page(
                 text=paragraph.translated_text or "",
                 source_rect=source_rect,
                 source_fragment_rects=tuple(
-                    _rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
+                    rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
                 ),
                 style=ReflowStyle(
                     font_size=font_size,
@@ -134,7 +143,7 @@ def discover_reflow_page(
                     paragraph_spacing=font_size * (0.65 if is_heading else 0.45),
                     heading=is_heading,
                 ),
-                color=_paragraph_color(paragraph),
+                color=paragraph_color(paragraph),
             )
         )
     return ReflowPage(
@@ -157,7 +166,7 @@ def _stable_single_column(body: list[tuple[int, LogicalParagraph]], page: Extrac
 
 
 def _single_heading_style(headings: list[tuple[int, LogicalParagraph]]) -> bool:
-    sizes = [_paragraph_font_size(item, 11.0) for _, item in headings]
+    sizes = [paragraph_font_size(item, 11.0) for _, item in headings]
     return max(sizes) - min(sizes) <= 1.0
 
 
@@ -175,7 +184,7 @@ def _ambiguity_resolved_by_page_evidence(
     return len(body) >= 3 and len(ambiguous) == len(candidates)
 
 
-def _intersects_unselected(
+def intersects_unselected(
     document: ExtractedDocument,
     page_number: int,
     selected: set[int],
@@ -186,7 +195,7 @@ def _intersects_unselected(
             continue
         for fragment in paragraph.fragments:
             if fragment.mapping.page_number == page_number and region.intersects(
-                _rect_from_bbox(fragment.bbox)
+                rect_from_bbox(fragment.bbox)
             ):
                 return True
     return False
@@ -214,7 +223,22 @@ def _intersects_pdf_objects(page: pymupdf.Page, region: Rect) -> bool:
     return False
 
 
-def _paragraph_policy(
+def _nearest_horizontal_separator_top(
+    page: pymupdf.Page, footnote_top: float, body_bottom: float
+) -> float | None:
+    candidates = tuple(
+        float(raw.y0)
+        for drawing in page.get_drawings()
+        if isinstance((raw := drawing.get("rect")), pymupdf.Rect)
+        and raw.width >= page.rect.width * 0.10
+        and raw.height <= 2.5
+        and raw.y0 >= body_bottom
+        and raw.y1 <= footnote_top + 1.0
+    )
+    return max(candidates, default=None)
+
+
+def paragraph_policy(
     document: ExtractedDocument, paragraph: LogicalParagraph
 ) -> RepeatedElementPolicy:
     if document.repeated_elements is None:
@@ -232,12 +256,12 @@ def _paragraph_policy(
     return next(iter(policies))
 
 
-def _paragraph_font_size(paragraph: LogicalParagraph, default: float) -> float:
+def paragraph_font_size(paragraph: LogicalParagraph, default: float) -> float:
     sizes = [span.font_size for span in paragraph.spans if span.font_size and span.font_size > 0]
     return float(statistics.median(sizes)) if sizes else default
 
 
-def _paragraph_color(paragraph: LogicalParagraph) -> tuple[float, float, float]:
+def paragraph_color(paragraph: LogicalParagraph) -> tuple[float, float, float]:
     packed = next((span.text_color for span in paragraph.spans if span.text_color is not None), 0)
     return (
         float((packed >> 16) & 0xFF) / 255.0,
@@ -246,5 +270,5 @@ def _paragraph_color(paragraph: LogicalParagraph) -> tuple[float, float, float]:
     )
 
 
-def _rect_from_bbox(box: BoundingBox) -> Rect:
+def rect_from_bbox(box: BoundingBox) -> Rect:
     return Rect(float(box.x0), float(box.y0), float(box.x1), float(box.y1))

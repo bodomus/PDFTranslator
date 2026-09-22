@@ -14,6 +14,7 @@ from pdftranslate.rendering.reflow.models import (
     PlacementSegment,
     PlacementState,
     Rect,
+    ReflowContentKind,
 )
 
 
@@ -69,9 +70,10 @@ def plan_flow(
     measurer: TextMeasurer,
     *,
     options: PlannerOptions | None = None,
+    content_kind: ReflowContentKind = ReflowContentKind.BODY,
 ) -> LayoutPlan:
     selected = options or PlannerOptions()
-    _validate_inputs(paragraphs, regions)
+    _validate_inputs(paragraphs, regions, content_kind)
     ordered_regions = tuple(sorted(regions, key=lambda item: item.order))
     region_index = 0
     cursor_y = ordered_regions[0].rect.y0
@@ -172,6 +174,7 @@ def plan_flow(
         paragraphs=paragraphs,
         segments=tuple(segments),
         inserted_pages=sum(item.created_page for item in ordered_regions),
+        content_kind=content_kind,
     )
 
 
@@ -244,19 +247,22 @@ def _binary_search(
 
 
 def _validate_inputs(
-    paragraphs: tuple[FlowParagraph, ...], regions: tuple[FlowRegion, ...]
+    paragraphs: tuple[FlowParagraph, ...],
+    regions: tuple[FlowRegion, ...],
+    content_kind: ReflowContentKind,
 ) -> None:
     if not paragraphs or not regions:
         raise UnsupportedLayoutError("reflow requires paragraphs and regions")
     occurrences = tuple(item.occurrence_index for item in paragraphs)
     if occurrences != tuple(sorted(set(occurrences))):
         raise UnsupportedLayoutError("paragraph occurrences must be unique and ordered")
-    if any(
-        item.disposition
-        not in {ContentDisposition.FLOWABLE_BODY, ContentDisposition.FLOWABLE_HEADING}
-        for item in paragraphs
-    ):
-        raise UnsupportedLayoutError("only explicitly flowable paragraphs may enter the planner")
+    allowed = (
+        {ContentDisposition.FLOWABLE_FOOTNOTE}
+        if content_kind is ReflowContentKind.FOOTNOTE
+        else {ContentDisposition.FLOWABLE_BODY, ContentDisposition.FLOWABLE_HEADING}
+    )
+    if any(item.disposition not in allowed for item in paragraphs):
+        raise UnsupportedLayoutError("content kind and flowable paragraph disposition disagree")
     orders = tuple(item.order for item in regions)
     if orders != tuple(sorted(set(orders))):
         raise UnsupportedLayoutError("region order must be unique and increasing")

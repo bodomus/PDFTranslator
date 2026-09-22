@@ -34,7 +34,9 @@ from pdftranslate.rendering.reflow import (
     FlowRegion,
     Measurement,
     Rect,
+    ReflowContentKind,
     ReflowStyle,
+    discover_footnote_page,
     discover_reflow_page,
     plan_flow,
 )
@@ -89,6 +91,21 @@ def _region(page: int, order: int, height: float = 40) -> FlowRegion:
     return FlowRegion(page, Rect(40, 60, 260, 60 + height), 0, order, 1, page > 1)
 
 
+def _footnote(index: int, text: str, *, paragraph_id: str | None = None) -> FlowParagraph:
+    rect = Rect(40, 220 + index * 12, 260, 230 + index * 12)
+    return FlowParagraph(
+        occurrence_index=index,
+        paragraph_id=paragraph_id or f"fn{index}",
+        source_page_number=1,
+        kind="footnote",
+        disposition=ContentDisposition.FLOWABLE_FOOTNOTE,
+        text=text,
+        source_rect=rect,
+        source_fragment_rects=(rect,),
+        style=ReflowStyle(font_size=8, line_height=1, paragraph_spacing=2),
+    )
+
+
 def test_planner_keeps_multiple_paragraphs_ordered_after_continuation() -> None:
     paragraphs = (_flow(0, "a" * 1000), _flow(1, "beta"), _flow(2, "gamma"))
 
@@ -98,6 +115,52 @@ def test_planner_keeps_multiple_paragraphs_ordered_after_continuation() -> None:
     assert "".join(item.text for item in plan.segments if item.occurrence_index == 0) == "a" * 1000
     assert plan.continuation_count >= 1
     assert plan.unplaced_text_count == 0
+
+
+def test_footnote_planner_preserves_duplicate_ids_order_and_exact_text() -> None:
+    paragraphs = (
+        _footnote(0, "first note", paragraph_id="shared"),
+        _footnote(1, "second note", paragraph_id="shared"),
+    )
+
+    plan = plan_flow(
+        paragraphs,
+        (_region(1, 0, height=100),),
+        CapacityMeasurer(),
+        content_kind=ReflowContentKind.FOOTNOTE,
+    )
+
+    assert plan.content_kind is ReflowContentKind.FOOTNOTE
+    assert tuple(item.occurrence_index for item in plan.segments) == (0, 1)
+    assert plan.segments[0].target_rect.y1 <= plan.segments[1].target_rect.y0
+    for paragraph in paragraphs:
+        assert (
+            "".join(
+                item.text
+                for item in plan.segments
+                if item.occurrence_index == paragraph.occurrence_index
+            )
+            == paragraph.text
+        )
+
+
+def test_footnote_planner_continues_then_places_following_note() -> None:
+    paragraphs = (_footnote(0, "alpha " * 180), _footnote(1, "beta follows"))
+
+    plan = plan_flow(
+        paragraphs,
+        (_region(1, 0), _region(2, 1, height=120)),
+        CapacityMeasurer(),
+        content_kind=ReflowContentKind.FOOTNOTE,
+    )
+
+    first = tuple(item for item in plan.segments if item.occurrence_index == 0)
+    second = tuple(item for item in plan.segments if item.occurrence_index == 1)
+    assert len(first) > 1
+    assert first[-1].target_page_number == 2
+    assert second[0].target_page_number == 2
+    assert first[-1].target_rect.y1 <= second[0].target_rect.y0
+    assert "".join(item.text for item in first) == paragraphs[0].text
 
 
 def test_heading_moves_forward_when_it_would_be_orphaned() -> None:
@@ -212,6 +275,64 @@ def test_region_discovery_rejects_ambiguous_and_drawing_intersections() -> None:
     image_pdf.close()
 
 
+def test_footnote_region_discovery_rejects_unsafe_objects() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+
+    discovered = discover_footnote_page(
+        document,
+        page_model,
+        page,
+        body_region=None,
+        default_font_size=11,
+        min_font_size=6,
+        line_height=1.2,
+    )
+    assert discovered is not None
+    assert discovered.occurrence_indexes == (3,)
+    assert discovered.source_region_rect.y0 >= 340
+
+    page.draw_rect(pymupdf.Rect(50, 345, 250, 370))
+    assert (
+        discover_footnote_page(
+            document,
+            page_model,
+            page,
+            body_region=None,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+        )
+        is None
+    )
+    pdf.close()
+
+    image_pdf = pymupdf.open()
+    image_page = image_pdf.new_page(width=300, height=400)
+    pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 4, 4), False)
+    pixmap.clear_with(0)
+    image_page.insert_image(pymupdf.Rect(50, 345, 250, 370), stream=pixmap.tobytes("png"))
+    assert (
+        discover_footnote_page(
+            document,
+            page_model,
+            image_page,
+            body_region=None,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+        )
+        is None
+    )
+    image_pdf.close()
+
+
+def test_footnote_page_budget_must_not_be_negative() -> None:
+    with pytest.raises(ValueError, match="max_footnote_pages"):
+        RenderOptions(max_footnote_pages=-1)
+
+
 def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
     tmp_path: Path, cyrillic_font_path: Path
 ) -> None:
@@ -245,6 +366,51 @@ def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
         rendered.close()
 
 
+def test_renderer_paginates_footnotes_after_body_pages_and_preserves_separator(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _source_pdf(tmp_path / "source.pdf", separator=True)
+    translated = _translated_source(
+        source,
+        footnote_repetitions=20,
+        footnote_text="Сноска Latin terminus Ελληνικά. ",
+    )
+    output = tmp_path / "translated.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+
+    footnote = next(
+        item for item in result.blocks if item.strategy is RenderStrategy.REFLOW_FOOTNOTE
+    )
+    body = tuple(item for item in result.blocks if item.strategy is RenderStrategy.REFLOW_LAYOUT)
+    assert result.footnotes_reflowed == 1
+    assert result.footnote_segments == footnote.segment_count
+    assert result.continued_footnotes == 1
+    assert result.footnote_continuation_pages >= 1
+    assert result.footnote_unplaced_text_count == 0
+    assert footnote.page_number == 1
+    assert footnote.unit_index >= 0
+    assert footnote.target_pages[0] == 1
+    assert max(page for item in body for page in item.target_pages) < footnote.target_pages[-1]
+
+    rendered = pymupdf.open(output)
+    try:
+        assert rendered.page_count == 1 + result.inserted_pages
+        assert rendered[0].get_drawings()
+        text = " ".join(str(page.get_text("text")) for page in rendered)
+        assert "Latin terminus" in text
+        assert "Ελληνικά" in text
+        assert "Running title" in text
+    finally:
+        rendered.close()
+
+
 def test_footnote_overflow_is_fatal_and_existing_output_is_unchanged(
     tmp_path: Path, cyrillic_font_path: Path
 ) -> None:
@@ -254,13 +420,17 @@ def test_footnote_overflow_is_fatal_and_existing_output_is_unchanged(
     original = b"existing-output-must-survive"
     output.write_bytes(original)
 
-    with pytest.raises(RenderCompletenessError, match="required paragraph"):
+    with pytest.raises(RenderCompletenessError, match="reflow capacity exhausted"):
         PdfRenderer().render(
             source,
             translated,
             output,
             font_path=cyrillic_font_path,
-            options=RenderOptions(max_reflow_pages=4, overwrite=True),
+            options=RenderOptions(
+                max_reflow_pages=4,
+                max_footnote_pages=1,
+                overwrite=True,
+            ),
         )
 
     assert output.read_bytes() == original
@@ -353,7 +523,7 @@ def _classified_document(*, ambiguous: bool) -> tuple[ExtractedDocument, Extract
     return document, page
 
 
-def _source_pdf(path: Path) -> Path:
+def _source_pdf(path: Path, *, separator: bool = False) -> Path:
     document = pymupdf.open()
     page = document.new_page(width=300, height=500)
     page.insert_text((40, 25), "Running title", fontsize=8)
@@ -369,12 +539,20 @@ def _source_pdf(path: Path) -> Path:
         fontsize=11,
     )
     page.insert_text((40, 470), "1 Footnote remains anchored.", fontsize=7)
+    if separator:
+        page.draw_line((40, 450), (260, 450), color=(0, 0, 0), width=0.8)
     document.save(path)
     document.close()
     return path
 
 
-def _translated_source(source: Path, *, overflowing_footnote: bool = False) -> ExtractedDocument:
+def _translated_source(
+    source: Path,
+    *,
+    overflowing_footnote: bool = False,
+    footnote_repetitions: int | None = None,
+    footnote_text: str = "переполнение ",
+) -> ExtractedDocument:
     extracted = PdfExtractor().extract(source)
     translated_paragraphs = []
     for paragraph in extracted.paragraphs:
@@ -388,7 +566,10 @@ def _translated_source(source: Path, *, overflowing_footnote: bool = False) -> E
             ).strip()
         elif "Footnote" in paragraph.text:
             kind = ParagraphKind.FOOTNOTE
-            translated = "переполнение " * 200 if overflowing_footnote else paragraph.text
+            if footnote_repetitions is not None:
+                translated = (footnote_text * footnote_repetitions).strip()
+            else:
+                translated = "переполнение " * 200 if overflowing_footnote else paragraph.text
         else:
             kind = ParagraphKind.HEADER
             translated = paragraph.text

@@ -54,7 +54,12 @@ td,th{{border:1px solid #ccd3db;padding:.4rem .65rem;text-align:left}}
 <table><tr><th>Pages</th><td>{report.summary.page_count}</td></tr>
 <tr><th>Blocks</th><td>{report.summary.blocks_translated}/{report.summary.blocks_extracted}</td></tr>
 <tr><th>Cache</th><td>{report.summary.cache_hits} hit / {report.summary.cache_misses} miss</td></tr>
-<tr><th>Overflow</th><td>{report.summary.overflow_blocks}</td></tr></table>
+<tr><th>Overflow</th><td>{report.summary.overflow_blocks}</td></tr>
+<tr><th>Footnotes reflowed</th><td>{report.summary.footnotes_reflowed}</td></tr>
+<tr><th>Footnote segments</th><td>{report.summary.footnote_segments}</td></tr>
+<tr><th>Footnote continuation pages</th><td>{report.summary.footnote_continuation_pages}</td></tr>
+<tr><th>Footnote unplaced text</th><td>{report.summary.footnote_unplaced_text_count}</td></tr>
+</table>
 <h2>Machine-readable details</h2><pre>{payload}</pre></body></html>
 """
 

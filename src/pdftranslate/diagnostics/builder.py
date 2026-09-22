@@ -172,6 +172,7 @@ def build_success_report(
             blocks.append(
                 BlockDiagnostic(
                     block_id=block.id,
+                    source_occurrence_index=layout.unit_index if layout is not None else None,
                     page_number=page.page_number,
                     source_bbox=block.bbox,
                     final_bbox=layout.final_bbox if layout else None,
@@ -344,6 +345,13 @@ def build_success_report(
             fixed_layout_paragraphs=render.fixed_layout_paragraphs if render else 0,
             unsupported_pages=render.unsupported_pages if render else 0,
             unplaced_text_count=render.unplaced_text_count if render else 0,
+            footnotes_reflowed=render.footnotes_reflowed if render else 0,
+            footnote_segments=render.footnote_segments if render else 0,
+            continued_footnotes=render.continued_footnotes if render else 0,
+            footnote_continuation_pages=(render.footnote_continuation_pages if render else 0),
+            footnote_fixed_layout_units=(render.footnote_fixed_layout_units if render else 0),
+            footnote_unsupported_pages=(render.footnote_unsupported_pages if render else 0),
+            footnote_unplaced_text_count=(render.footnote_unplaced_text_count if render else 0),
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,
             output_size=output_path.stat().st_size,

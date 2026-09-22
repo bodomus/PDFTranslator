@@ -1,9 +1,9 @@
 ---
-title: Body-text reflow architecture
+title: Body and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-18
+updated: 2026-09-22
 tags:
 - rendering
 - reflow
@@ -12,11 +12,13 @@ tags:
 - continuation
 sources:
 - ../../../Tickets/PDFTR-23-production-body-reflow.md
+- ../../../Tickets/PDFTR-24-footnote-reflow-pagination.md
 - ../../../Tickets/PDFTR-22-reflow-architecture-poc.md
 - ../../../docs/reflow-architecture.md
 - ../../../src/pdftranslate/rendering/reflow/models.py
 - ../../../src/pdftranslate/rendering/reflow/planner.py
 - ../../../src/pdftranslate/rendering/reflow/regions.py
+- ../../../src/pdftranslate/rendering/reflow/footnotes.py
 - ../../../src/pdftranslate/rendering/reflow/pymupdf_layout.py
 - ../../../scripts/reflow_poc/models.py
 - ../../../scripts/reflow_poc/planner.py
@@ -28,7 +30,7 @@ related:
 - ../testing/pilot-evaluation.md
 ---
 
-# Body-text reflow architecture
+# Body and footnote reflow architecture
 
 PDFTR-23 implements the PDFTR-22 forward-only, region-based layout boundary in production for
 confident single-column body prose and one basic heading style. A logical
@@ -41,8 +43,8 @@ rectangle, continuation index, font evidence, and terminal continuation state.
 Flow regions are explicit classified rectangles. They are not inferred from whitespace or
 `ParagraphKind.BODY` alone. The Robitzsch four-page artifact classifies running titles and page
 numbers as body, demonstrating that safe discovery also needs stable geometry, anchor policy, and
-image/drawing intersection checks. Unknown, ambiguous, multi-column, table, footnote-pagination,
-or otherwise unsafe layouts fail closed.
+image/drawing intersection checks. Unknown, ambiguous, multi-column, table, or otherwise unsafe
+layouts fail closed.
 
 Planning is pure and precedes PDF mutation. Concatenating ordered segment ranges must reproduce
 each exact translated paragraph once. Exhausted regions raise a capacity error rather than return a
@@ -56,14 +58,25 @@ The production hybrid uses Strategy A: consume the safe body region on the sourc
 bounded blank continuation pages immediately after it. Inserted pages match source geometry and do
 not regenerate a running header or page number. Final indexes account for previous insertions, so
 earlier continuation cannot overwrite later source content. Anchored headers, page numbers,
-figures, drawings, backgrounds, captions, and footnotes remain outside body flow. A page that cannot
-be safely classified receives no flow content and remains fixed-layout only when complete.
+figures, drawings, backgrounds, and captions remain outside body flow. Footnotes use a separate
+ordered flow group. The group consumes a structured lower-page region first, then bounded blank
+footnote-continuation pages. Per source page the fixed order is source page, body continuations,
+footnote continuations, next original page. Continuation pages do not regenerate headers, page
+numbers, or separators.
+
+One `DocumentLayoutPlan` owns all body and footnote plans plus the final source-to-output page map.
+It checks body/footnote, footnote/fixed-layout, and footnote/anchor intersections before mutation.
+Only selected text fragments are redacted, so a source separator rule remains intact. Unsafe
+images, drawings, unstable x-ranges, multiple footnote columns, or insufficient capacity fail
+closed.
 
 ## Robitzsch evidence
 
-The current schema 1.3 artifact has 26 rendered body occurrences, 14 rendered footnote occurrences,
-and 21 overflowing footnote occurrences. Body reflow therefore does not resolve the present
-21-overflow regression by itself.
+Before PDFTR-24, the schema 1.3 artifact had 26 rendered body occurrences, 14 rendered footnote
+occurrences, and 21 overflowing footnote occurrences. The controlled PDFTR-24 render accounts for
+all 61 occurrences as 7 body-reflow, 35 footnote-reflow, and 19 fixed-layout occurrences. It creates
+one body continuation page and four footnote continuation pages, producing nine output pages with
+zero overflow and zero unplaced text.
 
 The controlled page-3 PoC flowed four reviewed body occurrences (2,153 translated characters) at
 12 pt through the copied source-page region and one inserted continuation page. It produced one
@@ -83,6 +96,6 @@ following body content, and enforces exact offsets.
 Render diagnostics expose strategy, target pages/rectangles, segment and continuation counts,
 inserted pages, unsupported pages, and unplaced count.
 
-Footnote pagination, tables, arbitrary columns, sidebars, floating figures, verse, and complex
-mathematical layout remain explicit fail-closed follow-ups. See `docs/reflow-architecture.md` for
-the full decision record and historical PoC command.
+Multi-column footnotes, endnotes, marginal notes, tables, arbitrary columns, sidebars, floating
+figures, verse, and complex mathematical layout remain explicit fail-closed follow-ups. See
+`docs/reflow-architecture.md` for the full decision record and historical PoC command.

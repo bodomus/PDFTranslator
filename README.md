@@ -48,19 +48,21 @@ Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Exi
 `knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
 durable new knowledge should change after a non-trivial ticket.
 
-## Production body-text reflow
+## Production body and footnote reflow
 
 Schema 1.3 rendering automatically uses production reflow for confidently classified
 single-column book pages. Body prose and one basic heading style flow through the existing source
 body region and then through bounded blank continuation pages inserted immediately after the
-source page. Headers, page numbers, images, drawings, captions, and footnotes remain anchored or on
-the fixed-layout path. Ambiguous, multi-column, intersecting, and otherwise unsafe pages never enter
-reflow automatically.
+source page. Ordered footnotes use their source lower-page region first and then bounded dedicated
+continuation pages. For each source page, body continuation pages precede footnote continuation
+pages, followed by the next original page. Headers, page numbers, images, drawings, and captions
+remain anchored or on the fixed-layout path. Ambiguous, multi-column, intersecting, and otherwise
+unsafe pages never enter reflow automatically.
 
 Each continuation is recorded as an exact occurrence-backed segment and validated after save in a
 padded clip around its own target rectangle. Any unplaced text, fixed-layout overflow, or missing
-saved segment prevents atomic publication. Footnote pagination is not included, so footnote
-overflow remains fatal.
+saved segment prevents atomic publication. Source footnote separators are preserved; blank
+continuation pages do not synthesize separators, running headers, or source page numbers.
 
 ## Reflow architecture proof of concept
 
