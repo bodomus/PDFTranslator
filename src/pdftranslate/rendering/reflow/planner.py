@@ -95,14 +95,9 @@ def plan_flow(
                 region_index, cursor_y = _advance_region(ordered_regions, region_index)
                 continue
 
-            usable_x0 = region.rect.x0 + paragraph.style.left_indent
-            usable_x1 = region.rect.x1 - paragraph.style.right_indent
-            usable_width = usable_x1 - usable_x0
-            first_line_width = usable_width - (
-                paragraph.style.first_line_indent if first_segment else 0.0
+            usable_x0, usable_x1, usable_width = _paragraph_geometry(
+                paragraph, region, first_segment=first_segment
             )
-            if usable_width <= 0 or first_line_width <= 0:
-                raise UnsupportedLayoutError("paragraph indents leave no usable line width")
 
             remaining = paragraph.text[text_offset:]
             measurement = measurer.measure(
@@ -123,6 +118,8 @@ def plan_flow(
                     measurement,
                     available_height,
                     selected,
+                    region,
+                    measurer,
                 )
                 and cursor_y > region.rect.y0 + 1e-6
             ):
@@ -209,18 +206,45 @@ def _would_orphan_heading(
     measurement: Measurement,
     available_height: float,
     options: PlannerOptions,
+    region: FlowRegion,
+    measurer: TextMeasurer,
 ) -> bool:
     if following.disposition is not ContentDisposition.FLOWABLE_BODY:
         return False
-    needed = (
-        measurement.used_height
-        + heading.style.space_after
-        + following.style.space_before
-        + following.style.font_size
-        * following.style.line_height
-        * options.minimum_body_after_heading_lines
+    body_height = (
+        available_height
+        - measurement.used_height
+        - heading.style.space_after
+        - following.style.space_before
     )
-    return needed > available_height
+    if body_height < options.minimum_usable_height:
+        return True
+    _, _, body_width = _paragraph_geometry(following, region, first_segment=True)
+    consumed, body_measurement = _largest_fitting_prefix(
+        following.text,
+        body_width,
+        body_height,
+        measurer,
+        following,
+        first_segment=True,
+    )
+    return consumed == 0 or body_measurement.line_count < options.minimum_body_after_heading_lines
+
+
+def _paragraph_geometry(
+    paragraph: FlowParagraph, region: FlowRegion, *, first_segment: bool
+) -> tuple[float, float, float]:
+    usable_x0 = region.rect.x0 + paragraph.style.left_indent
+    usable_x1 = region.rect.x1 - paragraph.style.right_indent
+    usable_width = usable_x1 - usable_x0
+    first_line_indent = paragraph.style.first_line_indent if first_segment else 0.0
+    first_line_start = usable_x0 + first_line_indent
+    first_line_width = usable_x1 - first_line_start
+    if first_segment and first_line_start < region.rect.x0 - 1e-6:
+        raise UnsupportedLayoutError("first-line/hanging indent geometry escapes the flow region")
+    if usable_width <= 0 or first_line_width <= 0:
+        raise UnsupportedLayoutError("paragraph indents leave no usable line width")
+    return usable_x0, usable_x1, usable_width
 
 
 def _advance_region(regions: tuple[FlowRegion, ...], index: int) -> tuple[int, float]:

@@ -70,6 +70,24 @@ class CapacityMeasurer:
         return Measurement(used <= height, used, lines)
 
 
+class FirstLineAwareMeasurer:
+    def measure(
+        self,
+        text: str,
+        *,
+        width: float,
+        height: float,
+        style: ReflowStyle,
+        first_segment: bool,
+    ) -> Measurement:
+        effective_width = width - (style.first_line_indent if first_segment else 0.0)
+        if text and effective_width < style.font_size:
+            return Measurement(False, height, 0)
+        lines = math.ceil(len(text) / max(1, int(effective_width))) if text else 0
+        used = lines * style.font_size * style.line_height
+        return Measurement(used <= height, used, lines)
+
+
 def _flow(
     index: int,
     text: str,
@@ -188,6 +206,35 @@ def test_heading_moves_forward_when_it_would_be_orphaned() -> None:
     assert heading.font_size > body.font_size
 
 
+def test_heading_moves_with_body_when_first_line_geometry_cannot_fit() -> None:
+    preface = _flow(0, "preface")
+    heading = _flow(1, "Heading", heading=True)
+    body = _flow(2, "body")
+    body = FlowParagraph(
+        **{
+            **body.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1,
+                space_before=0,
+                space_after=4,
+                first_line_indent=215,
+            ),
+        }
+    )
+    regions = (
+        FlowRegion(1, Rect(40, 60, 260, 110), 0, 0, 1),
+        FlowRegion(2, Rect(40, 60, 400, 140), 0, 1, 1, True),
+    )
+
+    plan = plan_flow((preface, heading, body), regions, FirstLineAwareMeasurer())
+
+    heading_segment = next(item for item in plan.segments if item.occurrence_index == 1)
+    body_segment = next(item for item in plan.segments if item.occurrence_index == 2)
+    assert heading_segment.target_page_number == 2
+    assert body_segment.target_page_number == 2
+
+
 def test_body_typography_controls_indents_spacing_and_continuation_once() -> None:
     paragraph = _flow(0, "word " * 250)
     paragraph = FlowParagraph(
@@ -242,6 +289,48 @@ def test_body_typography_rejects_indents_that_remove_usable_width() -> None:
     )
 
     with pytest.raises(UnsupportedLayoutError, match="indents"):
+        plan_flow((paragraph,), (_region(1, 0),), CapacityMeasurer())
+
+
+def test_body_typography_allows_safe_hanging_indent() -> None:
+    paragraph = _flow(0, "safe hanging indent")
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1.2,
+                space_before=0,
+                space_after=0,
+                first_line_indent=-8,
+                left_indent=12,
+            ),
+        }
+    )
+
+    plan = plan_flow((paragraph,), (_region(1, 0),), CapacityMeasurer())
+
+    assert plan.segments[0].target_rect.x0 == 52
+    assert plan.segments[0].first_line_indent == -8
+
+
+def test_body_typography_rejects_hanging_indent_outside_flow_region() -> None:
+    paragraph = _flow(0, "unsafe hanging indent")
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1.2,
+                space_before=0,
+                space_after=0,
+                first_line_indent=-12,
+                left_indent=4,
+            ),
+        }
+    )
+
+    with pytest.raises(UnsupportedLayoutError, match="first-line/hanging indent"):
         plan_flow((paragraph,), (_region(1, 0),), CapacityMeasurer())
 
 

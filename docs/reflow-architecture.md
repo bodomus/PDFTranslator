@@ -194,6 +194,12 @@ spacing. Indents affect available width; space-before and first-line indent appl
 segment, while space-after applies only after the completing segment. These values therefore
 participate in pagination before mutation.
 
+Safe negative first-line indents remain supported when the resulting first-line start stays inside
+the flow region. A hanging indent that escapes the region, or any indent combination that leaves
+non-positive line geometry, fails before PDF mutation. The heading orphan guard measures the
+minimum following BODY content with this same style-aware geometry and `TextMeasurer` contract;
+it does not rely on a separate font-size/line-height estimate.
+
 The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
 Bold and italic are retained as requested values but reported as unapplied until a safe local font
 variant resolver exists. Mixed inline styles use the resolved paragraph-dominant style and retain a
@@ -306,8 +312,8 @@ Production body-text reflow covers confidently classified single-column book pag
 - one authoritative body/footnote page map, pre-mutation collision checks, source separator
   preservation, and footnote-specific diagnostics.
 
-The pure planner applies a minimal heading-plus-following-body orphan rule and emits exact segment
-offsets. Saved candidates are reopened once and every
+The pure planner applies a minimal, style-aware heading-plus-following-body orphan rule and emits
+exact segment offsets. Saved candidates are reopened once and every
 segment is checked only in its padded target clip; page-wide text is diagnostic. Render results and
 reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
 pages, unsupported pages, zero-unplaced state, applied BODY typography, mixed-style/fallback state,

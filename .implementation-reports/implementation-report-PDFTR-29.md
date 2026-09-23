@@ -42,3 +42,31 @@ first-line indent, and before/after spacing during planning and insertion.
 The selected Cyrillic-capable font remains authoritative. Exact source font identity is preserved
 in typography evidence but is not used as a local font lookup. Bold and italic requests are exposed
 with `applied=false`; no synthetic styling or unsafe variant substitution was introduced.
+
+## Follow-up planner safety fix
+
+- Replaced the heading orphan vertical estimate with the normal style-aware `TextMeasurer` and
+  fitting-prefix path, including BODY spacing, effective width, and true first-line indentation.
+- Added one physical geometry check shared by ordinary planning and orphan evaluation. Safe
+  hanging indents remain supported; first-line starts outside the flow region fail closed with
+  `UnsupportedLayoutError` before PDF mutation.
+- Added deterministic regressions for geometry-driven heading movement, safe negative indentation,
+  and unsafe hanging-indent rejection. Existing continuation semantics remain covered.
+
+### Follow-up files changed
+
+- `src/pdftranslate/rendering/reflow/planner.py`
+- `tests/test_reflow_production.py`
+- `CHANGELOG.md`
+- `docs/reflow-architecture.md`
+- `knowledge/wiki/architecture/reflow-layout.md`
+- `knowledge/wiki/log.md`
+- this implementation report and `reviews/review-PDFTR-29.md`
+
+### Follow-up validation
+
+- Focused planner/rendering/diagnostics tests: 43 passed.
+- Full `scripts/check.ps1`: ProjectWiki lint clean, Ruff format/check clean, mypy clean,
+  328 passed, 1 skipped, total coverage 89.15%.
+- Cached Robitzsch rerun: 61 units, 7 BODY occurrences in 7 segments, 4 inserted pages,
+  overflow 0, BODY unplaced 0, footnote unplaced 0. Pagination remained unchanged.

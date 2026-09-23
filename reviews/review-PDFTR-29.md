@@ -33,3 +33,23 @@
 - Robitzsch: 61/61 units, overflow 0, unplaced 0, footnote unplaced 0, 8 output pages.
 - Source pages 1/3/4 were visually compared with output pages 1/5/7; no clipping, overlap, missing
   BODY text, or anchor regression was found.
+
+## Follow-up fix: heading orphan and hanging-indent safety
+
+- The orphan guard now proves the configured following BODY line count through the production
+  style-aware measurer instead of estimating height alone.
+- Valid negative first-line indents remain supported, while geometry escaping the flow region is
+  rejected before mutation.
+- Added deterministic regressions for both fixes; the pre-existing heading and continuation tests
+  remain authoritative.
+
+### Follow-up validation
+
+- Focused planner/rendering/diagnostics tests: 43 passed.
+- Full quality gate: 328 passed, 1 skipped, 89.15% coverage; Ruff, mypy, and ProjectWiki lint clean.
+- Cached Robitzsch: 61 units, 7 BODY segments, 4 inserted pages, overflow 0, BODY unplaced 0,
+  footnote unplaced 0; pagination unchanged.
+
+## Final review status
+
+READY FOR REVIEW

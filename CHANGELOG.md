@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Made the heading orphan guard use the same style-aware BODY measurement path as normal reflow,
+  and rejected hanging indents whose physical first-line start escapes the safe flow region.
 - Prevented the typography inspection JSON output from aliasing and overwriting its source PDF.
 - Kept typography role-region and paragraph-gap geometry isolated by source column, and stopped
   missing line baselines from joining non-adjacent lines into a false doubled line height.

@@ -115,3 +115,9 @@ participate in planning. First-line indent and space-before apply only to a para
 segment; space-after applies only after completion. Heading and footnote styles do not consume the
 adapter. Diagnostics retain mixed-style/fallback state and distinguish requested from applied
 bold/italic. See [Paragraph style reconstruction](style-reconstruction.md).
+
+The heading orphan decision uses the same BODY `TextMeasurer`, effective width, first-line indent,
+alignment, font size, line height, and one-time spacing as ordinary planning. It requires only the
+configured minimum following BODY lines, not the whole paragraph. Negative first-line indents are
+accepted when their physical start remains inside the flow region; unsafe hanging-indent geometry
+fails closed before mutation rather than being clamped.
