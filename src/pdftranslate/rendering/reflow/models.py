@@ -25,6 +25,13 @@ class ReflowContentKind(StrEnum):
     FOOTNOTE = "footnote"
 
 
+class ReflowAlignment(StrEnum):
+    LEFT = "left"
+    CENTER = "center"
+    RIGHT = "right"
+    JUSTIFIED = "justified"
+
+
 @dataclass(frozen=True)
 class Rect:
     x0: float
@@ -62,11 +69,30 @@ class Rect:
 class ReflowStyle:
     font_size: float
     line_height: float
-    paragraph_spacing: float
+    space_before: float
+    space_after: float
+    first_line_indent: float = 0.0
+    left_indent: float = 0.0
+    right_indent: float = 0.0
+    alignment: ReflowAlignment = ReflowAlignment.LEFT
     heading: bool = False
+    bold_requested: bool = False
+    bold_applied: bool = False
+    italic_requested: bool = False
+    italic_applied: bool = False
+    mixed_style: bool = False
+    fallback_count: int = 0
 
     def __post_init__(self) -> None:
-        if self.font_size <= 0 or self.line_height <= 0 or self.paragraph_spacing < 0:
+        if (
+            self.font_size <= 0
+            or self.line_height <= 0
+            or self.space_before < 0
+            or self.space_after < 0
+            or self.left_indent < 0
+            or self.right_indent < 0
+            or self.fallback_count < 0
+        ):
             raise ValueError("reflow style measurements must be positive")
 
 
@@ -123,6 +149,18 @@ class PlacementSegment:
     line_count: int
     color: tuple[float, float, float]
     state: PlacementState
+    alignment: ReflowAlignment = ReflowAlignment.LEFT
+    first_line_indent: float = 0.0
+    left_indent: float = 0.0
+    right_indent: float = 0.0
+    space_before: float = 0.0
+    space_after: float = 0.0
+    bold_requested: bool = False
+    bold_applied: bool = False
+    italic_requested: bool = False
+    italic_applied: bool = False
+    mixed_style: bool = False
+    fallback_count: int = 0
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ from pdftranslate.rendering.reflow.models import (
     PlacementSegment,
     PlacementState,
     Rect,
+    ReflowAlignment,
     ReflowContentKind,
     ReflowStyle,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "PlacementState",
     "PlannerOptions",
     "Rect",
+    "ReflowAlignment",
     "ReflowContentKind",
     "ReflowPage",
     "ReflowStyle",

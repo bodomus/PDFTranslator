@@ -50,6 +50,8 @@ family, 10.959 pt BODY size, 1.138 BODY line-height ratio, and 7.970 pt FOOTNOTE
 the mixed BODY alignment aggregate and one-line FOOTNOTE geometry unstable. No HEADING occurrence
 or baseline is fabricated.
 
-Production rendering does not import or consume this contract. The current `ReflowStyle`, font
-selection, completeness accounting, pagination, and nine-page Robitzsch behavior remain the
-PDFTR-24 path until PDFTR-29 activates a tested adapter.
+PDFTR-29 consumes this contract once per document through a BODY-only adapter keyed by occurrence
+index. Production BODY planning applies size, line height, color, physical alignment, indents, and
+spacing before pagination. The selected Cyrillic-capable font remains authoritative; exact source
+font identity is unchanged evidence, while requested bold/italic are diagnosed as unapplied until
+a safe variant resolver exists. Heading and footnote style selection remain on their previous path.

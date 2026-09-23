@@ -34,14 +34,24 @@ from pdftranslate.rendering.reflow import (
     FlowRegion,
     Measurement,
     Rect,
+    ReflowAlignment,
     ReflowContentKind,
     ReflowStyle,
+    UnsupportedLayoutError,
     discover_footnote_page,
     discover_reflow_page,
     plan_flow,
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
 from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
+from pdftranslate.rendering.reflow.typography import body_reflow_style
+from pdftranslate.typography import (
+    MixedStyleEvidence,
+    RgbColor,
+    TextAlignment,
+    extract_typography_evidence,
+    reconstruct_styles,
+)
 
 
 class CapacityMeasurer:
@@ -51,11 +61,12 @@ class CapacityMeasurer:
         *,
         width: float,
         height: float,
-        font_size: float,
-        line_height: float,
+        style: ReflowStyle,
+        first_segment: bool,
     ) -> Measurement:
+        del first_segment
         lines = math.ceil(len(text) / max(1, int(width))) if text else 0
-        used = lines * font_size * line_height
+        used = lines * style.font_size * style.line_height
         return Measurement(used <= height, used, lines)
 
 
@@ -81,7 +92,8 @@ def _flow(
         style=ReflowStyle(
             font_size=12 if heading else 10,
             line_height=1,
-            paragraph_spacing=4,
+            space_before=0,
+            space_after=4,
             heading=heading,
         ),
     )
@@ -102,7 +114,7 @@ def _footnote(index: int, text: str, *, paragraph_id: str | None = None) -> Flow
         text=text,
         source_rect=rect,
         source_fragment_rects=(rect,),
-        style=ReflowStyle(font_size=8, line_height=1, paragraph_spacing=2),
+        style=ReflowStyle(font_size=8, line_height=1, space_before=0, space_after=2),
     )
 
 
@@ -149,7 +161,7 @@ def test_footnote_planner_continues_then_places_following_note() -> None:
 
     plan = plan_flow(
         paragraphs,
-        (_region(1, 0), _region(2, 1, height=120)),
+        (_region(1, 0, height=32), _region(2, 1, height=120)),
         CapacityMeasurer(),
         content_kind=ReflowContentKind.FOOTNOTE,
     )
@@ -174,6 +186,63 @@ def test_heading_moves_forward_when_it_would_be_orphaned() -> None:
     assert heading.target_page_number == 2
     assert body.target_page_number == 2
     assert heading.font_size > body.font_size
+
+
+def test_body_typography_controls_indents_spacing_and_continuation_once() -> None:
+    paragraph = _flow(0, "word " * 250)
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1.1,
+                space_before=3,
+                space_after=4,
+                first_line_indent=12,
+                left_indent=5,
+                right_indent=7,
+                alignment=ReflowAlignment.RIGHT,
+            ),
+        }
+    )
+
+    plan = plan_flow(
+        (paragraph,),
+        (_region(1, 0, height=25), _region(2, 1, height=100)),
+        CapacityMeasurer(),
+    )
+
+    assert len(plan.segments) > 1
+    first, continuation = plan.segments[:2]
+    assert first.target_rect.x0 == 45
+    assert first.target_rect.x1 == 253
+    assert first.target_rect.y0 == 63
+    assert first.first_line_indent == 12
+    assert first.space_before == 3
+    assert continuation.first_line_indent == 0
+    assert continuation.space_before == 0
+    assert plan.segments[-1].space_after == 4
+    assert all(item.alignment is ReflowAlignment.RIGHT for item in plan.segments)
+
+
+def test_body_typography_rejects_indents_that_remove_usable_width() -> None:
+    paragraph = _flow(0, "unsafe")
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1.2,
+                space_before=0,
+                space_after=0,
+                left_indent=120,
+                right_indent=101,
+            ),
+        }
+    )
+
+    with pytest.raises(UnsupportedLayoutError, match="indents"):
+        plan_flow((paragraph,), (_region(1, 0),), CapacityMeasurer())
 
 
 def test_segment_local_validation_rejects_missing_duplicate(tmp_path: Path) -> None:
@@ -275,6 +344,82 @@ def test_region_discovery_rejects_ambiguous_and_drawing_intersections() -> None:
     image_pdf.close()
 
 
+def test_body_discovery_maps_resolved_styles_by_occurrence_not_paragraph_id() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    paragraphs = list(document.paragraphs)
+    paragraphs[1] = paragraphs[1].model_copy(update={"id": "duplicate"})
+    paragraphs[2] = paragraphs[2].model_copy(update={"id": "duplicate"})
+    document = document.model_copy(update={"paragraphs": tuple(paragraphs)})
+    resolved = reconstruct_styles(extract_typography_evidence(document))
+    style_by_occurrence = {item.occurrence_index: item for item in resolved.paragraphs}
+    style_by_occurrence[1] = style_by_occurrence[1].model_copy(
+        update={
+            "font_size_points": 9.0,
+            "line_height_ratio": 1.3,
+            "first_line_indent_points": 8.0,
+            "left_indent_points": 4.0,
+            "right_indent_points": 6.0,
+            "space_before_points": 2.0,
+            "space_after_points": 5.0,
+            "alignment": TextAlignment.RIGHT,
+            "color_rgb": RgbColor(red=32, green=64, blue=96),
+        }
+    )
+    style_by_occurrence[2] = style_by_occurrence[2].model_copy(
+        update={"font_size_points": 13.0, "alignment": TextAlignment.CENTER}
+    )
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        discovered = discover_reflow_page(
+            document,
+            page_model,
+            page,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+            style_by_occurrence=style_by_occurrence,
+        )
+    finally:
+        pdf.close()
+
+    assert discovered is not None
+    first_body, second_body = discovered.paragraphs[1:]
+    assert first_body.paragraph_id == second_body.paragraph_id == "duplicate"
+    assert first_body.style.font_size == 9.0
+    assert second_body.style.font_size == 13.0
+    assert first_body.style.alignment is ReflowAlignment.RIGHT
+    assert second_body.style.alignment is ReflowAlignment.CENTER
+    assert first_body.color == pytest.approx((32 / 255, 64 / 255, 96 / 255))
+    assert discovered.paragraphs[0].style.heading is True
+
+
+def test_body_style_reports_requested_bold_italic_and_mixed_without_faking_faces() -> None:
+    document, _ = _classified_document(ambiguous=False)
+    resolved = reconstruct_styles(extract_typography_evidence(document)).paragraphs[1]
+    resolved = resolved.model_copy(
+        update={
+            "bold": True,
+            "italic": True,
+            "mixed_styles": MixedStyleEvidence(
+                mixed_font_family=False,
+                mixed_font_size=False,
+                mixed_weight=True,
+                mixed_italic=True,
+                mixed_color=False,
+            ),
+        }
+    )
+
+    style, _ = body_reflow_style(resolved)
+
+    assert style.bold_requested is True
+    assert style.bold_applied is False
+    assert style.italic_requested is True
+    assert style.italic_applied is False
+    assert style.mixed_style is True
+
+
 def test_footnote_region_discovery_rejects_unsafe_objects() -> None:
     document, page_model = _classified_document(ambiguous=False)
     pdf = pymupdf.open()
@@ -353,7 +498,21 @@ def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
     assert result.reflowed_paragraphs == 3
     assert result.inserted_pages >= 1
     assert result.unplaced_text_count == 0
-    assert any(item.strategy is RenderStrategy.REFLOW_LAYOUT for item in result.blocks)
+    body_results = tuple(
+        item
+        for item in result.blocks
+        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.applied_line_height is not None
+    )
+    assert len(body_results) == 2
+    assert all(item.applied_alignment is not None for item in body_results)
+    assert all(item.bold_applied is False for item in body_results)
+    assert all(item.italic_applied is False for item in body_results)
+    heading_result = next(
+        item
+        for item in result.blocks
+        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.applied_line_height is None
+    )
+    assert heading_result.applied_alignment is None
     rendered = pymupdf.open(output)
     try:
         text = " ".join(str(page.get_text("text")) for page in rendered)
@@ -392,6 +551,8 @@ def test_renderer_paginates_footnotes_after_body_pages_and_preserves_separator(
     assert result.footnotes_reflowed == 1
     assert result.footnote_segments == footnote.segment_count
     assert result.continued_footnotes == 1
+    assert footnote.applied_line_height is None
+    assert footnote.applied_alignment is None
     assert result.footnote_continuation_pages >= 1
     assert result.footnote_unplaced_text_count == 0
     assert footnote.page_number == 1

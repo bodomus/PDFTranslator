@@ -20,6 +20,10 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-23
 
+- Activated reconstructed typography for production BODY reflow by occurrence index, including
+  shared CSS measurement/insertion, physical alignment, indents, one-time spacing, applied-style
+  diagnostics, and explicit deferred bold/italic variants without changing heading or footnote
+  style selection.
 - Added the paragraph style reconstruction boundary: robust role baselines, direct/role/document/
   default precedence, traceable fallbacks, conservative font grouping, one-gap spacing, retained
   mixed-style evidence, Robitzsch stability findings, and the inactive PDFTR-29 renderer boundary.

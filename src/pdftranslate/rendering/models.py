@@ -87,6 +87,20 @@ class BlockRenderResult:
     continuation_count: int = 0
     target_rects: tuple[BoundingBox, ...] = ()
     text_offsets: tuple[tuple[int, int], ...] = ()
+    applied_line_height: float | None = None
+    applied_alignment: str | None = None
+    applied_first_line_indent: float | None = None
+    applied_left_indent: float | None = None
+    applied_right_indent: float | None = None
+    applied_space_before: float | None = None
+    applied_space_after: float | None = None
+    applied_color: tuple[float, float, float] | None = None
+    bold_requested: bool | None = None
+    bold_applied: bool | None = None
+    italic_requested: bool | None = None
+    italic_applied: bool | None = None
+    mixed_style: bool | None = None
+    style_fallback_count: int | None = None
 
 
 @dataclass(frozen=True)

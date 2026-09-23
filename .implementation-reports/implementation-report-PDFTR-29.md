@@ -1,0 +1,44 @@
+# PDFTR-29 implementation report
+
+## Outcome
+
+Production single-column BODY reflow now reconstructs typography once per schema 1.3 document and
+maps styles to logical paragraphs by authoritative occurrence index. The renderer applies the
+resolved BODY size, line-height ratio, RGB color, physical alignment, left/right indent,
+first-line indent, and before/after spacing during planning and insertion.
+
+## Implementation
+
+- Added a BODY-only adapter from `ResolvedParagraphStyle` to the compact reflow contract.
+- Expanded `ReflowStyle` and `PlacementSegment` with alignment, indents, spacing, mixed-style,
+  fallback, and requested/applied bold/italic state.
+- Reconstructed styles once in `PdfRenderer.render()` and passed an occurrence-index map to body
+  discovery. Paragraph id is validated but is not the lookup key.
+- Kept heading and footnote style selection outside the typography adapter.
+- Made left/right indents reduce usable region width, first-line indent and space-before apply only
+  to the first segment, and space-after apply only after the completing segment.
+- Unified PyMuPDF fitting and insertion on the same HTML/CSS textbox representation with automatic
+  scaling disabled and numeric HTML character references for safe Cyrillic/Greek embedding.
+- Retained strict pre-mutation exact accounting, capacity failure, saved segment-local validation,
+  reopen validation, and atomic destination replacement.
+- Extended render/report diagnostics with physically applied BODY typography and explicit
+  requested-versus-applied bold/italic state. Bold/italic variants remain safely deferred.
+
+## Verification
+
+- Focused reflow/rendering/diagnostics tests: 40 passed.
+- Full `scripts/check.ps1`: ProjectWiki lint clean, Ruff format/check clean, mypy clean,
+  325 passed, 1 skipped, total coverage 89.15%.
+- Real cached Robitzsch validation: 61/61 render units, 7 BODY occurrences, 7 BODY segments,
+  35 footnotes, 4 inserted pages, overflow 0, BODY unplaced 0, footnote unplaced 0.
+- Compared Poppler PNGs for source pages 1, 3, and 4 with corresponding output pages 1, 5, and 7.
+  Text remained selectable and legible, paragraph indentation/alignment were visible, and no
+  clipping, overlap, or missing BODY text was observed.
+- Machine-readable representative metrics are stored under ignored
+  `temp/pdftr29-real/visual-fidelity-metrics.json`.
+
+## Deferred behavior
+
+The selected Cyrillic-capable font remains authoritative. Exact source font identity is preserved
+in typography evidence but is not used as a local font lookup. Bold and italic requests are exposed
+with `applied=false`; no synthetic styling or unsafe variant substitution was introduced.

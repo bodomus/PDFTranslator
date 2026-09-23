@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import html
 import math
 import unicodedata
 from pathlib import Path
@@ -10,7 +11,12 @@ from pathlib import Path
 import pymupdf
 
 from pdftranslate.rendering.errors import OutputPdfError
-from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, Rect
+from pdftranslate.rendering.reflow.models import (
+    LayoutPlan,
+    PlacementSegment,
+    Rect,
+    ReflowStyle,
+)
 from pdftranslate.rendering.reflow.planner import Measurement
 
 _FONT_NAME = "PDFTranslateReflowFont"
@@ -22,8 +28,10 @@ _PDF_VALIDATION_TEXT = str.maketrans(
 class PyMuPdfMeasurer:
     def __init__(self, page_width: float, page_height: float, font_path: Path) -> None:
         self._document = pymupdf.open()
-        self._page = self._document.new_page(width=page_width, height=page_height)
+        self._page_width = page_width
+        self._page_height = page_height
         self._font_path = font_path
+        self._archive = pymupdf.Archive(str(font_path.parent))
 
     def __enter__(self) -> PyMuPdfMeasurer:
         return self
@@ -37,24 +45,36 @@ class PyMuPdfMeasurer:
         *,
         width: float,
         height: float,
-        font_size: float,
-        line_height: float,
+        style: ReflowStyle,
+        first_segment: bool,
     ) -> Measurement:
         if not text:
             return Measurement(True, 0.0, 0)
-        shape = self._page.new_shape()
-        remaining = shape.insert_textbox(
-            pymupdf.Rect(0, 0, width, height),
-            text,
-            fontname=_FONT_NAME,
-            fontfile=str(self._font_path),
-            fontsize=font_size,
-            lineheight=line_height,
-        )
-        if remaining < -1e-6:
+        page = self._document.new_page(width=self._page_width, height=self._page_height)
+        try:
+            remaining, scale = page.insert_htmlbox(
+                pymupdf.Rect(0, 0, width, height),
+                _segment_html(text),
+                css=_segment_css(
+                    self._font_path,
+                    style,
+                    (0.0, 0.0, 0.0),
+                    first_line_indent=style.first_line_indent if first_segment else 0.0,
+                ),
+                archive=self._archive,
+                scale_low=1,
+                overlay=False,
+            )
+        finally:
+            self._document.delete_page(page.number)
+        if remaining < -1e-6 or abs(scale - 1.0) > 1e-6:
             return Measurement(False, height, 0)
-        used = max(font_size * line_height, height - float(remaining))
-        return Measurement(True, used, max(1, math.ceil(used / (font_size * line_height))))
+        used = max(style.font_size * style.line_height, height - float(remaining))
+        return Measurement(
+            True,
+            used,
+            max(1, math.ceil(used / (style.font_size * style.line_height))),
+        )
 
 
 def redact_reflow_fragments(
@@ -104,25 +124,65 @@ def insert_continuation_pages(
 def insert_reflow_segments(
     document: pymupdf.Document, plans: tuple[LayoutPlan, ...], font_path: Path
 ) -> None:
+    archive = pymupdf.Archive(str(font_path.parent))
     for plan in plans:
         for segment in plan.segments:
             page = document[segment.target_page_number - 1]
-            shape = page.new_shape()
-            remaining = shape.insert_textbox(
-                _pymupdf_rect(segment.target_rect),
-                segment.text,
-                fontname=_FONT_NAME,
-                fontfile=str(font_path),
-                fontsize=segment.font_size,
-                lineheight=segment.line_height,
-                color=segment.color,
+            style = ReflowStyle(
+                font_size=segment.font_size,
+                line_height=segment.line_height,
+                space_before=segment.space_before,
+                space_after=segment.space_after,
+                first_line_indent=segment.first_line_indent,
+                left_indent=segment.left_indent,
+                right_indent=segment.right_indent,
+                alignment=segment.alignment,
+                bold_requested=segment.bold_requested,
+                bold_applied=segment.bold_applied,
+                italic_requested=segment.italic_requested,
+                italic_applied=segment.italic_applied,
+                mixed_style=segment.mixed_style,
+                fallback_count=segment.fallback_count,
             )
-            if remaining < -0.1:
+            remaining, scale = page.insert_htmlbox(
+                _pymupdf_rect(segment.target_rect),
+                _segment_html(segment.text),
+                css=_segment_css(
+                    font_path,
+                    style,
+                    segment.color,
+                    first_line_indent=segment.first_line_indent,
+                ),
+                archive=archive,
+                scale_low=1,
+            )
+            if remaining < -0.1 or abs(scale - 1.0) > 1e-6:
                 raise OutputPdfError(
                     "reflow layout changed during insertion for occurrence "
                     f"{segment.occurrence_index}, continuation {segment.continuation_index}"
                 )
-            shape.commit(overlay=True)
+
+
+def _segment_html(text: str) -> str:
+    escaped = html.escape(text).replace("\n", "<br>")
+    return f"<p>{escaped.encode('ascii', 'xmlcharrefreplace').decode('ascii')}</p>"
+
+
+def _segment_css(
+    font_path: Path,
+    style: ReflowStyle,
+    color: tuple[float, float, float],
+    *,
+    first_line_indent: float,
+) -> str:
+    red, green, blue = (round(component * 255) for component in color)
+    return (
+        f'@font-face {{ font-family: "{_FONT_NAME}"; src: url("{font_path.name}"); }} '
+        "* { margin: 0; padding: 0; } "
+        f'p {{ font-family: "{_FONT_NAME}"; font-size: {style.font_size:.6f}pt; '
+        f"line-height: {style.line_height:.6f}; text-align: {style.alignment.value}; "
+        f"text-indent: {first_line_indent:.6f}pt; color: rgb({red}, {green}, {blue}); }}"
+    )
 
 
 def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:

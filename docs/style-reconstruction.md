@@ -1,9 +1,9 @@
 # Paragraph style reconstruction
 
-PDFTR-28 converts the source-backed evidence from PDFTR-27 into a stable, versioned style contract
-for future renderer integration. The policy is pure domain logic: it consumes an in-memory
-`TypographyBaseline`, does not reopen a PDF, and does not inspect installed fonts or change current
-rendering.
+PDFTR-28 converts the source-backed evidence from PDFTR-27 into a stable, versioned style contract.
+The policy is pure domain logic: it consumes an in-memory `TypographyBaseline`, does not reopen a
+PDF, and does not inspect installed fonts. PDFTR-29 now consumes the resolved contract at the
+production BODY reflow boundary; headings and footnotes retain their existing local styling.
 
 ## Contracts and API
 
@@ -136,7 +136,18 @@ The generated evidence belongs under ignored `temp/pdftr28/`; it is not committe
 
 ## Rendering boundary
 
-No production renderer module imports reconstruction and no `ResolvedParagraphStyle → ReflowStyle`
-adapter is active. Current `RenderOptions`, body/footnote discovery, font selection, pagination,
-placement, and publication remain unchanged. PDFTR-29 may consume this contract only after mapping
-each property to proven renderer behavior.
+The production renderer reconstructs typography once for a schema-1.3 translated document and
+maps BODY styles by occurrence index. The `ResolvedParagraphStyle → ReflowStyle` adapter applies
+font size, line-height ratio, paragraph spacing, first/left/right indents, physical alignment, and
+RGB color. Duplicate paragraph IDs are therefore safe and do not participate in style lookup.
+
+The planner subtracts left/right indents from usable width and fails closed when they leave no safe
+geometry. Space-before and first-line indent apply only to the first segment; space-after applies
+only after the final segment. Alignment and paragraph indents persist across continuation pages.
+Measurement and insertion use the same HTML/CSS path so the chosen font, line height, alignment,
+indent, and color are evaluated consistently.
+
+The current font boundary deliberately does not synthesize bold or italic faces. Diagnostics retain
+the requested values and report both as unapplied. Mixed-style evidence and fallback counts also
+remain visible, while inline run reconstruction stays out of scope. HEADING and FOOTNOTE rendering
+and diagnostics remain unchanged by this BODY-only integration.
