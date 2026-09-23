@@ -232,6 +232,48 @@ def test_source_font_identity_and_family_group_remain_distinct() -> None:
     )
 
 
+def test_low_confidence_source_font_uses_stable_role_family() -> None:
+    low = _evidence(
+        2,
+        font_name="HelveticaNeue",
+        confidence=TypographyConfidence.LOW,
+    )
+    baseline = build_document_style_baseline(
+        _typography(
+            _evidence(0, font_name="AGaramondPro-Regular"),
+            _evidence(1, font_name="AGaramondPro-Italic"),
+            low,
+        )
+    )
+
+    resolved = resolve_paragraph_style(low, baseline)
+
+    assert resolved.source_font_name == "HelveticaNeue"
+    assert resolved.source_font_family_group == "AGaramondPro"
+    assert resolved.decisions.source_font_family_group.source is StyleDecisionSource.ROLE_BASELINE
+    assert resolved.decisions.source_font_family_group.evidence_value == "HelveticaNeue"
+
+
+def test_low_confidence_source_font_uses_stable_role_font_role() -> None:
+    low = _evidence(
+        2,
+        font_name="HelveticaNeue",
+        confidence=TypographyConfidence.LOW,
+    )
+    baseline = build_document_style_baseline(
+        _typography(
+            _evidence(0, font_name="AGaramondPro-Regular"),
+            _evidence(1, font_name="AGaramondPro-Italic"),
+            low,
+        )
+    )
+
+    resolved = resolve_paragraph_style(low, baseline)
+
+    assert resolved.font_role is FontRole.SERIF
+    assert resolved.decisions.font_role.source is StyleDecisionSource.ROLE_BASELINE
+
+
 @pytest.mark.parametrize(
     ("name", "expected"),
     [

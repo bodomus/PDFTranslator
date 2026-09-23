@@ -477,7 +477,7 @@ def _family_decision(
     evidence: TypographyProperty[str],
     baseline: RoleStyleBaseline | None,
 ) -> StyleDecision[str | None]:
-    if evidence.value:
+    if evidence.value and _is_reliable(evidence):
         return StyleDecision(
             value=normalize_font_family_group(evidence.value),
             evidence_value=evidence.value,
@@ -490,21 +490,23 @@ def _family_decision(
     if role_value and role_value.stable and role_value.value is not None:
         return StyleDecision(
             value=role_value.value,
-            evidence_value=None,
+            evidence_value=evidence.value,
             evidence_confidence=evidence.confidence,
             source=StyleDecisionSource.ROLE_BASELINE,
             confidence=role_value.confidence,
             used_fallback=True,
-            fallback_reason="source font family is unavailable; used stable same-role family",
+            fallback_reason=(
+                "source font family is unavailable or unreliable; used stable same-role family"
+            ),
         )
     return StyleDecision(
         value=None,
-        evidence_value=None,
+        evidence_value=evidence.value,
         evidence_confidence=evidence.confidence,
         source=StyleDecisionSource.UNRESOLVED,
         confidence=TypographyConfidence.UNKNOWN,
         used_fallback=False,
-        fallback_reason="source font family is unavailable and is never fabricated",
+        fallback_reason=("source font family is unavailable or unreliable and is never fabricated"),
     )
 
 
@@ -513,7 +515,7 @@ def _font_role_decision(
     baseline: RoleStyleBaseline | None,
 ) -> StyleDecision[FontRole]:
     inferred = infer_font_role(evidence.value)
-    if evidence.value and inferred is not FontRole.UNKNOWN:
+    if evidence.value and _is_reliable(evidence) and inferred is not FontRole.UNKNOWN:
         return StyleDecision(
             value=inferred,
             evidence_value=inferred,

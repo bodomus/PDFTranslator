@@ -41,6 +41,10 @@ renderer/reflow files are unchanged, and their regression suite passes.
 
 ## Verification
 
+- Follow-up regression fix: low-confidence source font names no longer override stable same-role
+  family or generic font-role baselines; literal `source_font_name` identity remains preserved.
+- Follow-up focused style reconstruction suite: **28 passed**.
+- Follow-up full `scripts/check.ps1`: **321 passed, 1 skipped**, **88.74% coverage**.
 - Focused style/evidence/reflow/render/diagnostics: **86 passed**.
 - Full `scripts/check.ps1`: **319 passed, 1 skipped**, **88.64% coverage**.
 - Ruff format/lint and mypy: passed.

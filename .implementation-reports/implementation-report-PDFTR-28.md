@@ -168,6 +168,12 @@ pass.
 
 ## Validation
 
+- Follow-up confidence-policy regression: `_family_decision()` and `_font_role_decision()` now
+  accept source-derived values only at HIGH/MEDIUM confidence. Two regression tests verify that a
+  LOW source font falls back to stable same-role family and generic font role while preserving the
+  literal source font identity and diagnostic evidence value.
+- Follow-up focused style reconstruction tests: 28 passed
+- Follow-up full `scripts/check.ps1`: 321 passed, 1 skipped, 88.74% coverage
 - Focused style/evidence tests: 50 passed
 - Focused style/evidence/reflow/render/diagnostics tests: 86 passed
 - Real developer script: 61 resolved occurrences; page and occurrence filtering verified
