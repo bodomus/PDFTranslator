@@ -48,6 +48,20 @@ Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Exi
 `knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
 durable new knowledge should change after a non-trivial ticket.
 
+Source-backed paragraph typography can be inspected without translation or rendering. The
+standalone developer command reports occurrence identity, role, dominant source style,
+confidence/provenance, geometry inference, and mixed-style flags; optional JSON output belongs
+under `temp/` during local investigation:
+
+```powershell
+uv run python -m scripts.typography_inspect SOURCE.pdf --pages 1,3-4
+uv run python -m scripts.typography_inspect SOURCE.pdf --occurrences 38-42 `
+  --output .\temp\pdftr27\typography.json
+```
+
+See [typography evidence](docs/typography-evidence.md) for the typed contract, confidence rules,
+Robitzsch verification, and current limitations.
+
 ## Production body and footnote reflow
 
 Schema 1.3 rendering automatically uses production reflow for confidently classified

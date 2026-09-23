@@ -38,6 +38,8 @@ class TextSpan(DomainModel):
     font_name: str | None = None
     font_size: float | None = Field(default=None, ge=0)
     text_color: int | None = Field(default=None, ge=0)
+    font_flags: int | None = Field(default=None, ge=0)
+    origin: tuple[float, float] | None = None
     bold: bool | None = None
     italic: bool | None = None
 
