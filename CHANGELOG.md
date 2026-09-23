@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Prevented the typography inspection JSON output from aliasing and overwriting its source PDF.
+- Kept typography role-region and paragraph-gap geometry isolated by source column, and stopped
+  missing line baselines from joining non-adjacent lines into a false doubled line height.
 - Made the PDFTR-22 reflow PoC post-save validation segment-local, so identical text in another
   placement cannot falsely prove that a missing segment was saved; region extraction is now
   diagnostic-only evidence.
@@ -24,6 +27,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added a versioned renderer-facing paragraph style reconstruction contract with role-aware robust
+  baselines, per-property source/fallback decisions, conservative font family/role inference,
+  mixed-style preservation, JSON round-tripping, and opt-in `typography_inspect --resolved`
+  diagnostics. Production rendering remains unchanged until PDFTR-29.
 - Typed source-backed typography evidence for every logical paragraph occurrence, including
   dominant source font/size/color, flag-derived bold/italic, conservative alignment, baseline
   spacing, indents, canonical gap-before evidence, categorical confidence/provenance/fallback,

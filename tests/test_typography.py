@@ -61,6 +61,7 @@ def _paragraph(
     lines: Sequence[tuple[Box, Sequence[TextSpan]]],
     *,
     page: int = 1,
+    column: int = 0,
 ) -> LogicalParagraph:
     fragments: list[ParagraphFragment] = []
     for index, (raw_box, spans) in enumerate(lines):
@@ -80,7 +81,7 @@ def _paragraph(
                     line_ids=(f"{identifier}-l{index + 1}",),
                 ),
                 spans=tuple(spans),
-                column=0,
+                column=column,
             )
         )
     boxes = [fragment.bbox for fragment in fragments]
@@ -110,6 +111,7 @@ def _simple_paragraph(
     bold: bool = False,
     italic: bool = False,
     color: int = 0,
+    column: int = 0,
 ) -> LogicalParagraph:
     return _paragraph(
         identifier,
@@ -132,6 +134,7 @@ def _simple_paragraph(
             )
             for index, box in enumerate(boxes)
         ),
+        column=column,
     )
 
 
@@ -295,6 +298,32 @@ def test_line_height_uses_source_baseline_distance() -> None:
     assert result.line_height_points.confidence is TypographyConfidence.MEDIUM
 
 
+def test_line_height_does_not_pair_non_adjacent_retained_baselines() -> None:
+    boxes = ((50.0, 91.0, 500.0, 103.0), (50.0, 103.0, 500.0, 115.0), (50.0, 115.0, 300.0, 127.0))
+    paragraph = _paragraph(
+        "p1",
+        ParagraphKind.BODY,
+        tuple(
+            (
+                box,
+                (
+                    _span(
+                        f"line {index} has meaningful source text",
+                        box,
+                        baseline=None if index == 1 else box[1] + 9,
+                    ),
+                ),
+            )
+            for index, box in enumerate(boxes)
+        ),
+    )
+
+    result = _evidence(paragraph)
+
+    assert result.line_height_points.value == 12
+    assert result.line_height_points.confidence is TypographyConfidence.LOW
+
+
 def test_single_line_has_unknown_line_height() -> None:
     result = _evidence(_simple_paragraph("p1", ((50, 100, 500, 112),)))
 
@@ -318,6 +347,18 @@ def test_whole_paragraph_indents_are_relative_to_role_region() -> None:
 
     assert result.left_indent_points.value == 30
     assert result.right_indent_points.value == 30
+
+
+def test_role_regions_do_not_combine_independent_columns() -> None:
+    left = _simple_paragraph("left", ((50, 50, 280, 62), (50, 62, 240, 74)), column=0)
+    right = _simple_paragraph("right", ((330, 50, 550, 62), (330, 62, 500, 74)), column=1)
+
+    baseline = extract_typography_evidence(_document(left, right))
+
+    assert baseline.paragraphs[0].left_indent_points.value == 0
+    assert baseline.paragraphs[0].right_indent_points.value == 0
+    assert baseline.paragraphs[1].left_indent_points.value == 0
+    assert baseline.paragraphs[1].right_indent_points.value == 0
 
 
 def test_footnote_role_and_smaller_source_size_are_retained() -> None:
@@ -415,3 +456,13 @@ def test_spacing_uses_only_canonical_observed_gap_before() -> None:
     assert result.space_before_points.value == pytest.approx(12)
     assert result.space_before_points.confidence is TypographyConfidence.LOW
     assert result.space_after_points.value is None
+
+
+def test_spacing_does_not_measure_across_columns() -> None:
+    previous = _simple_paragraph("previous", ((50, 100, 280, 112),), column=0)
+    current = _simple_paragraph("current", ((330, 124, 550, 136),), column=1)
+
+    result = _evidence(previous, current, index=1)
+
+    assert result.space_before_points.value is None
+    assert result.space_before_points.confidence is TypographyConfidence.UNKNOWN

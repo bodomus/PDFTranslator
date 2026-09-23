@@ -49,11 +49,14 @@ paragraph remains unknown.
 
 First-line indent is the first line's left edge relative to the median following-line edge, so
 hanging indents remain negative. Whole-paragraph left/right indents are measured against the
-observed source-page region for the same role; headings share the body region.
+observed source-page region for the same role and column; headings share the body region within
+their own column. Cross-column edges are never combined.
 
 Spacing uses one canonical representation: `space_before_points` is the non-negative gap from the
-immediately preceding same-page occurrence and has low confidence. `space_after_points` remains
-unknown so the same physical gap is never counted twice.
+immediately preceding same-page, same-column occurrence and has low confidence.
+`space_after_points` remains unknown so the same physical gap is never counted twice. Missing line
+baselines are not removed before pairing, preventing non-adjacent lines from creating a false
+doubled line height.
 
 ## Mixed inline evidence
 
@@ -74,6 +77,10 @@ uv run python -m scripts.typography_inspect SOURCE.pdf --occurrences 38-42 `
 
 The console view is compact. JSON contains all property values, confidence, provenance, fallback,
 and mixed-style flags without dumping raw span arrays.
+
+Add `--resolved` for the PDFTR-28 role baseline, final values, decision sources, and explicit
+fallback reasons. The command rejects any JSON output path that resolves to the source PDF. See
+[paragraph style reconstruction](style-reconstruction.md).
 
 ## Robitzsch source verification
 

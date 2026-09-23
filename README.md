@@ -57,10 +57,14 @@ under `temp/` during local investigation:
 uv run python -m scripts.typography_inspect SOURCE.pdf --pages 1,3-4
 uv run python -m scripts.typography_inspect SOURCE.pdf --occurrences 38-42 `
   --output .\temp\pdftr27\typography.json
+uv run python -m scripts.typography_inspect SOURCE.pdf --pages 1,3-4 --resolved `
+  --output .\temp\pdftr28\resolved-styles.json
 ```
 
 See [typography evidence](docs/typography-evidence.md) for the typed contract, confidence rules,
-Robitzsch verification, and current limitations.
+Robitzsch verification, and current limitations. See
+[style reconstruction](docs/style-reconstruction.md) for role baselines, deterministic precedence,
+fallback metadata, and the intentionally inactive rendering boundary.
 
 ## Production body and footnote reflow
 

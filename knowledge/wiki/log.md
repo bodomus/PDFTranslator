@@ -20,6 +20,9 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-23
 
+- Added the paragraph style reconstruction boundary: robust role baselines, direct/role/document/
+  default precedence, traceable fallbacks, conservative font grouping, one-gap spacing, retained
+  mixed-style evidence, Robitzsch stability findings, and the inactive PDFTR-29 renderer boundary.
 - Documented the derived paragraph-occurrence typography baseline: direct span/font evidence,
   categorical confidence and provenance, conservative alignment/line-height/indent/spacing
   inference, mixed-style flags, Robitzsch findings, and the explicit no-renderer-change boundary.

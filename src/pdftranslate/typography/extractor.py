@@ -56,7 +56,7 @@ def _paragraph_evidence(
     paragraph: LogicalParagraph,
     paragraphs: Sequence[LogicalParagraph],
     page_widths: dict[int, float],
-    regions: dict[tuple[int, TypographyRole], _Region],
+    regions: dict[tuple[int, int, TypographyRole], _Region],
 ) -> ParagraphTypographyEvidence:
     spans = tuple(span for span in paragraph.spans if _span_weight(span) > 0)
     role = _role(paragraph.kind)
@@ -70,7 +70,10 @@ def _paragraph_evidence(
     )
     color, mixed_color = _color_property(spans)
     fragments = _anchor_fragments(paragraph)
-    region = regions.get((paragraph.anchor_page_number, role))
+    column = _single_column(fragments)
+    region = (
+        regions.get((paragraph.anchor_page_number, column, role)) if column is not None else None
+    )
     page_width = page_widths.get(paragraph.anchor_page_number, paragraph.bbox.x1)
     alignment = _alignment_property(fragments, region, page_width, font_size.value)
     line_height_points, line_height_ratio = _line_height_properties(fragments, font_size.value)
@@ -122,22 +125,22 @@ def _role(kind: ParagraphKind) -> TypographyRole:
 
 def _role_regions(
     paragraphs: Sequence[LogicalParagraph],
-) -> dict[tuple[int, TypographyRole], _Region]:
-    edges: dict[tuple[int, TypographyRole], list[tuple[float, float]]] = {}
+) -> dict[tuple[int, int, TypographyRole], _Region]:
+    edges: dict[tuple[int, int, TypographyRole], list[tuple[float, float]]] = {}
     for paragraph in paragraphs:
         role = _role(paragraph.kind)
         region_role = TypographyRole.BODY if role is TypographyRole.HEADING else role
         for fragment in paragraph.fragments:
-            edges.setdefault((fragment.mapping.page_number, region_role), []).append(
-                (fragment.bbox.x0, fragment.bbox.x1)
-            )
+            edges.setdefault(
+                (fragment.mapping.page_number, fragment.column, region_role), []
+            ).append((fragment.bbox.x0, fragment.bbox.x1))
     regions = {
         key: _Region(min(item[0] for item in values), max(item[1] for item in values))
         for key, values in edges.items()
     }
     return regions | {
-        (page, TypographyRole.HEADING): region
-        for (page, role), region in regions.items()
+        (page, column, TypographyRole.HEADING): region
+        for (page, column, role), region in regions.items()
         if role is TypographyRole.BODY
     }
 
@@ -302,13 +305,11 @@ def _alignment_property(
 def _line_height_properties(
     fragments: Sequence[ParagraphFragment], font_size: float | None
 ) -> tuple[TypographyProperty[float], TypographyProperty[float]]:
-    baselines = [
-        baseline for fragment in fragments if (baseline := _fragment_baseline(fragment)) is not None
-    ]
+    baselines = [_fragment_baseline(fragment) for fragment in fragments]
     distances = [
         right - left
         for left, right in zip(baselines, baselines[1:], strict=False)
-        if right - left > 0.1
+        if left is not None and right is not None and right - left > 0.1
     ]
     confidence = TypographyConfidence.MEDIUM
     if not distances and len(fragments) >= 2:
@@ -376,6 +377,9 @@ def _space_before_property(
     current_fragments = _anchor_fragments(paragraph)
     if not current_fragments:
         return _unknown(TypographyFallback.ZERO_SPACING)
+    current_column = _single_column(current_fragments)
+    if current_column is None:
+        return _unknown(TypographyFallback.ZERO_SPACING)
     current_top = min(item.bbox.y0 for item in current_fragments)
     previous = paragraphs[index - 1]
     previous_fragments = tuple(
@@ -384,6 +388,8 @@ def _space_before_property(
         if item.mapping.page_number == paragraph.anchor_page_number
     )
     if not previous_fragments:
+        return _unknown(TypographyFallback.ZERO_SPACING)
+    if _single_column(previous_fragments) != current_column:
         return _unknown(TypographyFallback.ZERO_SPACING)
     previous_bottom = max(item.bbox.y1 for item in previous_fragments)
     gap = current_top - previous_bottom
@@ -425,6 +431,11 @@ def _anchor_fragments(paragraph: LogicalParagraph) -> tuple[ParagraphFragment, .
         for fragment in paragraph.fragments
         if fragment.mapping.page_number == paragraph.anchor_page_number
     )
+
+
+def _single_column(fragments: Sequence[ParagraphFragment]) -> int | None:
+    columns = {fragment.column for fragment in fragments}
+    return next(iter(columns)) if len(columns) == 1 else None
 
 
 def _dominant[K: Hashable](values: Iterable[tuple[K, int]]) -> tuple[K | None, bool]:

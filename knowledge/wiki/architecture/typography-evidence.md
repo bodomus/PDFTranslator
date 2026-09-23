@@ -18,6 +18,7 @@ sources:
 - ../../../tests/test_typography.py
 related:
 - reflow-layout.md
+- style-reconstruction.md
 - system-overview.md
 ---
 
@@ -42,6 +43,11 @@ Mixed font name, size, weight, italic, and color are reported separately from th
 paragraph baseline. Inline style reproduction is deferred. Typography is not persisted inside
 schema 1.3 and is not consumed by `ReflowStyle`, so translation resume/cache behavior, pagination,
 and rendered appearance remain unchanged.
+
+PDFTR-28 consumes this evidence through the separate
+[paragraph style reconstruction](style-reconstruction.md) boundary. Evidence regions and observed
+gaps are column-isolated, missing baselines never bridge non-adjacent lines, and the developer
+inspector protects the immutable source PDF from output aliasing.
 
 The Robitzsch source confirms 10.959 pt Garamond body evidence, 7.970 pt footnotes, approximately
 12.472 pt body baseline spacing, first-line indents near 11 pt, and mixed italic/marker/color runs.
