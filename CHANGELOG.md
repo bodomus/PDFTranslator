@@ -24,6 +24,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Typed source-backed typography evidence for every logical paragraph occurrence, including
+  dominant source font/size/color, flag-derived bold/italic, conservative alignment, baseline
+  spacing, indents, canonical gap-before evidence, categorical confidence/provenance/fallback,
+  mixed inline-style flags, and a standalone inspection command without renderer changes.
 - Production footnote-group reflow with structured lower-page region discovery, source-derived
   minimal styling, bounded dedicated continuation pages, unified body/footnote page mapping,
   collision checks, segment-local validation, footnote-specific diagnostics, and fail-closed

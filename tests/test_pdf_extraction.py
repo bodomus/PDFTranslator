@@ -73,6 +73,8 @@ def test_extracts_one_page_text_with_layout_metadata(
     assert block.spans[0].font_name
     assert block.spans[0].font_size
     assert isinstance(block.spans[0].text_color, int)
+    assert isinstance(block.spans[0].font_flags, int)
+    assert block.spans[0].origin is not None
     assert block.spans[0].bold is False
     assert block.spans[0].italic is False
     assert block.lines

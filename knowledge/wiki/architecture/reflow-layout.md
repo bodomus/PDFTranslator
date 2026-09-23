@@ -3,7 +3,7 @@ title: Body and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-22
+updated: 2026-09-23
 tags:
 - rendering
 - reflow
@@ -24,6 +24,7 @@ sources:
 - ../../../scripts/reflow_poc/planner.py
 - ../../../scripts/reflow_poc/pymupdf_adapter.py
 - ../../../tests/test_reflow_poc.py
+- ../../../docs/typography-evidence.md
 related:
 - system-overview.md
 - ../failure-modes/render-completeness.md
@@ -99,3 +100,8 @@ inserted pages, unsupported pages, and unplaced count.
 Multi-column footnotes, endnotes, marginal notes, tables, arbitrary columns, sidebars, floating
 figures, verse, and complex mathematical layout remain explicit fail-closed follow-ups. See
 `docs/reflow-architecture.md` for the full decision record and historical PoC command.
+
+PDFTR-27 adds a separate derived typography-evidence contract over the same logical occurrences.
+It does not replace or feed `ReflowStyle` yet, so the production size, spacing, pagination, and
+placement behavior documented here remain unchanged. See
+[Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.

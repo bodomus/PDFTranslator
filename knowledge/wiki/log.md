@@ -3,7 +3,7 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-22
+updated: 2026-09-23
 tags:
 - project-wiki
 - log
@@ -17,6 +17,12 @@ related:
 # ProjectWiki knowledge change log
 
 This records meaningful knowledge-base changes, not every Git commit or formatting edit.
+
+## 2026-09-23
+
+- Documented the derived paragraph-occurrence typography baseline: direct span/font evidence,
+  categorical confidence and provenance, conservative alignment/line-height/indent/spacing
+  inference, mixed-style flags, Robitzsch findings, and the explicit no-renderer-change boundary.
 
 ## 2026-09-22
 

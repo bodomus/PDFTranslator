@@ -3,7 +3,7 @@ title: PDFTranslator Knowledge Base
 type: index
 status: active
 created: 2026-09-17
-updated: 2026-09-18
+updated: 2026-09-23
 tags:
 - project-wiki
 - navigation
@@ -32,6 +32,8 @@ canonical reports, and runtime evidence remain authoritative.
 - [System overview](architecture/system-overview.md)
 - [Body-text reflow architecture](architecture/reflow-layout.md) — typed regions, paragraph
   continuations, hybrid page creation, preserved anchors, and explicit unsupported layouts.
+- [Typography evidence architecture](architecture/typography-evidence.md) — source-backed paragraph
+  style evidence, confidence/provenance, geometry inference, and mixed-style limits.
 
 ## Components
 

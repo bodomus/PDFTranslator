@@ -94,12 +94,18 @@ def _span_from_dict(span: Mapping[str, Any]) -> TextSpan | None:
     if not text:
         return None
     flags = int(span.get("flags", 0))
+    raw_origin = span.get("origin")
+    origin = tuple(cast(Iterable[float], raw_origin)) if raw_origin is not None else ()
+    if origin and len(origin) != 2:
+        raise PdfCorruptError("PDF content contains an invalid text origin")
     return TextSpan(
         text=text,
         bbox=_bbox(span["bbox"]),
         font_name=_clean_metadata_value(span.get("font")),
         font_size=float(span["size"]) if span.get("size") is not None else None,
         text_color=int(span["color"]) if span.get("color") is not None else None,
+        font_flags=flags,
+        origin=(float(origin[0]), float(origin[1])) if origin else None,
         bold=bool(flags & pymupdf.TEXT_FONT_BOLD),
         italic=bool(flags & pymupdf.TEXT_FONT_ITALIC),
     )
