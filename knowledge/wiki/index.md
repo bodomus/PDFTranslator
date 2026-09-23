@@ -34,6 +34,8 @@ canonical reports, and runtime evidence remain authoritative.
   continuations, hybrid page creation, preserved anchors, and explicit unsupported layouts.
 - [Typography evidence architecture](architecture/typography-evidence.md) — source-backed paragraph
   style evidence, confidence/provenance, geometry inference, and mixed-style limits.
+- [Paragraph style reconstruction](architecture/style-reconstruction.md) — role-aware stable
+  baselines, deterministic fallback decisions, and the inactive renderer integration boundary.
 
 ## Components
 

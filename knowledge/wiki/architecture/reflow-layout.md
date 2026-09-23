@@ -27,6 +27,7 @@ sources:
 - ../../../docs/typography-evidence.md
 related:
 - system-overview.md
+- style-reconstruction.md
 - ../failure-modes/render-completeness.md
 - ../testing/pilot-evaluation.md
 ---
@@ -105,3 +106,8 @@ PDFTR-27 adds a separate derived typography-evidence contract over the same logi
 It does not replace or feed `ReflowStyle` yet, so the production size, spacing, pagination, and
 placement behavior documented here remain unchanged. See
 [Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.
+
+PDFTR-28 now resolves that evidence into a role-aware renderer-facing contract with traceable
+fallbacks, but deliberately adds no active adapter to `ReflowStyle`. PDFTR-29 owns production body
+typography application; current reflow output therefore remains visually and paginationally
+unchanged. See [Paragraph style reconstruction](style-reconstruction.md).

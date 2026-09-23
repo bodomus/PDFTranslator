@@ -20,6 +20,7 @@ related:
 - ../failure-modes/render-completeness.md
 - ../components/foreign-language-preservation.md
 - reflow-layout.md
+- style-reconstruction.md
 ---
 
 # PDFTranslate system overview
@@ -55,6 +56,11 @@ one final page map. Each source page is followed by its bounded body continuatio
 bounded footnote continuations; see [Body and footnote reflow architecture](reflow-layout.md).
 Unsafe or unclassified layouts remain fixed only when complete, and required overflow remains
 fail-closed.
+
+Typography processing has two derived, cache-independent domain stages: source evidence and
+role-aware style reconstruction. The latter records deterministic renderer-facing decisions but is
+not yet connected to production rendering; see
+[Paragraph style reconstruction](style-reconstruction.md).
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived
 workspace per document. Advanced inspect, extract, translate, render, benchmark, and validation
