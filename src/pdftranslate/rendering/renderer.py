@@ -1107,9 +1107,10 @@ def _render_results(
                 for item in layout.segments
                 if item.occurrence_index == flow_paragraph.occurrence_index
             )
-            has_body_typography = (
+            has_resolved_typography = (
                 layout.content_kind is ReflowContentKind.BODY
-                and flow_paragraph.disposition is ContentDisposition.FLOWABLE_BODY
+                and flow_paragraph.disposition
+                in {ContentDisposition.FLOWABLE_BODY, ContentDisposition.FLOWABLE_HEADING}
             )
             results[flow_paragraph.occurrence_index] = BlockRenderResult(
                 unit_index=flow_paragraph.occurrence_index,
@@ -1137,40 +1138,42 @@ def _render_results(
                 target_rects=tuple(_bbox(_reflow_rect(item.target_rect)) for item in segments),
                 text_offsets=tuple((item.text_start, item.text_end) for item in segments),
                 applied_line_height=(
-                    flow_paragraph.style.line_height if has_body_typography else None
+                    flow_paragraph.style.line_height if has_resolved_typography else None
                 ),
                 applied_alignment=(
-                    flow_paragraph.style.alignment.value if has_body_typography else None
+                    flow_paragraph.style.alignment.value if has_resolved_typography else None
                 ),
                 applied_first_line_indent=(
-                    flow_paragraph.style.first_line_indent if has_body_typography else None
+                    flow_paragraph.style.first_line_indent if has_resolved_typography else None
                 ),
                 applied_left_indent=(
-                    flow_paragraph.style.left_indent if has_body_typography else None
+                    flow_paragraph.style.left_indent if has_resolved_typography else None
                 ),
                 applied_right_indent=(
-                    flow_paragraph.style.right_indent if has_body_typography else None
+                    flow_paragraph.style.right_indent if has_resolved_typography else None
                 ),
                 applied_space_before=(
-                    flow_paragraph.style.space_before if has_body_typography else None
+                    flow_paragraph.style.space_before if has_resolved_typography else None
                 ),
                 applied_space_after=(
-                    flow_paragraph.style.space_after if has_body_typography else None
+                    flow_paragraph.style.space_after if has_resolved_typography else None
                 ),
-                applied_color=flow_paragraph.color if has_body_typography else None,
+                applied_color=flow_paragraph.color if has_resolved_typography else None,
                 bold_requested=(
-                    flow_paragraph.style.bold_requested if has_body_typography else None
+                    flow_paragraph.style.bold_requested if has_resolved_typography else None
                 ),
-                bold_applied=flow_paragraph.style.bold_applied if has_body_typography else None,
+                bold_applied=(
+                    flow_paragraph.style.bold_applied if has_resolved_typography else None
+                ),
                 italic_requested=(
-                    flow_paragraph.style.italic_requested if has_body_typography else None
+                    flow_paragraph.style.italic_requested if has_resolved_typography else None
                 ),
                 italic_applied=(
-                    flow_paragraph.style.italic_applied if has_body_typography else None
+                    flow_paragraph.style.italic_applied if has_resolved_typography else None
                 ),
-                mixed_style=flow_paragraph.style.mixed_style if has_body_typography else None,
+                mixed_style=(flow_paragraph.style.mixed_style if has_resolved_typography else None),
                 style_fallback_count=(
-                    flow_paragraph.style.fallback_count if has_body_typography else None
+                    flow_paragraph.style.fallback_count if has_resolved_typography else None
                 ),
             )
     if translated.schema_version == "1.3":

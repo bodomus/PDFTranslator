@@ -1,4 +1,4 @@
-"""BODY-only adapter from reconstructed typography to the reflow contract."""
+"""Role-aware adapters from reconstructed typography to the reflow contract."""
 
 from __future__ import annotations
 
@@ -16,12 +16,33 @@ _ALIGNMENT = {
 def body_reflow_style(
     resolved: ResolvedParagraphStyle,
 ) -> tuple[ReflowStyle, tuple[float, float, float]]:
-    """Return the minimal applied BODY style and normalized renderer color."""
-    if resolved.role is not TypographyRole.BODY:
-        raise ValueError("body reflow style requires a resolved BODY occurrence")
+    """Return the applied BODY style and normalized renderer color."""
+    return _resolved_reflow_style(resolved, expected_role=TypographyRole.BODY, heading=False)
+
+
+def heading_reflow_style(
+    resolved: ResolvedParagraphStyle,
+) -> tuple[ReflowStyle, tuple[float, float, float]]:
+    """Return the applied HEADING style and normalized renderer color."""
+    return _resolved_reflow_style(resolved, expected_role=TypographyRole.HEADING, heading=True)
+
+
+def _resolved_reflow_style(
+    resolved: ResolvedParagraphStyle,
+    *,
+    expected_role: TypographyRole,
+    heading: bool,
+) -> tuple[ReflowStyle, tuple[float, float, float]]:
+    if resolved.role is not expected_role:
+        raise ValueError(
+            f"{expected_role.value} reflow style requires a resolved "
+            f"{expected_role.value.upper()} occurrence"
+        )
     alignment = _ALIGNMENT.get(resolved.alignment)
     if alignment is None:
-        raise ValueError("resolved BODY alignment must be physical and known")
+        raise ValueError(
+            f"resolved {expected_role.value.upper()} alignment must be physical and known"
+        )
     mixed = resolved.mixed_styles
     style = ReflowStyle(
         font_size=resolved.font_size_points,
@@ -32,6 +53,7 @@ def body_reflow_style(
         left_indent=resolved.left_indent_points,
         right_indent=resolved.right_indent_points,
         alignment=alignment,
+        heading=heading,
         bold_requested=resolved.bold,
         bold_applied=False,
         italic_requested=resolved.italic,

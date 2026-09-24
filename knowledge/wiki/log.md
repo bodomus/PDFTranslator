@@ -18,6 +18,12 @@ related:
 
 This records meaningful knowledge-base changes, not every Git commit or formatting edit.
 
+## 2026-09-24
+
+- Activated authoritative occurrence-indexed reconstructed typography for production HEADING,
+  documented shared BODY/HEADING mapping, removed the obsolete uniform-heading gate, and preserved
+  fail-closed identity/geometry checks, style-aware orphan handling, and unchanged FOOTNOTE scope.
+
 ## 2026-09-23
 
 - Made heading-orphan protection style-aware and documented fail-closed hanging-indent geometry

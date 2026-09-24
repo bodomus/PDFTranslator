@@ -2,8 +2,9 @@
 
 PDFTR-28 converts the source-backed evidence from PDFTR-27 into a stable, versioned style contract.
 The policy is pure domain logic: it consumes an in-memory `TypographyBaseline`, does not reopen a
-PDF, and does not inspect installed fonts. PDFTR-29 now consumes the resolved contract at the
-production BODY reflow boundary; headings and footnotes retain their existing local styling.
+PDF, and does not inspect installed fonts. PDFTR-29 consumes the resolved contract at the
+production BODY reflow boundary, and PDFTR-30 extends that boundary to HEADING. Footnotes retain
+their existing local styling.
 
 ## Contracts and API
 
@@ -137,9 +138,10 @@ The generated evidence belongs under ignored `temp/pdftr28/`; it is not committe
 ## Rendering boundary
 
 The production renderer reconstructs typography once for a schema-1.3 translated document and
-maps BODY styles by occurrence index. The `ResolvedParagraphStyle → ReflowStyle` adapter applies
-font size, line-height ratio, paragraph spacing, first/left/right indents, physical alignment, and
-RGB color. Duplicate paragraph IDs are therefore safe and do not participate in style lookup.
+maps BODY and HEADING styles by occurrence index. Thin role-validating adapters share one
+`ResolvedParagraphStyle → ReflowStyle` mapping for font size, line-height ratio, paragraph spacing,
+first/left/right indents, physical alignment, and RGB color. Duplicate paragraph IDs are therefore
+safe and do not participate in style lookup.
 
 The planner subtracts left/right indents from usable width and fails closed when they leave no safe
 geometry. Space-before and first-line indent apply only to the first segment; space-after applies
@@ -149,5 +151,5 @@ indent, and color are evaluated consistently.
 
 The current font boundary deliberately does not synthesize bold or italic faces. Diagnostics retain
 the requested values and report both as unapplied. Mixed-style evidence and fallback counts also
-remain visible, while inline run reconstruction stays out of scope. HEADING and FOOTNOTE rendering
-and diagnostics remain unchanged by this BODY-only integration.
+remain visible, while inline run reconstruction stays out of scope. BODY and HEADING diagnostics
+expose the applied contract; FOOTNOTE rendering and diagnostics remain unchanged.

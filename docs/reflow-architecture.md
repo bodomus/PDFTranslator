@@ -4,7 +4,7 @@
 
 PDFTR-23 promotes the PDFTR-22 proof into a production boundary under
 `src/pdftranslate/rendering/reflow/`. The normal renderer automatically selects reflow only for
-confidently classified single-column body prose and one basic heading style. The fixed-layout
+confidently classified single-column body prose and headings. The fixed-layout
 renderer remains authoritative for other content, and the isolated executable PoC remains under
 `scripts/reflow_poc/` as historical evidence rather than a production dependency.
 
@@ -12,9 +12,9 @@ PDFTR-24 extends that boundary to conservatively discovered, ordered footnote gr
 source footnote region first and then bounded dedicated continuation pages, coordinated through one
 document layout plan with body continuation pages.
 
-PDFTR-29 activates the PDFTR-28 reconstructed style contract for BODY occurrences only. Typography
-evidence and reconstruction run once per document, then a compact occurrence-indexed adapter feeds
-the body planner. Heading and footnote style discovery retain their earlier behavior.
+PDFTR-29 activates the PDFTR-28 reconstructed style contract for BODY occurrences. PDFTR-30 extends
+the same role-aware, occurrence-indexed adapter to HEADING. Typography evidence and reconstruction
+still run once per document; FOOTNOTE style discovery retains its earlier behavior.
 
 ## Problem and verified boundary
 
@@ -60,7 +60,7 @@ segments are the physical placements.
 | Category | PoC | Production PDFTR-23 |
 | --- | --- | --- |
 | Body prose | flowable | flowable |
-| Section/chapter headings | anchored | flowable with one basic heading style |
+| Section/chapter headings | anchored | flowable with per-occurrence resolved typography |
 | Block quotations | deferred | unsupported unless explicitly classified |
 | Verse/poetry | unsupported | fail closed |
 | Footnotes | anchored/deferred | ordered source-region flow plus bounded dedicated continuation |
@@ -185,10 +185,11 @@ footnote pages; sharing the body limit would reject otherwise complete content.
 - The source PDF is immutable. PoC PDF, debug PDF, and JSON plan use separate destinations and
   temporary sibling writes.
 
-## BODY typography boundary
+## BODY and HEADING typography boundary
 
 Production reconstructs paragraph styles once per schema 1.3 document and keys them by occurrence
-index. The BODY adapter applies resolved font size, line-height ratio, RGB color, physical
+index. Role-validating BODY and HEADING adapters share one mapping that applies resolved font size,
+line-height ratio, RGB color, physical
 left/center/right/justified alignment, left/right indents, first-line indent, and before/after
 spacing. Indents affect available width; space-before and first-line indent apply only to the first
 segment, while space-after applies only after the completing segment. These values therefore
@@ -203,7 +204,13 @@ it does not rely on a separate font-size/line-height estimate.
 The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
 Bold and italic are retained as requested values but reported as unapplied until a safe local font
 variant resolver exists. Mixed inline styles use the resolved paragraph-dominant style and retain a
-diagnostic flag. The adapter is not used for headings or footnotes.
+diagnostic flag. The adapter is not used for footnotes.
+
+Each HEADING must have an occurrence-index match with the same occurrence index and paragraph id,
+and the resolved role must remain HEADING. Missing or mismatched styles make the page ineligible.
+The former uniform-heading-size gate is removed because planning, geometry validation, measurement,
+insertion, and saved-PDF validation are already per occurrence; heterogeneous headings therefore do
+not need a synthetic common style to remain safe.
 
 ## Diagnostics and validation
 
@@ -279,8 +286,8 @@ destination conflicts.
 1. **Unit of flow:** logical paragraph occurrence; continuation segment is the placement unit.
 2. **Body-region identification:** explicit classification plus source geometry, anchor policy, and
    object-intersection checks; never whitespace alone.
-3. **Headings:** distinguish by reconstruction/style evidence; anchor them in the PoC and support a
-   basic explicit heading style in PDFTR-23.
+3. **Headings:** distinguish by reconstruction/style evidence; anchor them in the PoC and apply
+   authoritative per-occurrence reconstructed typography in production.
 4. **Footnotes:** keep them separate from body flow; PDFTR-24 uses an ordered source-page group and
    bounded dedicated continuation pages.
 5. **Images/drawings:** keep them anchored and subtract/reject intersecting regions.
@@ -301,7 +308,7 @@ destination conflicts.
 
 Production body-text reflow covers confidently classified single-column book pages:
 
-- body prose and one basic heading style;
+- body prose and headings with authoritative per-occurrence reconstructed typography;
 - ordered existing-page regions with bounded inserted-page continuation;
 - explicit anchor preservation for headers, page numbers, figures, drawings, and backgrounds;
 - paragraph occurrence/segment diagnostics and strict zero-unplaced completeness;
@@ -316,7 +323,8 @@ The pure planner applies a minimal, style-aware heading-plus-following-body orph
 exact segment offsets. Saved candidates are reopened once and every
 segment is checked only in its padded target clip; page-wide text is diagnostic. Render results and
 reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
-pages, unsupported pages, zero-unplaced state, applied BODY typography, mixed-style/fallback state,
+pages, unsupported pages, zero-unplaced state, applied BODY/HEADING typography,
+mixed-style/fallback state,
 and requested-versus-applied bold/italic state.
 
 PDFTR-24 adds ordered footnote-group pagination without broadening the body eligibility boundary.

@@ -29,11 +29,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Production HEADING reflow now consumes reconstructed typography by authoritative occurrence
+  index through the same role-aware mapping as BODY. Resolved size, line height, RGB color,
+  physical alignment, indents, one-time spacing, mixed-style/fallback state, and requested versus
+  applied bold/italic values participate in planning, diagnostics, and insertion. Safe
+  heterogeneous headings are supported per occurrence; invalid identity, role, or geometry fails
+  closed before PDF mutation, while FOOTNOTE behavior remains unchanged.
 - Production BODY reflow now consumes reconstructed paragraph typography by authoritative
   occurrence index, applying resolved size, line height, RGB color, physical alignment, indents,
   and one-time paragraph spacing through a shared PyMuPDF HTML/CSS measurement and insertion path.
   Diagnostics retain mixed-style/fallback evidence and explicitly report requested-but-unapplied
-  bold/italic variants; heading and footnote style selection remain unchanged.
+  bold/italic variants; FOOTNOTE style selection remains unchanged.
 - Added a versioned renderer-facing paragraph style reconstruction contract with role-aware robust
   baselines, per-property source/fallback decisions, conservative font family/role inference,
   mixed-style preservation, JSON round-tripping, and opt-in `typography_inspect --resolved`
