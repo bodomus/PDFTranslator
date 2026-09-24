@@ -17,7 +17,7 @@ from pdftranslate.rendering.reflow.models import (
     Rect,
     ReflowStyle,
 )
-from pdftranslate.rendering.reflow.typography import body_reflow_style
+from pdftranslate.rendering.reflow.typography import body_reflow_style, heading_reflow_style
 from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.typography import ResolvedParagraphStyle
 
@@ -69,14 +69,10 @@ def discover_reflow_page(
             return None
         candidates.append((index, paragraph))
     body = [item for item in candidates if item[1].kind is ParagraphKind.BODY]
-    headings = [item for item in candidates if item[1].kind is ParagraphKind.HEADING]
     if len(body) < 2 or not _stable_single_column(body, page_model):
         return None
     if not _ambiguity_resolved_by_page_evidence(candidates, body):
         return None
-    if headings and not _single_heading_style(headings):
-        return None
-
     body_rects = [rect_from_bbox(item.bbox) for _, item in body]
     flow_rects = [rect_from_bbox(item.bbox) for _, item in candidates]
     x0 = min(item.x0 for item in body_rects)
@@ -123,15 +119,24 @@ def discover_reflow_page(
         is_heading = paragraph.kind is ParagraphKind.HEADING
         font_size = max(min_font_size, source_size)
         if is_heading:
-            font_size = max(font_size, default_font_size * 1.15)
-            style = ReflowStyle(
-                font_size=font_size,
-                line_height=line_height,
-                space_before=0.0,
-                space_after=font_size * 0.65,
-                heading=True,
-            )
-            color = paragraph_color(paragraph)
+            if style_by_occurrence is None:
+                font_size = max(font_size, default_font_size * 1.15)
+                style = ReflowStyle(
+                    font_size=font_size,
+                    line_height=line_height,
+                    space_before=0.0,
+                    space_after=font_size * 0.65,
+                    heading=True,
+                )
+                color = paragraph_color(paragraph)
+            else:
+                resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
+                if resolved is None:
+                    return None
+                try:
+                    style, color = heading_reflow_style(resolved)
+                except ValueError:
+                    return None
         else:
             if style_by_occurrence is None:
                 style = ReflowStyle(
@@ -142,14 +147,13 @@ def discover_reflow_page(
                 )
                 color = paragraph_color(paragraph)
             else:
-                resolved = style_by_occurrence.get(index)
-                if (
-                    resolved is None
-                    or resolved.occurrence_index != index
-                    or resolved.paragraph_id != paragraph.id
-                ):
+                resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
+                if resolved is None:
                     return None
-                style, color = body_reflow_style(resolved)
+                try:
+                    style, color = body_reflow_style(resolved)
+                except ValueError:
+                    return None
         flow.append(
             FlowParagraph(
                 occurrence_index=index,
@@ -189,9 +193,19 @@ def _stable_single_column(body: list[tuple[int, LogicalParagraph]], page: Extrac
     return x0_spread <= max(14.0, page.width * 0.04) and x1_spread <= max(24.0, page.width * 0.14)
 
 
-def _single_heading_style(headings: list[tuple[int, LogicalParagraph]]) -> bool:
-    sizes = [paragraph_font_size(item, 11.0) for _, item in headings]
-    return max(sizes) - min(sizes) <= 1.0
+def _resolved_occurrence(
+    style_by_occurrence: dict[int, ResolvedParagraphStyle],
+    occurrence_index: int,
+    paragraph: LogicalParagraph,
+) -> ResolvedParagraphStyle | None:
+    resolved = style_by_occurrence.get(occurrence_index)
+    if (
+        resolved is None
+        or resolved.occurrence_index != occurrence_index
+        or resolved.paragraph_id != paragraph.id
+    ):
+        return None
+    return resolved
 
 
 def _ambiguity_resolved_by_page_evidence(

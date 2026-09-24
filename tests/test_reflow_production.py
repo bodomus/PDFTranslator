@@ -45,7 +45,7 @@ from pdftranslate.rendering.reflow import (
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
 from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
-from pdftranslate.rendering.reflow.typography import body_reflow_style
+from pdftranslate.rendering.reflow.typography import body_reflow_style, heading_reflow_style
 from pdftranslate.typography import (
     MixedStyleEvidence,
     RgbColor,
@@ -284,6 +284,95 @@ def test_body_typography_controls_indents_spacing_and_continuation_once() -> Non
     assert all(item.alignment is ReflowAlignment.RIGHT for item in plan.segments)
 
 
+def test_heading_typography_controls_orphan_measurement_and_spacing() -> None:
+    document, _ = _classified_document(ambiguous=False)
+    resolved = (
+        reconstruct_styles(extract_typography_evidence(document))
+        .paragraphs[0]
+        .model_copy(
+            update={
+                "font_size_points": 18.0,
+                "line_height_ratio": 1.4,
+                "space_before_points": 3.0,
+                "space_after_points": 10.0,
+            }
+        )
+    )
+    heading_style, heading_color = heading_reflow_style(resolved)
+    heading = _flow(1, "Heading", heading=True)
+    heading = FlowParagraph(**{**heading.__dict__, "style": heading_style, "color": heading_color})
+    paragraphs = (_flow(0, "preface"), heading, _flow(2, "body"))
+
+    plan = plan_flow(
+        paragraphs,
+        (_region(1, 0, height=60), _region(2, 1, height=100)),
+        CapacityMeasurer(),
+    )
+
+    heading_segment = next(item for item in plan.segments if item.occurrence_index == 1)
+    body_segment = next(item for item in plan.segments if item.occurrence_index == 2)
+    assert heading_segment.target_page_number == 2
+    assert body_segment.target_page_number == 2
+    assert heading_segment.space_before == 3.0
+    assert heading_segment.space_after == 10.0
+
+
+def test_heading_typography_applies_first_segment_and_completion_spacing_once() -> None:
+    paragraph = _flow(0, "word " * 250, heading=True)
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=10,
+                line_height=1.1,
+                space_before=3,
+                space_after=4,
+                first_line_indent=12,
+                left_indent=5,
+                right_indent=7,
+                alignment=ReflowAlignment.CENTER,
+                heading=True,
+            ),
+        }
+    )
+
+    plan = plan_flow(
+        (paragraph,),
+        (_region(1, 0, height=25), _region(2, 1, height=100)),
+        CapacityMeasurer(),
+    )
+
+    assert len(plan.segments) > 1
+    first, continuation = plan.segments[:2]
+    assert first.first_line_indent == 12
+    assert first.space_before == 3
+    assert continuation.first_line_indent == 0
+    assert continuation.space_before == 0
+    assert plan.segments[-1].space_after == 4
+    assert all(item.alignment is ReflowAlignment.CENTER for item in plan.segments)
+
+
+def test_heading_typography_rejects_indents_that_remove_usable_width() -> None:
+    paragraph = _flow(0, "unsafe heading", heading=True)
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=12,
+                line_height=1.2,
+                space_before=0,
+                space_after=0,
+                left_indent=120,
+                right_indent=101,
+                heading=True,
+            ),
+        }
+    )
+
+    with pytest.raises(UnsupportedLayoutError, match="indents"):
+        plan_flow((paragraph,), (_region(1, 0),), CapacityMeasurer())
+
+
 def test_body_typography_rejects_indents_that_remove_usable_width() -> None:
     paragraph = _flow(0, "unsafe")
     paragraph = FlowParagraph(
@@ -495,6 +584,110 @@ def test_body_discovery_maps_resolved_styles_by_occurrence_not_paragraph_id() ->
     assert discovered.paragraphs[0].style.heading is True
 
 
+def test_heading_discovery_maps_heterogeneous_resolved_styles_by_occurrence() -> None:
+    document, page_model = _document_with_two_headings()
+    paragraphs = list(document.paragraphs)
+    paragraphs[0] = paragraphs[0].model_copy(update={"id": "duplicate-heading"})
+    paragraphs[3] = paragraphs[3].model_copy(update={"id": "duplicate-heading"})
+    document = document.model_copy(update={"paragraphs": tuple(paragraphs)})
+    resolved = reconstruct_styles(extract_typography_evidence(document))
+    style_by_occurrence = {item.occurrence_index: item for item in resolved.paragraphs}
+    style_by_occurrence[0] = style_by_occurrence[0].model_copy(
+        update={
+            "font_size_points": 14.0,
+            "line_height_ratio": 1.25,
+            "first_line_indent_points": 3.0,
+            "left_indent_points": 4.0,
+            "right_indent_points": 5.0,
+            "space_before_points": 6.0,
+            "space_after_points": 7.0,
+            "alignment": TextAlignment.RIGHT,
+            "color_rgb": RgbColor(red=24, green=48, blue=72),
+        }
+    )
+    style_by_occurrence[3] = style_by_occurrence[3].model_copy(
+        update={"font_size_points": 20.0, "alignment": TextAlignment.CENTER}
+    )
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        discovered = discover_reflow_page(
+            document,
+            page_model,
+            page,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+            style_by_occurrence=style_by_occurrence,
+        )
+    finally:
+        pdf.close()
+
+    assert discovered is not None
+    headings = tuple(
+        item
+        for item in discovered.paragraphs
+        if item.disposition is ContentDisposition.FLOWABLE_HEADING
+    )
+    assert len(headings) == 2
+    assert headings[0].paragraph_id == headings[1].paragraph_id == "duplicate-heading"
+    assert headings[0].style.font_size == 14.0
+    assert headings[1].style.font_size == 20.0
+    assert headings[0].style.alignment is ReflowAlignment.RIGHT
+    assert headings[1].style.alignment is ReflowAlignment.CENTER
+    assert headings[0].style.first_line_indent == 3.0
+    assert headings[0].style.left_indent == 4.0
+    assert headings[0].style.right_indent == 5.0
+    assert headings[0].style.space_before == 6.0
+    assert headings[0].style.space_after == 7.0
+    assert headings[0].color == pytest.approx((24 / 255, 48 / 255, 72 / 255))
+    assert all(item.style.heading for item in headings)
+
+
+def test_heading_discovery_fails_closed_for_invalid_resolved_identity_or_role() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    resolved = reconstruct_styles(extract_typography_evidence(document))
+    original = {item.occurrence_index: item for item in resolved.paragraphs}
+    variants = []
+
+    missing = dict(original)
+    missing.pop(0)
+    variants.append(missing)
+
+    wrong_occurrence = dict(original)
+    wrong_occurrence[0] = wrong_occurrence[0].model_copy(update={"occurrence_index": 99})
+    variants.append(wrong_occurrence)
+
+    wrong_id = dict(original)
+    wrong_id[0] = wrong_id[0].model_copy(update={"paragraph_id": "wrong-heading"})
+    variants.append(wrong_id)
+
+    wrong_role = dict(original)
+    wrong_role[0] = wrong_role[1].model_copy(
+        update={"occurrence_index": 0, "paragraph_id": document.paragraphs[0].id}
+    )
+    variants.append(wrong_role)
+
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        for style_by_occurrence in variants:
+            assert (
+                discover_reflow_page(
+                    document,
+                    page_model,
+                    page,
+                    default_font_size=11,
+                    min_font_size=6,
+                    line_height=1.2,
+                    style_by_occurrence=style_by_occurrence,
+                )
+                is None
+            )
+    finally:
+        pdf.close()
+
+
 def test_body_style_reports_requested_bold_italic_and_mixed_without_faking_faces() -> None:
     document, _ = _classified_document(ambiguous=False)
     resolved = reconstruct_styles(extract_typography_evidence(document)).paragraphs[1]
@@ -519,6 +712,55 @@ def test_body_style_reports_requested_bold_italic_and_mixed_without_faking_faces
     assert style.italic_requested is True
     assert style.italic_applied is False
     assert style.mixed_style is True
+
+
+def test_heading_style_reports_resolved_typography_without_faking_faces() -> None:
+    document, _ = _classified_document(ambiguous=False)
+    resolved = reconstruct_styles(extract_typography_evidence(document)).paragraphs[0]
+    resolved = resolved.model_copy(
+        update={
+            "font_size_points": 17.0,
+            "line_height_ratio": 1.35,
+            "first_line_indent_points": 2.0,
+            "left_indent_points": 3.0,
+            "right_indent_points": 4.0,
+            "space_before_points": 5.0,
+            "space_after_points": 6.0,
+            "alignment": TextAlignment.CENTER,
+            "color_rgb": RgbColor(red=10, green=20, blue=30),
+            "bold": True,
+            "italic": True,
+            "mixed_styles": MixedStyleEvidence(
+                mixed_font_family=True,
+                mixed_font_size=False,
+                mixed_weight=True,
+                mixed_italic=True,
+                mixed_color=False,
+            ),
+        }
+    )
+
+    style, color = heading_reflow_style(resolved)
+
+    assert style.heading is True
+    assert style.font_size == 17.0
+    assert style.line_height == 1.35
+    assert style.alignment is ReflowAlignment.CENTER
+    assert style.first_line_indent == 2.0
+    assert style.left_indent == 3.0
+    assert style.right_indent == 4.0
+    assert style.space_before == 5.0
+    assert style.space_after == 6.0
+    assert style.bold_requested is True
+    assert style.bold_applied is False
+    assert style.italic_requested is True
+    assert style.italic_applied is False
+    assert style.mixed_style is True
+    assert style.fallback_count == resolved.fallback_count
+    assert color == pytest.approx((10 / 255, 20 / 255, 30 / 255))
+
+    with pytest.raises(ValueError, match="BODY"):
+        body_reflow_style(resolved)
 
 
 def test_footnote_region_discovery_rejects_unsafe_objects() -> None:
@@ -599,10 +841,20 @@ def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
     assert result.reflowed_paragraphs == 3
     assert result.inserted_pages >= 1
     assert result.unplaced_text_count == 0
+    body_indexes = {
+        index
+        for index, paragraph in enumerate(translated.paragraphs)
+        if paragraph.kind is ParagraphKind.BODY
+    }
+    heading_index = next(
+        index
+        for index, paragraph in enumerate(translated.paragraphs)
+        if paragraph.kind is ParagraphKind.HEADING
+    )
     body_results = tuple(
         item
         for item in result.blocks
-        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.applied_line_height is not None
+        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.unit_index in body_indexes
     )
     assert len(body_results) == 2
     assert all(item.applied_alignment is not None for item in body_results)
@@ -611,15 +863,32 @@ def test_renderer_reflows_selectable_foreign_text_and_preserves_anchors(
     heading_result = next(
         item
         for item in result.blocks
-        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.applied_line_height is None
+        if item.strategy is RenderStrategy.REFLOW_LAYOUT and item.unit_index == heading_index
     )
-    assert heading_result.applied_alignment is None
+    expected_heading = reconstruct_styles(extract_typography_evidence(translated)).paragraphs[
+        heading_index
+    ]
+    assert heading_result.font_size == expected_heading.font_size_points
+    assert heading_result.applied_line_height == expected_heading.line_height_ratio
+    assert heading_result.applied_alignment == expected_heading.alignment.value
+    assert heading_result.applied_first_line_indent == expected_heading.first_line_indent_points
+    assert heading_result.applied_left_indent == expected_heading.left_indent_points
+    assert heading_result.applied_right_indent == expected_heading.right_indent_points
+    assert heading_result.applied_space_before == expected_heading.space_before_points
+    assert heading_result.applied_space_after == expected_heading.space_after_points
+    assert heading_result.bold_requested is expected_heading.bold
+    assert heading_result.bold_applied is False
+    assert heading_result.italic_requested is expected_heading.italic
+    assert heading_result.italic_applied is False
+    assert heading_result.mixed_style is not None
+    assert heading_result.style_fallback_count == expected_heading.fallback_count
     rendered = pymupdf.open(output)
     try:
         text = " ".join(str(page.get_text("text")) for page in rendered)
         normalized_text = " ".join(text.split())
         assert "Latin terminus" in normalized_text
         assert "Ελληνικά" in normalized_text
+        assert "Глава Chapter Α" in normalized_text
         assert "Running title" in normalized_text
         assert "Footnote remains anchored" in normalized_text
     finally:
@@ -785,6 +1054,33 @@ def _classified_document(*, ambiguous: bool) -> tuple[ExtractedDocument, Extract
     return document, page
 
 
+def _document_with_two_headings() -> tuple[ExtractedDocument, ExtractedPage]:
+    document, page = _classified_document(ambiguous=False)
+    paragraphs = list(document.paragraphs)
+    original = paragraphs[3]
+    bbox = BoundingBox(x0=40, y0=250, x1=260, y1=278)
+    span = TextSpan(text="subheading", bbox=bbox, font_size=19)
+    fragment = original.fragments[0].model_copy(
+        update={
+            "text": "subheading",
+            "bbox": bbox,
+            "mapping": original.fragments[0].mapping.model_copy(update={"bbox": bbox}),
+            "spans": (span,),
+        }
+    )
+    paragraphs[3] = original.model_copy(
+        update={
+            "text": "subheading",
+            "kind": ParagraphKind.HEADING,
+            "bbox": bbox,
+            "fragments": (fragment,),
+            "spans": (span,),
+            "translated_text": "translated subheading",
+        }
+    )
+    return document.model_copy(update={"paragraphs": tuple(paragraphs)}), page
+
+
 def _source_pdf(path: Path, *, separator: bool = False) -> Path:
     document = pymupdf.open()
     page = document.new_page(width=300, height=500)
@@ -820,7 +1116,7 @@ def _translated_source(
     for paragraph in extracted.paragraphs:
         if "Chapter" in paragraph.text:
             kind = ParagraphKind.HEADING
-            translated = "Глава Α"
+            translated = "Глава Chapter Α"
         elif "Body paragraph" in paragraph.text:
             kind = ParagraphKind.BODY
             translated = (

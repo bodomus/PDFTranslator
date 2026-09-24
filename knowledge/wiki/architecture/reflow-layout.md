@@ -1,9 +1,9 @@
 ---
-title: Body and footnote reflow architecture
+title: Body, heading, and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-23
+updated: 2026-09-24
 tags:
 - rendering
 - reflow
@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
 - ../../../Tickets/PDFTR-29-body-typography-fidelity.md
 - ../../../Tickets/PDFTR-23-production-body-reflow.md
 - ../../../Tickets/PDFTR-24-footnote-reflow-pagination.md
@@ -19,6 +20,7 @@ sources:
 - ../../../src/pdftranslate/rendering/reflow/models.py
 - ../../../src/pdftranslate/rendering/reflow/planner.py
 - ../../../src/pdftranslate/rendering/reflow/regions.py
+- ../../../src/pdftranslate/rendering/reflow/typography.py
 - ../../../src/pdftranslate/rendering/reflow/footnotes.py
 - ../../../src/pdftranslate/rendering/reflow/pymupdf_layout.py
 - ../../../scripts/reflow_poc/models.py
@@ -33,10 +35,10 @@ related:
 - ../testing/pilot-evaluation.md
 ---
 
-# Body and footnote reflow architecture
+# Body, heading, and footnote reflow architecture
 
 PDFTR-23 implements the PDFTR-22 forward-only, region-based layout boundary in production for
-confident single-column body prose and one basic heading style. A logical
+confident single-column body prose and headings. A logical
 paragraph occurrence is the semantic flow unit; a typed continuation segment is the physical
 placement unit. Each segment retains occurrence identity, exact character offsets, target page and
 rectangle, continuation index, font evidence, and terminal continuation state.
@@ -109,12 +111,18 @@ placement behavior documented here remain unchanged. See
 [Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.
 
 PDFTR-28 resolves that evidence into a role-aware renderer-facing contract with traceable
-fallbacks. PDFTR-29 activates a minimal BODY-only adapter once per document. Resolved size, line
-height, color, physical alignment, left/right and first-line indents, and before/after spacing all
-participate in planning. First-line indent and space-before apply only to a paragraph's first
-segment; space-after applies only after completion. Heading and footnote styles do not consume the
-adapter. Diagnostics retain mixed-style/fallback state and distinguish requested from applied
-bold/italic. See [Paragraph style reconstruction](style-reconstruction.md).
+fallbacks. PDFTR-29 activates BODY and PDFTR-30 activates HEADING through one common mapping with
+thin role validators. Resolved size, line height, color, physical alignment, left/right and
+first-line indents, and before/after spacing all participate in planning. First-line indent and
+space-before apply only to a paragraph's first segment; space-after applies only after completion.
+Occurrence index is authoritative, paragraph id is validation only, and invalid HEADING identity or
+role makes the page ineligible. FOOTNOTE styles do not consume the adapter. Diagnostics retain
+mixed-style/fallback state and distinguish requested from applied bold/italic. See
+[Paragraph style reconstruction](style-reconstruction.md).
+
+The obsolete uniform-heading-size gate is removed. Each heading is independently measured,
+geometry-checked, inserted, and validated from its authoritative resolved style, so safe
+heterogeneous headings do not need a synthetic shared size.
 
 The heading orphan decision uses the same BODY `TextMeasurer`, effective width, first-line indent,
 alignment, font size, line height, and one-time spacing as ordinary planning. It requires only the
