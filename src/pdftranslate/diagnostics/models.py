@@ -97,6 +97,20 @@ class BlockDiagnostic(DomainModel):
     continuation_count: int = Field(default=0, ge=0)
     target_rects: tuple[BoundingBox, ...] = ()
     text_offsets: tuple[tuple[int, int], ...] = ()
+    applied_line_height: float | None = Field(default=None, gt=0)
+    applied_alignment: Literal["left", "center", "right", "justified"] | None = None
+    applied_first_line_indent: float | None = None
+    applied_left_indent: float | None = Field(default=None, ge=0)
+    applied_right_indent: float | None = Field(default=None, ge=0)
+    applied_space_before: float | None = Field(default=None, ge=0)
+    applied_space_after: float | None = Field(default=None, ge=0)
+    applied_color: tuple[float, float, float] | None = None
+    bold_requested: bool | None = None
+    bold_applied: bool | None = None
+    italic_requested: bool | None = None
+    italic_applied: bool | None = None
+    mixed_style: bool | None = None
+    style_fallback_count: int | None = Field(default=None, ge=0)
 
 
 class PageDiagnostic(DomainModel):

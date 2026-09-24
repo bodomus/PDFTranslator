@@ -15,6 +15,7 @@ from pdftranslate.rendering.reflow.models import (
     PlacementState,
     Rect,
     ReflowContentKind,
+    ReflowStyle,
 )
 
 
@@ -49,8 +50,8 @@ class TextMeasurer(Protocol):
         *,
         width: float,
         height: float,
-        font_size: float,
-        line_height: float,
+        style: ReflowStyle,
+        first_segment: bool,
     ) -> Measurement: ...
 
 
@@ -86,20 +87,25 @@ def plan_flow(
             if region_index >= len(ordered_regions):
                 raise CapacityError(paragraph, len(paragraph.text) - text_offset)
             region = ordered_regions[region_index]
-            available_height = region.rect.y1 - cursor_y
-            baseline_reserve = paragraph.style.font_size * paragraph.style.line_height
-            layout_height = available_height - baseline_reserve
+            first_segment = text_offset == 0
+            segment_y = cursor_y + (paragraph.style.space_before if first_segment else 0.0)
+            available_height = region.rect.y1 - segment_y
+            layout_height = available_height
             if layout_height < selected.minimum_usable_height:
                 region_index, cursor_y = _advance_region(ordered_regions, region_index)
                 continue
 
+            usable_x0, usable_x1, usable_width = _paragraph_geometry(
+                paragraph, region, first_segment=first_segment
+            )
+
             remaining = paragraph.text[text_offset:]
             measurement = measurer.measure(
                 remaining,
-                width=region.rect.width,
+                width=usable_width,
                 height=layout_height,
-                font_size=paragraph.style.font_size,
-                line_height=paragraph.style.line_height,
+                style=paragraph.style,
+                first_segment=first_segment,
             )
             if (
                 text_offset == 0
@@ -112,6 +118,8 @@ def plan_flow(
                     measurement,
                     available_height,
                     selected,
+                    region,
+                    measurer,
                 )
                 and cursor_y > region.rect.y0 + 1e-6
             ):
@@ -122,7 +130,12 @@ def plan_flow(
                 segment_measurement = measurement
             else:
                 consumed, segment_measurement = _largest_fitting_prefix(
-                    remaining, region.rect.width, layout_height, measurer, paragraph
+                    remaining,
+                    usable_width,
+                    layout_height,
+                    measurer,
+                    paragraph,
+                    first_segment=first_segment,
                 )
                 if consumed == 0:
                     if cursor_y > region.rect.y0 + 1e-6:
@@ -136,12 +149,9 @@ def plan_flow(
             completes = text_end == len(paragraph.text)
             segment_height = min(
                 available_height,
-                max(
-                    selected.minimum_usable_height,
-                    segment_measurement.used_height + baseline_reserve,
-                ),
+                max(selected.minimum_usable_height, segment_measurement.used_height),
             )
-            target = Rect(region.rect.x0, cursor_y, region.rect.x1, cursor_y + segment_height)
+            target = Rect(usable_x0, segment_y, usable_x1, segment_y + segment_height)
             segments.append(
                 PlacementSegment(
                     occurrence_index=paragraph.occurrence_index,
@@ -158,13 +168,25 @@ def plan_flow(
                     measured_height=segment_measurement.used_height,
                     line_count=segment_measurement.line_count,
                     color=paragraph.color,
+                    alignment=paragraph.style.alignment,
+                    first_line_indent=(paragraph.style.first_line_indent if first_segment else 0.0),
+                    left_indent=paragraph.style.left_indent,
+                    right_indent=paragraph.style.right_indent,
+                    space_before=paragraph.style.space_before if first_segment else 0.0,
+                    space_after=paragraph.style.space_after if completes else 0.0,
+                    bold_requested=paragraph.style.bold_requested,
+                    bold_applied=paragraph.style.bold_applied,
+                    italic_requested=paragraph.style.italic_requested,
+                    italic_applied=paragraph.style.italic_applied,
+                    mixed_style=paragraph.style.mixed_style,
+                    fallback_count=paragraph.style.fallback_count,
                     state=PlacementState.COMPLETE if completes else PlacementState.CONTINUED,
                 )
             )
             text_offset = text_end
             continuation_index += 1
             if completes:
-                cursor_y = target.y1 + paragraph.style.paragraph_spacing
+                cursor_y = target.y1 + paragraph.style.space_after
             else:
                 region_index, cursor_y = _advance_region(ordered_regions, region_index)
 
@@ -184,18 +206,45 @@ def _would_orphan_heading(
     measurement: Measurement,
     available_height: float,
     options: PlannerOptions,
+    region: FlowRegion,
+    measurer: TextMeasurer,
 ) -> bool:
     if following.disposition is not ContentDisposition.FLOWABLE_BODY:
         return False
-    needed = (
-        measurement.used_height
-        + heading.style.font_size * heading.style.line_height
-        + heading.style.paragraph_spacing
-        + following.style.font_size
-        * following.style.line_height
-        * options.minimum_body_after_heading_lines
+    body_height = (
+        available_height
+        - measurement.used_height
+        - heading.style.space_after
+        - following.style.space_before
     )
-    return needed > available_height
+    if body_height < options.minimum_usable_height:
+        return True
+    _, _, body_width = _paragraph_geometry(following, region, first_segment=True)
+    consumed, body_measurement = _largest_fitting_prefix(
+        following.text,
+        body_width,
+        body_height,
+        measurer,
+        following,
+        first_segment=True,
+    )
+    return consumed == 0 or body_measurement.line_count < options.minimum_body_after_heading_lines
+
+
+def _paragraph_geometry(
+    paragraph: FlowParagraph, region: FlowRegion, *, first_segment: bool
+) -> tuple[float, float, float]:
+    usable_x0 = region.rect.x0 + paragraph.style.left_indent
+    usable_x1 = region.rect.x1 - paragraph.style.right_indent
+    usable_width = usable_x1 - usable_x0
+    first_line_indent = paragraph.style.first_line_indent if first_segment else 0.0
+    first_line_start = usable_x0 + first_line_indent
+    first_line_width = usable_x1 - first_line_start
+    if first_segment and first_line_start < region.rect.x0 - 1e-6:
+        raise UnsupportedLayoutError("first-line/hanging indent geometry escapes the flow region")
+    if usable_width <= 0 or first_line_width <= 0:
+        raise UnsupportedLayoutError("paragraph indents leave no usable line width")
+    return usable_x0, usable_x1, usable_width
 
 
 def _advance_region(regions: tuple[FlowRegion, ...], index: int) -> tuple[int, float]:
@@ -209,14 +258,26 @@ def _largest_fitting_prefix(
     height: float,
     measurer: TextMeasurer,
     paragraph: FlowParagraph,
+    *,
+    first_segment: bool,
 ) -> tuple[int, Measurement]:
     boundaries = [match.end() for match in re.finditer(r"\S+\s*", text)]
     if not boundaries or boundaries[-1] != len(text):
         boundaries.append(len(text))
-    best = _binary_search(text, boundaries, width, height, measurer, paragraph)
+    best = _binary_search(
+        text, boundaries, width, height, measurer, paragraph, first_segment=first_segment
+    )
     if best[0] > 0:
         return best
-    return _binary_search(text, list(range(1, len(text) + 1)), width, height, measurer, paragraph)
+    return _binary_search(
+        text,
+        list(range(1, len(text) + 1)),
+        width,
+        height,
+        measurer,
+        paragraph,
+        first_segment=first_segment,
+    )
 
 
 def _binary_search(
@@ -226,6 +287,8 @@ def _binary_search(
     height: float,
     measurer: TextMeasurer,
     paragraph: FlowParagraph,
+    *,
+    first_segment: bool,
 ) -> tuple[int, Measurement]:
     low, high, best_index = 0, len(boundaries) - 1, 0
     best = Measurement(False, 0.0, 0)
@@ -236,8 +299,8 @@ def _binary_search(
             text[:boundary],
             width=width,
             height=height,
-            font_size=paragraph.style.font_size,
-            line_height=paragraph.style.line_height,
+            style=paragraph.style,
+            first_segment=first_segment,
         )
         if measured.fits:
             best_index, best, low = boundary, measured, middle + 1

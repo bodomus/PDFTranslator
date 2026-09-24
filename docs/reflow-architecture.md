@@ -12,6 +12,10 @@ PDFTR-24 extends that boundary to conservatively discovered, ordered footnote gr
 source footnote region first and then bounded dedicated continuation pages, coordinated through one
 document layout plan with body continuation pages.
 
+PDFTR-29 activates the PDFTR-28 reconstructed style contract for BODY occurrences only. Typography
+evidence and reconstruction run once per document, then a compact occurrence-indexed adapter feeds
+the body planner. Heading and footnote style discovery retain their earlier behavior.
+
 ## Problem and verified boundary
 
 The production renderer maps each schema 1.3 logical paragraph back to its anchor-page source
@@ -120,16 +124,16 @@ diagnostic presentation only; they are never authoritative placement state.
 1. Validate one controlled source page, ordered unique occurrences, body-only disposition,
    translation policy, explicit ambiguity overrides, region containment, and single-column regions.
 2. Measure the remaining paragraph text in the current region without committing a PDF shape.
-3. If it fits, create a completing segment and advance by measured height plus paragraph spacing.
+3. If it fits, create a completing segment and advance by measured height plus space-after.
 4. If it does not fit, binary-search word boundaries for the largest fitting prefix. A single token
    can fall back to character boundaries so no token can disappear silently.
 5. Record exact offsets and move the remainder to the next ordered region/page.
 6. Reconstruct every paragraph from its segments and require exact Python-string equality.
 7. Raise a capacity error instead of returning a partial plan when regions are exhausted.
 
-The PyMuPDF adapter reserves one line of baseline safety beyond reported used height. PNG review
-found that this is necessary: extraction succeeded with a smaller reserve while the final line of
-one continuation visually collided with the next paragraph.
+The PyMuPDF adapter uses the same HTML/CSS textbox representation for fitting and insertion, with
+automatic downscaling disabled. The target rectangle is sized from the measured result, avoiding a
+second layout interpretation between planning and PDF mutation.
 
 ## Production page strategy
 
@@ -181,12 +185,25 @@ footnote pages; sharing the body limit would reject otherwise complete content.
 - The source PDF is immutable. PoC PDF, debug PDF, and JSON plan use separate destinations and
   temporary sibling writes.
 
-## Typography boundary
+## BODY typography boundary
 
-The PoC uses one body font, one size, one line-height multiplier, and paragraph spacing. The models
-leave room for a style ID and future family, size, bold/italic, first-line indent, alignment,
-heading/quotation/footnote styles, and widow/orphan rules. PDFTR-23 should add only body and basic
-heading styles; full fidelity remains deferred.
+Production reconstructs paragraph styles once per schema 1.3 document and keys them by occurrence
+index. The BODY adapter applies resolved font size, line-height ratio, RGB color, physical
+left/center/right/justified alignment, left/right indents, first-line indent, and before/after
+spacing. Indents affect available width; space-before and first-line indent apply only to the first
+segment, while space-after applies only after the completing segment. These values therefore
+participate in pagination before mutation.
+
+Safe negative first-line indents remain supported when the resulting first-line start stays inside
+the flow region. A hanging indent that escapes the region, or any indent combination that leaves
+non-positive line geometry, fails before PDF mutation. The heading orphan guard measures the
+minimum following BODY content with this same style-aware geometry and `TextMeasurer` contract;
+it does not rely on a separate font-size/line-height estimate.
+
+The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
+Bold and italic are retained as requested values but reported as unapplied until a safe local font
+variant resolver exists. Mixed inline styles use the resolved paragraph-dominant style and retain a
+diagnostic flag. The adapter is not used for headings or footnotes.
 
 ## Diagnostics and validation
 
@@ -295,11 +312,12 @@ Production body-text reflow covers confidently classified single-column book pag
 - one authoritative body/footnote page map, pre-mutation collision checks, source separator
   preservation, and footnote-specific diagnostics.
 
-The pure planner reserves a baseline before measurement, applies a minimal heading-plus-following-
-body orphan rule, and emits exact segment offsets. Saved candidates are reopened once and every
+The pure planner applies a minimal, style-aware heading-plus-following-body orphan rule and emits
+exact segment offsets. Saved candidates are reopened once and every
 segment is checked only in its padded target clip; page-wide text is diagnostic. Render results and
 reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
-pages, unsupported pages, and zero-unplaced state.
+pages, unsupported pages, zero-unplaced state, applied BODY typography, mixed-style/fallback state,
+and requested-versus-applied bold/italic state.
 
 PDFTR-24 adds ordered footnote-group pagination without broadening the body eligibility boundary.
 Unsafe or multi-column footnotes remain fixed-layout only when complete; otherwise strict render

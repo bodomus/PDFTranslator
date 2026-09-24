@@ -138,7 +138,8 @@ def discover_footnote_page(
                 style=ReflowStyle(
                     font_size=font_size,
                     line_height=line_height,
-                    paragraph_spacing=font_size * 0.25,
+                    space_before=0.0,
+                    space_after=font_size * 0.25,
                 ),
                 color=paragraph_color(paragraph),
             )

@@ -17,7 +17,9 @@ from pdftranslate.rendering.reflow.models import (
     Rect,
     ReflowStyle,
 )
+from pdftranslate.rendering.reflow.typography import body_reflow_style
 from pdftranslate.repeated import RepeatedElementPolicy
+from pdftranslate.typography import ResolvedParagraphStyle
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ def discover_reflow_page(
     default_font_size: float,
     min_font_size: float,
     line_height: float,
+    style_by_occurrence: dict[int, ResolvedParagraphStyle] | None = None,
 ) -> ReflowPage | None:
     """Return a page only when structured and PDF evidence proves a safe body region."""
     if document.schema_version != "1.3" or page_model.classification is not PageClassification.TEXT:
@@ -121,6 +124,32 @@ def discover_reflow_page(
         font_size = max(min_font_size, source_size)
         if is_heading:
             font_size = max(font_size, default_font_size * 1.15)
+            style = ReflowStyle(
+                font_size=font_size,
+                line_height=line_height,
+                space_before=0.0,
+                space_after=font_size * 0.65,
+                heading=True,
+            )
+            color = paragraph_color(paragraph)
+        else:
+            if style_by_occurrence is None:
+                style = ReflowStyle(
+                    font_size=font_size,
+                    line_height=line_height,
+                    space_before=0.0,
+                    space_after=font_size * 0.45,
+                )
+                color = paragraph_color(paragraph)
+            else:
+                resolved = style_by_occurrence.get(index)
+                if (
+                    resolved is None
+                    or resolved.occurrence_index != index
+                    or resolved.paragraph_id != paragraph.id
+                ):
+                    return None
+                style, color = body_reflow_style(resolved)
         flow.append(
             FlowParagraph(
                 occurrence_index=index,
@@ -137,13 +166,8 @@ def discover_reflow_page(
                 source_fragment_rects=tuple(
                     rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
                 ),
-                style=ReflowStyle(
-                    font_size=font_size,
-                    line_height=line_height,
-                    paragraph_spacing=font_size * (0.65 if is_heading else 0.45),
-                    heading=is_heading,
-                ),
-                color=paragraph_color(paragraph),
+                style=style,
+                color=color,
             )
         )
     return ReflowPage(

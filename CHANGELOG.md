@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Made the heading orphan guard use the same style-aware BODY measurement path as normal reflow,
+  and rejected hanging indents whose physical first-line start escapes the safe flow region.
 - Prevented the typography inspection JSON output from aliasing and overwriting its source PDF.
 - Kept typography role-region and paragraph-gap geometry isolated by source column, and stopped
   missing line baselines from joining non-adjacent lines into a false doubled line height.
@@ -27,6 +29,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Production BODY reflow now consumes reconstructed paragraph typography by authoritative
+  occurrence index, applying resolved size, line height, RGB color, physical alignment, indents,
+  and one-time paragraph spacing through a shared PyMuPDF HTML/CSS measurement and insertion path.
+  Diagnostics retain mixed-style/fallback evidence and explicitly report requested-but-unapplied
+  bold/italic variants; heading and footnote style selection remain unchanged.
 - Added a versioned renderer-facing paragraph style reconstruction contract with role-aware robust
   baselines, per-property source/fallback decisions, conservative font family/role inference,
   mixed-style preservation, JSON round-tripping, and opt-in `typography_inspect --resolved`

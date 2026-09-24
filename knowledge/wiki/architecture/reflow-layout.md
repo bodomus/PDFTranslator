@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-29-body-typography-fidelity.md
 - ../../../Tickets/PDFTR-23-production-body-reflow.md
 - ../../../Tickets/PDFTR-24-footnote-reflow-pagination.md
 - ../../../Tickets/PDFTR-22-reflow-architecture-poc.md
@@ -83,8 +84,7 @@ zero overflow and zero unplaced text.
 The controlled page-3 PoC flowed four reviewed body occurrences (2,153 translated characters) at
 12 pt through the copied source-page region and one inserted continuation page. It produced one
 continuation, zero unplaced characters, selectable text, preserved page anchors, machine-readable
-JSON evidence, and visually inspected normal/debug PDFs. A one-line baseline reserve was added
-after PNG review found an overlap that extraction-only validation did not reveal.
+JSON evidence, and visually inspected normal/debug PDFs.
 
 ## Production boundary
 
@@ -94,7 +94,8 @@ single-column geometry, known body/heading occurrences, column zero, translate p
 intersecting unselected text, images, or drawings. Partial or isolated reconstruction ambiguity is
 rejected; only an all-ambiguous group of at least three occurrences may be resolved by stronger
 homogeneous page-level geometry. Planning reserves the last baseline, keeps headings with minimal
-following body content, and enforces exact offsets.
+following body content, and enforces exact offsets. Measurement and insertion share one PyMuPDF
+HTML/CSS representation with downscaling disabled.
 Render diagnostics expose strategy, target pages/rectangles, segment and continuation counts,
 inserted pages, unsupported pages, and unplaced count.
 
@@ -107,7 +108,16 @@ It does not replace or feed `ReflowStyle` yet, so the production size, spacing, 
 placement behavior documented here remain unchanged. See
 [Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.
 
-PDFTR-28 now resolves that evidence into a role-aware renderer-facing contract with traceable
-fallbacks, but deliberately adds no active adapter to `ReflowStyle`. PDFTR-29 owns production body
-typography application; current reflow output therefore remains visually and paginationally
-unchanged. See [Paragraph style reconstruction](style-reconstruction.md).
+PDFTR-28 resolves that evidence into a role-aware renderer-facing contract with traceable
+fallbacks. PDFTR-29 activates a minimal BODY-only adapter once per document. Resolved size, line
+height, color, physical alignment, left/right and first-line indents, and before/after spacing all
+participate in planning. First-line indent and space-before apply only to a paragraph's first
+segment; space-after applies only after completion. Heading and footnote styles do not consume the
+adapter. Diagnostics retain mixed-style/fallback state and distinguish requested from applied
+bold/italic. See [Paragraph style reconstruction](style-reconstruction.md).
+
+The heading orphan decision uses the same BODY `TextMeasurer`, effective width, first-line indent,
+alignment, font size, line height, and one-time spacing as ordinary planning. It requires only the
+configured minimum following BODY lines, not the whole paragraph. Negative first-line indents are
+accepted when their physical start remains inside the flow region; unsafe hanging-indent geometry
+fails closed before mutation rather than being clamped.

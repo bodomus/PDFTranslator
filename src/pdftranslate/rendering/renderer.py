@@ -38,6 +38,7 @@ from pdftranslate.rendering.models import (
 )
 from pdftranslate.rendering.reflow.footnotes import discover_footnote_page
 from pdftranslate.rendering.reflow.models import (
+    ContentDisposition,
     DocumentLayoutPlan,
     FlowParagraph,
     FlowRegion,
@@ -54,6 +55,11 @@ from pdftranslate.rendering.reflow.pymupdf_layout import (
 )
 from pdftranslate.rendering.reflow.regions import discover_reflow_page
 from pdftranslate.repeated import RepeatedElementPolicy
+from pdftranslate.typography import (
+    ResolvedParagraphStyle,
+    extract_typography_evidence,
+    reconstruct_styles,
+)
 
 _FONT_NAME = "PDFTranslateFont"
 _COORDINATE_TOLERANCE = 0.5
@@ -137,6 +143,12 @@ class PdfRenderer:
         )
         selected_font = discover_font(font_path)
         validate_font(selected_font, translations)
+        style_by_occurrence: dict[int, ResolvedParagraphStyle] = {}
+        if translated.schema_version == "1.3":
+            resolved_styles = reconstruct_styles(extract_typography_evidence(translated))
+            style_by_occurrence = {
+                style.occurrence_index: style for style in resolved_styles.paragraphs
+            }
         output.parent.mkdir(parents=True, exist_ok=True)
 
         temporary_output = _temporary_pdf_path(output)
@@ -147,7 +159,13 @@ class PdfRenderer:
         try:
             document = _open_source(source)
             try:
-                layout = _plan_reflow_document(document, translated, selected_font, settings)
+                layout = _plan_reflow_document(
+                    document,
+                    translated,
+                    selected_font,
+                    settings,
+                    style_by_occurrence=style_by_occurrence,
+                )
                 reflow_plans = layout.plans
                 reflow_occurrences = layout.selected_occurrences
                 final_page_by_source = layout.page_map
@@ -288,6 +306,8 @@ def _plan_reflow_document(
     translated: ExtractedDocument,
     font_path: Path,
     options: RenderOptions,
+    *,
+    style_by_occurrence: dict[int, ResolvedParagraphStyle] | None = None,
 ) -> DocumentLayoutPlan:
     if translated.schema_version != "1.3":
         return DocumentLayoutPlan(
@@ -314,6 +334,7 @@ def _plan_reflow_document(
             default_font_size=options.default_font_size,
             min_font_size=options.min_font_size,
             line_height=options.line_height,
+            style_by_occurrence=style_by_occurrence,
         )
         body_plan: LayoutPlan | None = None
         if body is None:
@@ -1086,6 +1107,10 @@ def _render_results(
                 for item in layout.segments
                 if item.occurrence_index == flow_paragraph.occurrence_index
             )
+            has_body_typography = (
+                layout.content_kind is ReflowContentKind.BODY
+                and flow_paragraph.disposition is ContentDisposition.FLOWABLE_BODY
+            )
             results[flow_paragraph.occurrence_index] = BlockRenderResult(
                 unit_index=flow_paragraph.occurrence_index,
                 page_number=flow_paragraph.source_page_number,
@@ -1111,6 +1136,42 @@ def _render_results(
                 continuation_count=max(0, len(segments) - 1),
                 target_rects=tuple(_bbox(_reflow_rect(item.target_rect)) for item in segments),
                 text_offsets=tuple((item.text_start, item.text_end) for item in segments),
+                applied_line_height=(
+                    flow_paragraph.style.line_height if has_body_typography else None
+                ),
+                applied_alignment=(
+                    flow_paragraph.style.alignment.value if has_body_typography else None
+                ),
+                applied_first_line_indent=(
+                    flow_paragraph.style.first_line_indent if has_body_typography else None
+                ),
+                applied_left_indent=(
+                    flow_paragraph.style.left_indent if has_body_typography else None
+                ),
+                applied_right_indent=(
+                    flow_paragraph.style.right_indent if has_body_typography else None
+                ),
+                applied_space_before=(
+                    flow_paragraph.style.space_before if has_body_typography else None
+                ),
+                applied_space_after=(
+                    flow_paragraph.style.space_after if has_body_typography else None
+                ),
+                applied_color=flow_paragraph.color if has_body_typography else None,
+                bold_requested=(
+                    flow_paragraph.style.bold_requested if has_body_typography else None
+                ),
+                bold_applied=flow_paragraph.style.bold_applied if has_body_typography else None,
+                italic_requested=(
+                    flow_paragraph.style.italic_requested if has_body_typography else None
+                ),
+                italic_applied=(
+                    flow_paragraph.style.italic_applied if has_body_typography else None
+                ),
+                mixed_style=flow_paragraph.style.mixed_style if has_body_typography else None,
+                style_fallback_count=(
+                    flow_paragraph.style.fallback_count if has_body_typography else None
+                ),
             )
     if translated.schema_version == "1.3":
         for unit_index, paragraph in enumerate(translated.paragraphs):

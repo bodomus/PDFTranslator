@@ -232,6 +232,22 @@ def build_success_report(
                     continuation_count=layout.continuation_count if layout is not None else 0,
                     target_rects=layout.target_rects if layout is not None else (),
                     text_offsets=layout.text_offsets if layout is not None else (),
+                    applied_line_height=layout.applied_line_height if layout else None,
+                    applied_alignment=layout.applied_alignment if layout else None,  # type: ignore[arg-type]
+                    applied_first_line_indent=(
+                        layout.applied_first_line_indent if layout else None
+                    ),
+                    applied_left_indent=layout.applied_left_indent if layout else None,
+                    applied_right_indent=layout.applied_right_indent if layout else None,
+                    applied_space_before=layout.applied_space_before if layout else None,
+                    applied_space_after=layout.applied_space_after if layout else None,
+                    applied_color=layout.applied_color if layout else None,
+                    bold_requested=layout.bold_requested if layout else None,
+                    bold_applied=layout.bold_applied if layout else None,
+                    italic_requested=layout.italic_requested if layout else None,
+                    italic_applied=layout.italic_applied if layout else None,
+                    mixed_style=layout.mixed_style if layout else None,
+                    style_fallback_count=layout.style_fallback_count if layout else None,
                 )
             )
         page_codes = (
