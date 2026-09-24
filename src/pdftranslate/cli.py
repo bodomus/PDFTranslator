@@ -97,7 +97,7 @@ app = typer.Typer(
     add_completion=False,
     cls=_RootCommandGroup,
 )
-console = Console()
+console = Console(force_terminal=False, color_system=None)
 
 
 class _CudaModule(Protocol):
