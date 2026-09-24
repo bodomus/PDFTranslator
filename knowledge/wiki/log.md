@@ -20,6 +20,10 @@ This records meaningful knowledge-base changes, not every Git commit or formatti
 
 ## 2026-09-24
 
+- Activated authoritative occurrence-indexed reconstructed typography for production FOOTNOTE,
+  including resolved measurement/insertion, continuation spacing, geometry failure, diagnostics,
+  and the 35-occurrence Robitzsch validation while preserving separator ownership and BODY/HEADING
+  behavior.
 - Activated authoritative occurrence-indexed reconstructed typography for production HEADING,
   documented shared BODY/HEADING mapping, removed the obsolete uniform-heading gate, and preserved
   fail-closed identity/geometry checks, style-aware orphan handling, and unchanged FOOTNOTE scope.

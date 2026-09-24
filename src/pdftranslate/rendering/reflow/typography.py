@@ -27,6 +27,13 @@ def heading_reflow_style(
     return _resolved_reflow_style(resolved, expected_role=TypographyRole.HEADING, heading=True)
 
 
+def footnote_reflow_style(
+    resolved: ResolvedParagraphStyle,
+) -> tuple[ReflowStyle, tuple[float, float, float]]:
+    """Return the applied FOOTNOTE style and normalized renderer color."""
+    return _resolved_reflow_style(resolved, expected_role=TypographyRole.FOOTNOTE, heading=False)
+
+
 def _resolved_reflow_style(
     resolved: ResolvedParagraphStyle,
     *,

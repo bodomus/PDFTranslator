@@ -45,7 +45,11 @@ from pdftranslate.rendering.reflow import (
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
 from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
-from pdftranslate.rendering.reflow.typography import body_reflow_style, heading_reflow_style
+from pdftranslate.rendering.reflow.typography import (
+    body_reflow_style,
+    footnote_reflow_style,
+    heading_reflow_style,
+)
 from pdftranslate.typography import (
     MixedStyleEvidence,
     RgbColor,
@@ -763,6 +767,232 @@ def test_heading_style_reports_resolved_typography_without_faking_faces() -> Non
         body_reflow_style(resolved)
 
 
+def test_footnote_style_reports_resolved_typography_without_faking_faces() -> None:
+    document, _ = _classified_document(ambiguous=False)
+    resolved = (
+        reconstruct_styles(extract_typography_evidence(document))
+        .paragraphs[3]
+        .model_copy(
+            update={
+                "font_size_points": 7.75,
+                "line_height_ratio": 1.15,
+                "first_line_indent_points": 2.0,
+                "left_indent_points": 3.0,
+                "right_indent_points": 4.0,
+                "space_before_points": 5.0,
+                "space_after_points": 6.0,
+                "alignment": TextAlignment.RIGHT,
+                "color_rgb": RgbColor(red=12, green=34, blue=56),
+                "bold": True,
+                "italic": True,
+                "mixed_styles": MixedStyleEvidence(
+                    mixed_font_family=True,
+                    mixed_font_size=False,
+                    mixed_weight=True,
+                    mixed_italic=True,
+                    mixed_color=False,
+                ),
+            }
+        )
+    )
+
+    style, color = footnote_reflow_style(resolved)
+
+    assert style.heading is False
+    assert style.font_size == 7.75
+    assert style.line_height == 1.15
+    assert style.alignment is ReflowAlignment.RIGHT
+    assert style.first_line_indent == 2.0
+    assert style.left_indent == 3.0
+    assert style.right_indent == 4.0
+    assert style.space_before == 5.0
+    assert style.space_after == 6.0
+    assert style.bold_requested is True
+    assert style.bold_applied is False
+    assert style.italic_requested is True
+    assert style.italic_applied is False
+    assert style.mixed_style is True
+    assert style.fallback_count == resolved.fallback_count
+    assert color == pytest.approx((12 / 255, 34 / 255, 56 / 255))
+
+    with pytest.raises(ValueError, match="BODY"):
+        body_reflow_style(resolved)
+    with pytest.raises(ValueError, match="HEADING"):
+        heading_reflow_style(resolved)
+
+
+def test_footnote_discovery_maps_resolved_style_by_occurrence_with_duplicate_id() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    paragraphs = list(document.paragraphs)
+    paragraphs[3] = paragraphs[3].model_copy(update={"id": paragraphs[1].id})
+    document = document.model_copy(update={"paragraphs": tuple(paragraphs)})
+    resolved = reconstruct_styles(extract_typography_evidence(document))
+    style_by_occurrence = {item.occurrence_index: item for item in resolved.paragraphs}
+    style_by_occurrence[3] = style_by_occurrence[3].model_copy(
+        update={
+            "font_size_points": 7.5,
+            "line_height_ratio": 1.25,
+            "first_line_indent_points": 3.0,
+            "left_indent_points": 4.0,
+            "right_indent_points": 5.0,
+            "space_before_points": 2.0,
+            "space_after_points": 6.0,
+            "alignment": TextAlignment.CENTER,
+            "color_rgb": RgbColor(red=24, green=48, blue=72),
+        }
+    )
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        discovered = discover_footnote_page(
+            document,
+            page_model,
+            page,
+            body_region=None,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+            style_by_occurrence=style_by_occurrence,
+        )
+    finally:
+        pdf.close()
+
+    assert discovered is not None
+    footnote = discovered.paragraphs[0]
+    assert footnote.occurrence_index == 3
+    assert footnote.paragraph_id == paragraphs[1].id
+    assert footnote.disposition is ContentDisposition.FLOWABLE_FOOTNOTE
+    assert footnote.style.heading is False
+    assert footnote.style.font_size == 7.5
+    assert footnote.style.line_height == 1.25
+    assert footnote.style.alignment is ReflowAlignment.CENTER
+    assert footnote.style.first_line_indent == 3.0
+    assert footnote.style.left_indent == 4.0
+    assert footnote.style.right_indent == 5.0
+    assert footnote.style.space_before == 2.0
+    assert footnote.style.space_after == 6.0
+    assert footnote.color == pytest.approx((24 / 255, 48 / 255, 72 / 255))
+
+
+def test_footnote_discovery_fails_closed_for_invalid_resolved_identity_role_or_alignment() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    resolved = reconstruct_styles(extract_typography_evidence(document))
+    original = {item.occurrence_index: item for item in resolved.paragraphs}
+    variants = []
+
+    missing = dict(original)
+    missing.pop(3)
+    variants.append(missing)
+
+    wrong_occurrence = dict(original)
+    wrong_occurrence[3] = wrong_occurrence[3].model_copy(update={"occurrence_index": 99})
+    variants.append(wrong_occurrence)
+
+    wrong_id = dict(original)
+    wrong_id[3] = wrong_id[3].model_copy(update={"paragraph_id": "wrong-footnote"})
+    variants.append(wrong_id)
+
+    for wrong_role_index in (0, 1):
+        wrong_role = dict(original)
+        wrong_role[3] = wrong_role[wrong_role_index].model_copy(
+            update={"occurrence_index": 3, "paragraph_id": document.paragraphs[3].id}
+        )
+        variants.append(wrong_role)
+
+    unknown_alignment = dict(original)
+    unknown_alignment[3] = unknown_alignment[3].model_copy(
+        update={"alignment": TextAlignment.UNKNOWN}
+    )
+    variants.append(unknown_alignment)
+
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        for style_by_occurrence in variants:
+            assert (
+                discover_footnote_page(
+                    document,
+                    page_model,
+                    page,
+                    body_region=None,
+                    default_font_size=11,
+                    min_font_size=6,
+                    line_height=1.2,
+                    style_by_occurrence=style_by_occurrence,
+                )
+                is None
+            )
+    finally:
+        pdf.close()
+
+
+def test_resolved_footnote_typography_applies_continuation_spacing_once() -> None:
+    document, _ = _classified_document(ambiguous=False)
+    resolved = (
+        reconstruct_styles(extract_typography_evidence(document))
+        .paragraphs[3]
+        .model_copy(
+            update={
+                "font_size_points": 8.0,
+                "line_height_ratio": 1.1,
+                "first_line_indent_points": 12.0,
+                "left_indent_points": 5.0,
+                "right_indent_points": 7.0,
+                "space_before_points": 3.0,
+                "space_after_points": 4.0,
+                "alignment": TextAlignment.JUSTIFIED,
+            }
+        )
+    )
+    style, color = footnote_reflow_style(resolved)
+    paragraph = _footnote(3, "word " * 250)
+    paragraph = FlowParagraph(**{**paragraph.__dict__, "style": style, "color": color})
+
+    plan = plan_flow(
+        (paragraph,),
+        (_region(1, 0, height=25), _region(2, 1, height=100)),
+        CapacityMeasurer(),
+        content_kind=ReflowContentKind.FOOTNOTE,
+    )
+
+    assert len(plan.segments) > 1
+    first, continuation = plan.segments[:2]
+    assert first.first_line_indent == 12.0
+    assert first.space_before == 3.0
+    assert continuation.first_line_indent == 0.0
+    assert continuation.space_before == 0.0
+    assert plan.segments[-1].space_after == 4.0
+    assert all(item.left_indent == 5.0 for item in plan.segments)
+    assert all(item.right_indent == 7.0 for item in plan.segments)
+    assert all(item.alignment is ReflowAlignment.JUSTIFIED for item in plan.segments)
+    assert "".join(item.text for item in plan.segments) == paragraph.text
+
+
+def test_resolved_footnote_typography_rejects_unsafe_indent_geometry() -> None:
+    paragraph = _footnote(0, "unsafe footnote")
+    paragraph = FlowParagraph(
+        **{
+            **paragraph.__dict__,
+            "style": ReflowStyle(
+                font_size=8,
+                line_height=1.2,
+                space_before=0,
+                space_after=0,
+                left_indent=120,
+                right_indent=101,
+            ),
+        }
+    )
+
+    with pytest.raises(UnsupportedLayoutError, match="indents"):
+        plan_flow(
+            (paragraph,),
+            (_region(1, 0),),
+            CapacityMeasurer(),
+            content_kind=ReflowContentKind.FOOTNOTE,
+        )
+
+
 def test_footnote_region_discovery_rejects_unsafe_objects() -> None:
     document, page_model = _classified_document(ambiguous=False)
     pdf = pymupdf.open()
@@ -921,8 +1151,23 @@ def test_renderer_paginates_footnotes_after_body_pages_and_preserves_separator(
     assert result.footnotes_reflowed == 1
     assert result.footnote_segments == footnote.segment_count
     assert result.continued_footnotes == 1
-    assert footnote.applied_line_height is None
-    assert footnote.applied_alignment is None
+    expected_footnote = reconstruct_styles(extract_typography_evidence(translated)).paragraphs[
+        footnote.unit_index
+    ]
+    assert footnote.font_size == expected_footnote.font_size_points
+    assert footnote.applied_line_height == expected_footnote.line_height_ratio
+    assert footnote.applied_alignment == expected_footnote.alignment.value
+    assert footnote.applied_first_line_indent == expected_footnote.first_line_indent_points
+    assert footnote.applied_left_indent == expected_footnote.left_indent_points
+    assert footnote.applied_right_indent == expected_footnote.right_indent_points
+    assert footnote.applied_space_before == expected_footnote.space_before_points
+    assert footnote.applied_space_after == expected_footnote.space_after_points
+    assert footnote.bold_requested is expected_footnote.bold
+    assert footnote.bold_applied is False
+    assert footnote.italic_requested is expected_footnote.italic
+    assert footnote.italic_applied is False
+    assert footnote.mixed_style is not None
+    assert footnote.style_fallback_count == expected_footnote.fallback_count
     assert result.footnote_continuation_pages >= 1
     assert result.footnote_unplaced_text_count == 0
     assert footnote.page_number == 1

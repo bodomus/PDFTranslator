@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - diagnostics
 sources:
+- ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
 - ../../../Tickets/PDFTR-28.md
 - ../../../docs/style-reconstruction.md
@@ -52,10 +53,11 @@ family, 10.959 pt BODY size, 1.138 BODY line-height ratio, and 7.970 pt FOOTNOTE
 the mixed BODY alignment aggregate and one-line FOOTNOTE geometry unstable. No HEADING occurrence
 or baseline is fabricated.
 
-PDFTR-29 consumes this contract once per document for BODY, and PDFTR-30 extends the same common
-mapping to HEADING through role-validating adapters keyed by occurrence index. Production BODY and
-HEADING planning applies size, line height, color, physical alignment, indents, and spacing before
-pagination. Paragraph id validates the selected occurrence but never becomes the lookup key. The
-selected Cyrillic-capable font remains authoritative; exact source font identity is unchanged
-evidence, while requested bold/italic are diagnosed as unapplied until a safe variant resolver
-exists. Footnote style selection remains on its previous path.
+PDFTR-29 consumes this contract once per document for BODY, PDFTR-30 extends the same common
+mapping to HEADING, and PDFTR-31 extends it to FOOTNOTE through role-validating adapters keyed by
+occurrence index. Production planning for all three roles applies size, line height, color,
+physical alignment, indents, and spacing before pagination. Paragraph id validates the selected
+occurrence but never becomes the lookup key. The selected Cyrillic-capable font remains
+authoritative; exact source font identity is unchanged evidence, while requested bold/italic are
+diagnosed as unapplied until a safe variant resolver exists. FOOTNOTE preserves `heading=False`
+and uses the same one-time continuation spacing rules without changing separator geometry.

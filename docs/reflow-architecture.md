@@ -13,8 +13,8 @@ source footnote region first and then bounded dedicated continuation pages, coor
 document layout plan with body continuation pages.
 
 PDFTR-29 activates the PDFTR-28 reconstructed style contract for BODY occurrences. PDFTR-30 extends
-the same role-aware, occurrence-indexed adapter to HEADING. Typography evidence and reconstruction
-still run once per document; FOOTNOTE style discovery retains its earlier behavior.
+the same role-aware, occurrence-indexed adapter to HEADING, and PDFTR-31 extends it to FOOTNOTE.
+Typography evidence and reconstruction still run once per document.
 
 ## Problem and verified boundary
 
@@ -185,10 +185,10 @@ footnote pages; sharing the body limit would reject otherwise complete content.
 - The source PDF is immutable. PoC PDF, debug PDF, and JSON plan use separate destinations and
   temporary sibling writes.
 
-## BODY and HEADING typography boundary
+## BODY, HEADING, and FOOTNOTE typography boundary
 
 Production reconstructs paragraph styles once per schema 1.3 document and keys them by occurrence
-index. Role-validating BODY and HEADING adapters share one mapping that applies resolved font size,
+index. Role-validating BODY, HEADING, and FOOTNOTE adapters share one mapping that applies resolved font size,
 line-height ratio, RGB color, physical
 left/center/right/justified alignment, left/right indents, first-line indent, and before/after
 spacing. Indents affect available width; space-before and first-line indent apply only to the first
@@ -204,13 +204,21 @@ it does not rely on a separate font-size/line-height estimate.
 The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
 Bold and italic are retained as requested values but reported as unapplied until a safe local font
 variant resolver exists. Mixed inline styles use the resolved paragraph-dominant style and retain a
-diagnostic flag. The adapter is not used for footnotes.
+diagnostic flag.
 
 Each HEADING must have an occurrence-index match with the same occurrence index and paragraph id,
 and the resolved role must remain HEADING. Missing or mismatched styles make the page ineligible.
 The former uniform-heading-size gate is removed because planning, geometry validation, measurement,
 insertion, and saved-PDF validation are already per occurrence; heterogeneous headings therefore do
 not need a synthetic common style to remain safe.
+
+Each FOOTNOTE follows the same occurrence-index and paragraph-id validation boundary and must retain
+the FOOTNOTE role. When the authoritative map is present, missing, mismatched, wrong-role, or
+nonphysical-alignment styles make footnote discovery ineligible; the renderer does not fall back to
+the prior synthetic `font_size * 0.25` spacing. Resolved left/right indents and true-first-segment
+indent are checked by the shared planner geometry before mutation. Resolved space-before applies
+only to the true first segment and space-after only to completion, while alignment and side indents
+persist through continuation pages. Separator geometry remains independent of paragraph spacing.
 
 ## Diagnostics and validation
 
@@ -235,8 +243,20 @@ distinguish identical segment text placed at different target rectangles.
 
 Footnote occurrences are reported with `reflow_footnote`, source occurrence index and page,
 paragraph ID, target pages and rectangles, segment count, continuation count, offsets, and terminal
-state. Document totals distinguish reflowed footnotes, footnote segments and continuations,
+state. They also expose applied size, line height, alignment, indents, spacing, color,
+requested/applied face state, mixed-style state, and fallback count. Document totals distinguish reflowed footnotes, footnote segments and continuations,
 continuation pages, fixed-layout and unsupported footnote units, and unplaced text.
+
+## PDFTR-31 Robitzsch validation
+
+The cached four-page Robitzsch artifact contains 35 naturally classified FOOTNOTE occurrences.
+PDFTR-31 rendered all 35 as 37 selectable segments at a stable resolved 7.970 pt, with four
+footnote continuation pages, zero BODY or FOOTNOTE unplaced characters, zero overflow, and eight
+final pages. The eight-page result matches the already style-aware BODY baseline: the historical
+PDFTR-24 nine-page result included one BODY continuation that later resolved BODY metrics no longer
+require. Poppler review covered all eight output pages and the source footnote pages; footnotes stay
+below body content, continuations preserve order, and no clipping, overlap, or separator collision
+was observed.
 
 ## PDFTR-24 controlled result
 

@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
 - ../../../Tickets/PDFTR-29-body-typography-fidelity.md
 - ../../../Tickets/PDFTR-23-production-body-reflow.md
@@ -111,14 +112,20 @@ placement behavior documented here remain unchanged. See
 [Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.
 
 PDFTR-28 resolves that evidence into a role-aware renderer-facing contract with traceable
-fallbacks. PDFTR-29 activates BODY and PDFTR-30 activates HEADING through one common mapping with
+fallbacks. PDFTR-29 activates BODY, PDFTR-30 activates HEADING, and PDFTR-31 activates FOOTNOTE through one common mapping with
 thin role validators. Resolved size, line height, color, physical alignment, left/right and
 first-line indents, and before/after spacing all participate in planning. First-line indent and
 space-before apply only to a paragraph's first segment; space-after applies only after completion.
-Occurrence index is authoritative, paragraph id is validation only, and invalid HEADING identity or
-role makes the page ineligible. FOOTNOTE styles do not consume the adapter. Diagnostics retain
+Occurrence index is authoritative, paragraph id is validation only, and invalid role identity,
+role, alignment, or geometry makes the affected page ineligible. FOOTNOTE resolved spacing replaces
+the former synthetic trailing gap without changing separator ownership. Diagnostics retain
 mixed-style/fallback state and distinguish requested from applied bold/italic. See
 [Paragraph style reconstruction](style-reconstruction.md).
+
+The PDFTR-31 Robitzsch replay rendered 35 natural FOOTNOTE occurrences as 37 segments at a stable
+7.970 pt, with four footnote continuation pages, zero BODY/FOOTNOTE unplaced characters, zero
+overflow, and eight final pages. Poppler review of all output pages found no clipping, overlap, or
+separator collision; the source PDF hash remained unchanged.
 
 The obsolete uniform-heading-size gate is removed. Each heading is independently measured,
 geometry-checked, inserted, and validated from its authoritative resolved style, so safe

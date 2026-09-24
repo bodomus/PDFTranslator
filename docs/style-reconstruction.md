@@ -3,8 +3,8 @@
 PDFTR-28 converts the source-backed evidence from PDFTR-27 into a stable, versioned style contract.
 The policy is pure domain logic: it consumes an in-memory `TypographyBaseline`, does not reopen a
 PDF, and does not inspect installed fonts. PDFTR-29 consumes the resolved contract at the
-production BODY reflow boundary, and PDFTR-30 extends that boundary to HEADING. Footnotes retain
-their existing local styling.
+production BODY reflow boundary, PDFTR-30 extends that boundary to HEADING, and PDFTR-31 extends it
+to FOOTNOTE. All three roles now use the shared role-aware mapping in production reflow.
 
 ## Contracts and API
 
@@ -138,7 +138,7 @@ The generated evidence belongs under ignored `temp/pdftr28/`; it is not committe
 ## Rendering boundary
 
 The production renderer reconstructs typography once for a schema-1.3 translated document and
-maps BODY and HEADING styles by occurrence index. Thin role-validating adapters share one
+maps BODY, HEADING, and FOOTNOTE styles by occurrence index. Thin role-validating adapters share one
 `ResolvedParagraphStyle → ReflowStyle` mapping for font size, line-height ratio, paragraph spacing,
 first/left/right indents, physical alignment, and RGB color. Duplicate paragraph IDs are therefore
 safe and do not participate in style lookup.
@@ -151,5 +151,7 @@ indent, and color are evaluated consistently.
 
 The current font boundary deliberately does not synthesize bold or italic faces. Diagnostics retain
 the requested values and report both as unapplied. Mixed-style evidence and fallback counts also
-remain visible, while inline run reconstruction stays out of scope. BODY and HEADING diagnostics
-expose the applied contract; FOOTNOTE rendering and diagnostics remain unchanged.
+remain visible, while inline run reconstruction stays out of scope. BODY, HEADING, and FOOTNOTE
+diagnostics expose the applied contract. The FOOTNOTE adapter preserves `heading=False`; its
+resolved spacing replaces the former synthetic trailing gap and follows the same first/final
+segment semantics as the other roles.
