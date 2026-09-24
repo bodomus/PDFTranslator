@@ -19,3 +19,10 @@
    complete `scripts/check.ps1` quality gate.
 10. Update affected documentation, ProjectWiki pages, CHANGELOG, implementation report, and ticket
     review artifact; lint ProjectWiki and attach the review to PDFTR-29.
+
+## CI determinism follow-up
+
+11. Bundle the OFL-licensed Liberation Sans Regular 2.1.5 test font and its license, replace the
+    platform-dependent `cyrillic_font_path` lookup with the exact repository path, and verify the
+    focused production reflow suite plus the full project quality gate without changing production
+    rendering or planner behavior.

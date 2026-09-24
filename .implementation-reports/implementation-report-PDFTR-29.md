@@ -70,3 +70,20 @@ with `applied=false`; no synthetic styling or unsafe variant substitution was in
   328 passed, 1 skipped, total coverage 89.15%.
 - Cached Robitzsch rerun: 61 units, 7 BODY occurrences in 7 segments, 4 inserted pages,
   overflow 0, BODY unplaced 0, footnote unplaced 0. Pagination remained unchanged.
+
+## CI determinism fix
+
+- Bundled the unmodified Liberation Sans Regular 2.1.5 font under `tests/resources/fonts/` with its
+  SIL Open Font License 1.1 and source/checksum metadata.
+- Changed only the shared test fixture so production reflow tests use identical font bytes and
+  metrics on Windows and Ubuntu instead of selecting Segoe UI or DejaVu Sans by operating system.
+- Production font discovery, renderer behavior, pagination limits, completeness enforcement, and
+  planner/reflow logic remain unchanged.
+
+### CI determinism validation
+
+- Focused production reflow suite: 19 passed with the bundled font, including the pinned-path/hash
+  regression and both tests that had failed under Ubuntu font metrics.
+- Full `uv run pytest`: 329 passed, 1 skipped, total coverage 89.15%.
+- Full `scripts/check.ps1`: ProjectWiki lint clean, Ruff format/check clean, mypy clean, and the
+  same 329 passed / 1 skipped test result.

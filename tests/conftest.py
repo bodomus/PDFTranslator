@@ -61,16 +61,5 @@ def pdf_factory() -> PdfFactory:
 
 @pytest.fixture
 def cyrillic_font_path() -> Path:
-    """Return a system font without copying proprietary files into the repository."""
-    import os
-
-    candidates = (
-        Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "segoeui.ttf",
-        Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf",
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    pytest.skip("no system Cyrillic font is available")
+    """Return the bundled font so reflow metrics are identical on every platform."""
+    return (Path(__file__).parent / "resources" / "fonts" / "LiberationSans-Regular.ttf").resolve()

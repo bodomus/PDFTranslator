@@ -50,6 +50,16 @@
 - Cached Robitzsch: 61 units, 7 BODY segments, 4 inserted pages, overflow 0, BODY unplaced 0,
   footnote unplaced 0; pagination unchanged.
 
+## CI determinism fix
+
+- Production reflow tests now use the same bundled, OFL-licensed Liberation Sans Regular 2.1.5
+  bytes on Windows and Ubuntu.
+- Removed OS-dependent test font selection without changing production font handling, planner
+  behavior, reflow limits, or completeness enforcement.
+- Focused production reflow suite: 19 passed, including the pinned-path/hash regression and both
+  formerly CI-failing tests.
+- Full quality gate: 329 passed, 1 skipped, 89.15% coverage; Ruff, mypy, and ProjectWiki lint clean.
+
 ## Final review status
 
 READY FOR REVIEW

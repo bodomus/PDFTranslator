@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,17 @@ from pdftranslate.typography import (
     extract_typography_evidence,
     reconstruct_styles,
 )
+
+
+def test_cyrillic_font_fixture_uses_pinned_bundled_bytes(cyrillic_font_path: Path) -> None:
+    expected_path = (
+        Path(__file__).parent / "resources" / "fonts" / "LiberationSans-Regular.ttf"
+    ).resolve()
+
+    assert cyrillic_font_path == expected_path
+    assert hashlib.sha256(cyrillic_font_path.read_bytes()).hexdigest() == (
+        "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8"
+    )
 
 
 class CapacityMeasurer:
