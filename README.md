@@ -69,12 +69,12 @@ fallback metadata, and the intentionally inactive rendering boundary.
 ## Production body and footnote reflow
 
 Schema 1.3 rendering automatically uses production reflow for confidently classified
-single-column book pages. Body prose and headings use their occurrence-indexed reconstructed
-typography and flow through the existing source body region, then through bounded blank
-continuation pages inserted immediately after the source page. Ordered footnotes retain their
-separate source-derived styling and use their source lower-page region first, followed by bounded
-dedicated continuation pages. For each source page, body continuation pages precede footnote
-continuation pages, followed by the next original page. Headers, page numbers, images, drawings,
+single-column book pages. Body prose, headings, and footnotes use their occurrence-indexed
+reconstructed typography. Body/heading content flows through the existing source body region,
+then through bounded blank continuation pages inserted immediately after the source page. Ordered
+footnotes use the same role-aware typography contract in their separate source lower-page region,
+followed by bounded dedicated continuation pages. For each source page, body continuation pages
+precede footnote continuation pages, followed by the next original page. Headers, page numbers, images, drawings,
 and captions remain anchored or on the fixed-layout path. Ambiguous, multi-column, intersecting,
 and otherwise unsafe pages never enter reflow automatically.
 

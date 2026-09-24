@@ -22,7 +22,9 @@ from pdftranslate.rendering.reflow.regions import (
     paragraph_policy,
     rect_from_bbox,
 )
+from pdftranslate.rendering.reflow.typography import footnote_reflow_style
 from pdftranslate.repeated import RepeatedElementPolicy
+from pdftranslate.typography import ResolvedParagraphStyle
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ def discover_footnote_page(
     default_font_size: float,
     min_font_size: float,
     line_height: float,
+    style_by_occurrence: dict[int, ResolvedParagraphStyle] | None = None,
 ) -> FootnotePage | None:
     """Return a footnote group only when structured and PDF evidence is safe."""
     if document.schema_version != "1.3" or page_model.classification is not PageClassification.TEXT:
@@ -120,8 +123,24 @@ def discover_footnote_page(
 
     flow: list[FlowParagraph] = []
     for index, paragraph in candidates:
-        source_size = paragraph_font_size(paragraph, default_font_size)
-        font_size = max(min_font_size, source_size)
+        if style_by_occurrence is None:
+            source_size = paragraph_font_size(paragraph, default_font_size)
+            font_size = max(min_font_size, source_size)
+            style = ReflowStyle(
+                font_size=font_size,
+                line_height=line_height,
+                space_before=0.0,
+                space_after=font_size * 0.25,
+            )
+            color = paragraph_color(paragraph)
+        else:
+            resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
+            if resolved is None:
+                return None
+            try:
+                style, color = footnote_reflow_style(resolved)
+            except ValueError:
+                return None
         source_rect = rect_from_bbox(paragraph.bbox)
         flow.append(
             FlowParagraph(
@@ -135,13 +154,8 @@ def discover_footnote_page(
                 source_fragment_rects=tuple(
                     rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
                 ),
-                style=ReflowStyle(
-                    font_size=font_size,
-                    line_height=line_height,
-                    space_before=0.0,
-                    space_after=font_size * 0.25,
-                ),
-                color=paragraph_color(paragraph),
+                style=style,
+                color=color,
             )
         )
     continuation = Rect(
@@ -158,6 +172,21 @@ def discover_footnote_page(
         continuation_region_rect=continuation,
         separator_rect=separator,
     )
+
+
+def _resolved_occurrence(
+    style_by_occurrence: dict[int, ResolvedParagraphStyle],
+    occurrence_index: int,
+    paragraph: LogicalParagraph,
+) -> ResolvedParagraphStyle | None:
+    resolved = style_by_occurrence.get(occurrence_index)
+    if (
+        resolved is None
+        or resolved.occurrence_index != occurrence_index
+        or resolved.paragraph_id != paragraph.id
+    ):
+        return None
+    return resolved
 
 
 def _eligible_footnote(
