@@ -64,6 +64,29 @@ class RenderOptions:
 
 
 @dataclass(frozen=True)
+class InlineStyleRenderDecision:
+    """Privacy-safe applied/deferred evidence for one source-backed inline candidate."""
+
+    status: str
+    text_sha256: str
+    source_start: int | None
+    source_end: int | None
+    text_start: int | None
+    text_end: int | None
+    mapping_kind: str | None
+    confidence: str | None
+    defer_reason: str | None
+    font_size_points: float | None
+    color_rgb: tuple[float, float, float] | None
+    bold_requested: bool | None
+    bold_applied: bool
+    italic_requested: bool | None
+    italic_applied: bool
+    source_font_name: str | None
+    source_font_family_group: str | None
+
+
+@dataclass(frozen=True)
 class BlockRenderResult:
     """Authoritative terminal decision for one source-backed render unit."""
 
@@ -101,6 +124,11 @@ class BlockRenderResult:
     italic_applied: bool | None = None
     mixed_style: bool | None = None
     style_fallback_count: int | None = None
+    inline_style_candidate_count: int = 0
+    inline_style_applied_count: int = 0
+    inline_style_deferred_count: int = 0
+    inline_style_applied_character_count: int = 0
+    inline_style_decisions: tuple[InlineStyleRenderDecision, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,6 +159,10 @@ class RenderResult:
     footnote_fixed_layout_units: int = 0
     footnote_unsupported_pages: int = 0
     footnote_unplaced_text_count: int = 0
+    inline_style_candidate_count: int = 0
+    inline_style_applied_count: int = 0
+    inline_style_deferred_count: int = 0
+    inline_style_applied_character_count: int = 0
 
     @property
     def expected_units(self) -> int:

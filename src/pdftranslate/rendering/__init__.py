@@ -11,6 +11,7 @@ from pdftranslate.rendering.errors import (
 from pdftranslate.rendering.fonts import discover_font, validate_font
 from pdftranslate.rendering.models import (
     BlockRenderResult,
+    InlineStyleRenderDecision,
     RenderOptions,
     RenderResult,
     RenderState,
@@ -22,6 +23,7 @@ from pdftranslate.rendering.validation import validate_output_pdf
 __all__ = [
     "BlockRenderResult",
     "FontValidationError",
+    "InlineStyleRenderDecision",
     "OutputPdfError",
     "PdfRenderer",
     "RenderCompletenessError",

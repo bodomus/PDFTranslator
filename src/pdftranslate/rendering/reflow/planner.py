@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from pdftranslate.rendering.inline_styles import InlineStyleRun, clip_inline_style_runs
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
     FlowParagraph,
@@ -52,6 +53,7 @@ class TextMeasurer(Protocol):
         height: float,
         style: ReflowStyle,
         first_segment: bool,
+        inline_runs: tuple[InlineStyleRun, ...] = (),
     ) -> Measurement: ...
 
 
@@ -100,12 +102,19 @@ def plan_flow(
             )
 
             remaining = paragraph.text[text_offset:]
+            remaining_runs = clip_inline_style_runs(
+                paragraph.inline_styles.applied,
+                text=paragraph.text,
+                text_start=text_offset,
+                text_end=len(paragraph.text),
+            )
             measurement = measurer.measure(
                 remaining,
                 width=usable_width,
                 height=layout_height,
                 style=paragraph.style,
                 first_segment=first_segment,
+                inline_runs=remaining_runs,
             )
             if (
                 text_offset == 0
@@ -136,6 +145,7 @@ def plan_flow(
                     measurer,
                     paragraph,
                     first_segment=first_segment,
+                    inline_runs=remaining_runs,
                 )
                 if consumed == 0:
                     if cursor_y > region.rect.y0 + 1e-6:
@@ -146,6 +156,12 @@ def plan_flow(
                     )
 
             text_end = text_offset + consumed
+            segment_runs = clip_inline_style_runs(
+                remaining_runs,
+                text=remaining,
+                text_start=0,
+                text_end=consumed,
+            )
             completes = text_end == len(paragraph.text)
             segment_height = min(
                 available_height,
@@ -181,6 +197,7 @@ def plan_flow(
                     mixed_style=paragraph.style.mixed_style,
                     fallback_count=paragraph.style.fallback_count,
                     state=PlacementState.COMPLETE if completes else PlacementState.CONTINUED,
+                    inline_runs=segment_runs,
                 )
             )
             text_offset = text_end
@@ -227,6 +244,7 @@ def _would_orphan_heading(
         measurer,
         following,
         first_segment=True,
+        inline_runs=following.inline_styles.applied,
     )
     return consumed == 0 or body_measurement.line_count < options.minimum_body_after_heading_lines
 
@@ -260,12 +278,20 @@ def _largest_fitting_prefix(
     paragraph: FlowParagraph,
     *,
     first_segment: bool,
+    inline_runs: tuple[InlineStyleRun, ...],
 ) -> tuple[int, Measurement]:
     boundaries = [match.end() for match in re.finditer(r"\S+\s*", text)]
     if not boundaries or boundaries[-1] != len(text):
         boundaries.append(len(text))
     best = _binary_search(
-        text, boundaries, width, height, measurer, paragraph, first_segment=first_segment
+        text,
+        boundaries,
+        width,
+        height,
+        measurer,
+        paragraph,
+        first_segment=first_segment,
+        inline_runs=inline_runs,
     )
     if best[0] > 0:
         return best
@@ -277,6 +303,7 @@ def _largest_fitting_prefix(
         measurer,
         paragraph,
         first_segment=first_segment,
+        inline_runs=inline_runs,
     )
 
 
@@ -289,18 +316,26 @@ def _binary_search(
     paragraph: FlowParagraph,
     *,
     first_segment: bool,
+    inline_runs: tuple[InlineStyleRun, ...],
 ) -> tuple[int, Measurement]:
     low, high, best_index = 0, len(boundaries) - 1, 0
     best = Measurement(False, 0.0, 0)
     while low <= high:
         middle = (low + high) // 2
         boundary = boundaries[middle]
+        prefix_runs = clip_inline_style_runs(
+            inline_runs,
+            text=text,
+            text_start=0,
+            text_end=boundary,
+        )
         measured = measurer.measure(
             text[:boundary],
             width=width,
             height=height,
             style=paragraph.style,
             first_segment=first_segment,
+            inline_runs=prefix_runs,
         )
         if measured.fits:
             best_index, best, low = boundary, measured, middle + 1

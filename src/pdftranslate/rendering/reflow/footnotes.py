@@ -9,6 +9,7 @@ import pymupdf
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
+from pdftranslate.rendering.inline_styles import map_inline_styles
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
     FlowParagraph,
@@ -123,6 +124,7 @@ def discover_footnote_page(
 
     flow: list[FlowParagraph] = []
     for index, paragraph in candidates:
+        resolved_style: ResolvedParagraphStyle | None = None
         if style_by_occurrence is None:
             source_size = paragraph_font_size(paragraph, default_font_size)
             font_size = max(min_font_size, source_size)
@@ -137,6 +139,7 @@ def discover_footnote_page(
             resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
             if resolved is None:
                 return None
+            resolved_style = resolved
             try:
                 style, color = footnote_reflow_style(resolved)
             except ValueError:
@@ -156,6 +159,19 @@ def discover_footnote_page(
                 ),
                 style=style,
                 color=color,
+                inline_styles=map_inline_styles(
+                    paragraph,
+                    translated_text=paragraph.translated_text or "",
+                    base_font_size=style.font_size,
+                    base_color=color,
+                    base_bold=style.bold_requested,
+                    base_italic=style.italic_requested,
+                    base_font_family_group=(
+                        resolved_style.source_font_family_group
+                        if resolved_style is not None
+                        else None
+                    ),
+                ),
             )
         )
     continuation = Rect(

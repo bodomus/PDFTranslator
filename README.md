@@ -64,7 +64,7 @@ uv run python -m scripts.typography_inspect SOURCE.pdf --pages 1,3-4 --resolved 
 See [typography evidence](docs/typography-evidence.md) for the typed contract, confidence rules,
 Robitzsch verification, and current limitations. See
 [style reconstruction](docs/style-reconstruction.md) for role baselines, deterministic precedence,
-fallback metadata, and the intentionally inactive rendering boundary.
+fallback metadata, and the production paragraph/inline rendering boundary.
 
 ## Production body and footnote reflow
 
@@ -77,6 +77,12 @@ followed by bounded dedicated continuation pages. For each source page, body con
 precede footnote continuation pages, followed by the next original page. Headers, page numbers, images, drawings,
 and captions remain anchored or on the fixed-layout path. Ambiguous, multi-column, intersecting,
 and otherwise unsafe pages never enter reflow automatically.
+
+Mixed-style paragraphs retain the resolved paragraph style as their base. Source-backed inline
+font-size and RGB-color differences are applied only when the exact source substring survives in
+the translation with a unique, order-preserving mapping. Ambiguous, missing, overlapping, or
+unsupported runs are deferred and reported; source offsets are never reused as translated offsets,
+and bold/italic/font-family evidence remains diagnostic rather than synthesizing an unsafe face.
 
 Each continuation is recorded as an exact occurrence-backed segment and validated after save in a
 padded clip around its own target rectangle. Any unplaced text, fixed-layout overflow, or missing
