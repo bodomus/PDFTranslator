@@ -43,6 +43,26 @@ class DiagnosticFinding(DomainModel):
     block_id: str | None = None
 
 
+class InlineStyleDiagnostic(DomainModel):
+    status: Literal["applied", "deferred"]
+    text_sha256: str = Field(min_length=64, max_length=64)
+    source_start: int | None = Field(default=None, ge=0)
+    source_end: int | None = Field(default=None, ge=1)
+    text_start: int | None = Field(default=None, ge=0)
+    text_end: int | None = Field(default=None, ge=1)
+    mapping_kind: str | None = None
+    confidence: str | None = None
+    defer_reason: str | None = None
+    font_size_points: float | None = Field(default=None, gt=0)
+    color_rgb: tuple[float, float, float] | None = None
+    bold_requested: bool | None = None
+    bold_applied: bool = False
+    italic_requested: bool | None = None
+    italic_applied: bool = False
+    source_font_name: str | None = None
+    source_font_family_group: str | None = None
+
+
 class BlockDiagnostic(DomainModel):
     block_id: str
     source_occurrence_index: int | None = Field(default=None, ge=0)
@@ -111,6 +131,11 @@ class BlockDiagnostic(DomainModel):
     italic_applied: bool | None = None
     mixed_style: bool | None = None
     style_fallback_count: int | None = Field(default=None, ge=0)
+    inline_style_candidate_count: int = Field(default=0, ge=0)
+    inline_style_applied_count: int = Field(default=0, ge=0)
+    inline_style_deferred_count: int = Field(default=0, ge=0)
+    inline_style_applied_character_count: int = Field(default=0, ge=0)
+    inline_style_decisions: tuple[InlineStyleDiagnostic, ...] = ()
 
 
 class PageDiagnostic(DomainModel):
@@ -180,6 +205,10 @@ class ReportSummary(DomainModel):
     footnote_fixed_layout_units: int = Field(default=0, ge=0)
     footnote_unsupported_pages: int = Field(default=0, ge=0)
     footnote_unplaced_text_count: int = Field(default=0, ge=0)
+    inline_style_candidate_count: int = Field(default=0, ge=0)
+    inline_style_applied_count: int = Field(default=0, ge=0)
+    inline_style_deferred_count: int = Field(default=0, ge=0)
+    inline_style_applied_character_count: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

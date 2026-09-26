@@ -3,7 +3,7 @@ title: Typography evidence architecture
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-25
 tags:
 - typography
 - extraction
@@ -40,9 +40,11 @@ also stored as space after. One-line or conflicting geometry remains unknown. Ev
 categorical confidence, typed provenance, and explicit fallback behavior.
 
 Mixed font name, size, weight, italic, and color are reported separately from the dominant
-paragraph baseline. Inline style reproduction is deferred. Typography is not persisted inside
-schema 1.3 and is not consumed by `ReflowStyle`, so translation resume/cache behavior, pagination,
-and rendered appearance remain unchanged.
+paragraph baseline. Typography is not persisted inside schema 1.3, so translation resume/cache
+behavior remains unchanged. Production reflow consumes resolved paragraph styles; PDFTR-32 also
+uses retained source spans to derive exact inline candidates without changing the translation
+contract. Only proven size/color runs are rendered, while font family and face differences remain
+diagnostic evidence.
 
 PDFTR-28 consumes this evidence through the separate
 [paragraph style reconstruction](style-reconstruction.md) boundary. Evidence regions and observed

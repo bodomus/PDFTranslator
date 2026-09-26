@@ -10,6 +10,7 @@ from pdftranslate.diagnostics.models import (
     BlockDiagnostic,
     DiagnosticCode,
     DiagnosticFinding,
+    InlineStyleDiagnostic,
     PageDiagnostic,
     ReportSummary,
     TranslationReport,
@@ -248,6 +249,24 @@ def build_success_report(
                     italic_applied=layout.italic_applied if layout else None,
                     mixed_style=layout.mixed_style if layout else None,
                     style_fallback_count=layout.style_fallback_count if layout else None,
+                    inline_style_candidate_count=(
+                        layout.inline_style_candidate_count if layout else 0
+                    ),
+                    inline_style_applied_count=(layout.inline_style_applied_count if layout else 0),
+                    inline_style_deferred_count=(
+                        layout.inline_style_deferred_count if layout else 0
+                    ),
+                    inline_style_applied_character_count=(
+                        layout.inline_style_applied_character_count if layout else 0
+                    ),
+                    inline_style_decisions=(
+                        tuple(
+                            InlineStyleDiagnostic(**item.__dict__)
+                            for item in layout.inline_style_decisions
+                        )
+                        if layout
+                        else ()
+                    ),
                 )
             )
         page_codes = (
@@ -368,6 +387,12 @@ def build_success_report(
             footnote_fixed_layout_units=(render.footnote_fixed_layout_units if render else 0),
             footnote_unsupported_pages=(render.footnote_unsupported_pages if render else 0),
             footnote_unplaced_text_count=(render.footnote_unplaced_text_count if render else 0),
+            inline_style_candidate_count=(render.inline_style_candidate_count if render else 0),
+            inline_style_applied_count=(render.inline_style_applied_count if render else 0),
+            inline_style_deferred_count=(render.inline_style_deferred_count if render else 0),
+            inline_style_applied_character_count=(
+                render.inline_style_applied_character_count if render else 0
+            ),
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,
             output_size=output_path.stat().st_size,

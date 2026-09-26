@@ -1,5 +1,17 @@
 """Production single-column body and footnote reflow boundary."""
 
+from pdftranslate.rendering.inline_styles import (
+    DeferredInlineStyleRun,
+    InlineMappingConfidence,
+    InlineMappingKind,
+    InlineStyleDeferReason,
+    InlineStyleMapping,
+    InlineStyleRun,
+    SourceInlineStyleRun,
+    clip_inline_style_runs,
+    map_inline_styles,
+    validate_inline_style_runs,
+)
 from pdftranslate.rendering.reflow.footnotes import FootnotePage, discover_footnote_page
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
@@ -32,6 +44,12 @@ __all__ = [
     "FlowParagraph",
     "FlowRegion",
     "LayoutPlan",
+    "DeferredInlineStyleRun",
+    "InlineMappingConfidence",
+    "InlineMappingKind",
+    "InlineStyleDeferReason",
+    "InlineStyleMapping",
+    "InlineStyleRun",
     "Measurement",
     "PlacementSegment",
     "PlacementState",
@@ -41,9 +59,13 @@ __all__ = [
     "ReflowContentKind",
     "ReflowPage",
     "ReflowStyle",
+    "SourceInlineStyleRun",
     "TextMeasurer",
     "UnsupportedLayoutError",
     "discover_reflow_page",
     "discover_footnote_page",
+    "clip_inline_style_runs",
+    "map_inline_styles",
     "plan_flow",
+    "validate_inline_style_runs",
 ]

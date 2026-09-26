@@ -3,7 +3,7 @@ title: PDFTranslate system overview
 type: architecture
 status: active
 created: 2026-09-17
-updated: 2026-09-22
+updated: 2026-09-25
 tags:
 - architecture
 - pipeline
@@ -58,8 +58,8 @@ Unsafe or unclassified layouts remain fixed only when complete, and required ove
 fail-closed.
 
 Typography processing has two derived, cache-independent domain stages: source evidence and
-role-aware style reconstruction. The latter records deterministic renderer-facing decisions but is
-not yet connected to production rendering; see
+role-aware style reconstruction. Production BODY, HEADING, and FOOTNOTE reflow consumes the
+resolved paragraph contract and conservatively applies exact preserved inline size/color runs; see
 [Paragraph style reconstruction](style-reconstruction.md).
 
 Batch processing reuses the translation backend/cache while retaining a separate source-derived

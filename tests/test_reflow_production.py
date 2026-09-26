@@ -33,6 +33,7 @@ from pdftranslate.rendering.reflow import (
     ContentDisposition,
     FlowParagraph,
     FlowRegion,
+    InlineStyleRun,
     Measurement,
     Rect,
     ReflowAlignment,
@@ -79,8 +80,9 @@ class CapacityMeasurer:
         height: float,
         style: ReflowStyle,
         first_segment: bool,
+        inline_runs: tuple[InlineStyleRun, ...] = (),
     ) -> Measurement:
-        del first_segment
+        del first_segment, inline_runs
         lines = math.ceil(len(text) / max(1, int(width))) if text else 0
         used = lines * style.font_size * style.line_height
         return Measurement(used <= height, used, lines)
@@ -95,7 +97,9 @@ class FirstLineAwareMeasurer:
         height: float,
         style: ReflowStyle,
         first_segment: bool,
+        inline_runs: tuple[InlineStyleRun, ...] = (),
     ) -> Measurement:
+        del inline_runs
         effective_width = width - (style.first_line_indent if first_segment else 0.0)
         if text and effective_width < style.font_size:
             return Measurement(False, height, 0)
@@ -586,6 +590,71 @@ def test_body_discovery_maps_resolved_styles_by_occurrence_not_paragraph_id() ->
     assert second_body.style.alignment is ReflowAlignment.CENTER
     assert first_body.color == pytest.approx((32 / 255, 64 / 255, 96 / 255))
     assert discovered.paragraphs[0].style.heading is True
+
+
+def test_body_and_footnote_discovery_map_only_exact_preserved_inline_runs() -> None:
+    document, page_model = _classified_document(ambiguous=False)
+    paragraphs = list(document.paragraphs)
+    for index in (1, 3):
+        paragraph = paragraphs[index]
+        source_text = "Before Latin terminus after."
+        translated_text = "До длинного текста Latin terminus после."
+        spans = (
+            TextSpan(text="Before ", bbox=paragraph.bbox, font_size=11, text_color=0),
+            TextSpan(
+                text="Latin terminus",
+                bbox=paragraph.bbox,
+                font_size=16,
+                text_color=0xFF0000,
+            ),
+            TextSpan(text=" after.", bbox=paragraph.bbox, font_size=11, text_color=0),
+        )
+        fragment = paragraph.fragments[0].model_copy(update={"text": source_text, "spans": spans})
+        paragraphs[index] = paragraph.model_copy(
+            update={
+                "text": source_text,
+                "fragments": (fragment,),
+                "spans": spans,
+                "translated_text": translated_text,
+            }
+        )
+    document = document.model_copy(update={"paragraphs": tuple(paragraphs)})
+
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=300, height=400)
+    try:
+        body = discover_reflow_page(
+            document,
+            page_model,
+            page,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+        )
+        footnotes = discover_footnote_page(
+            document,
+            page_model,
+            page,
+            body_region=None,
+            default_font_size=11,
+            min_font_size=6,
+            line_height=1.2,
+        )
+    finally:
+        pdf.close()
+
+    assert body is not None
+    assert footnotes is not None
+    body_run = body.paragraphs[1].inline_styles.applied[0]
+    footnote_run = footnotes.paragraphs[0].inline_styles.applied[0]
+    expected_start = paragraphs[1].translated_text.index("Latin terminus")
+    assert (body_run.text_start, body_run.text_end) == (
+        expected_start,
+        expected_start + len("Latin terminus"),
+    )
+    assert body_run.font_size_points == 16
+    assert body_run.color_rgb == (1.0, 0.0, 0.0)
+    assert footnote_run.text == "Latin terminus"
 
 
 def test_heading_discovery_maps_heterogeneous_resolved_styles_by_occurrence() -> None:

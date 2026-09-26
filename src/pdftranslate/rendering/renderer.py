@@ -31,6 +31,7 @@ from pdftranslate.rendering.layout import (
 )
 from pdftranslate.rendering.models import (
     BlockRenderResult,
+    InlineStyleRenderDecision,
     RenderOptions,
     RenderResult,
     RenderState,
@@ -297,6 +298,18 @@ class PdfRenderer:
             footnote_unsupported_pages=layout.unsupported_footnote_pages,
             footnote_unplaced_text_count=sum(
                 item.unplaced_text_count for item in layout.footnote_plans
+            ),
+            inline_style_candidate_count=sum(
+                item.inline_style_candidate_count for item in block_results
+            ),
+            inline_style_applied_count=sum(
+                item.inline_style_applied_count for item in block_results
+            ),
+            inline_style_deferred_count=sum(
+                item.inline_style_deferred_count for item in block_results
+            ),
+            inline_style_applied_character_count=sum(
+                item.inline_style_applied_character_count for item in block_results
             ),
         )
 
@@ -1116,6 +1129,7 @@ def _render_results(
                 layout.content_kind is ReflowContentKind.FOOTNOTE
                 and flow_paragraph.disposition is ContentDisposition.FLOWABLE_FOOTNOTE
             )
+            inline_decisions = _inline_style_render_decisions(flow_paragraph)
             results[flow_paragraph.occurrence_index] = BlockRenderResult(
                 unit_index=flow_paragraph.occurrence_index,
                 page_number=flow_paragraph.source_page_number,
@@ -1179,6 +1193,13 @@ def _render_results(
                 style_fallback_count=(
                     flow_paragraph.style.fallback_count if has_applied_typography else None
                 ),
+                inline_style_candidate_count=flow_paragraph.inline_styles.candidate_count,
+                inline_style_applied_count=len(flow_paragraph.inline_styles.applied),
+                inline_style_deferred_count=len(flow_paragraph.inline_styles.deferred),
+                inline_style_applied_character_count=(
+                    flow_paragraph.inline_styles.applied_character_count
+                ),
+                inline_style_decisions=inline_decisions,
             )
     if translated.schema_version == "1.3":
         for unit_index, paragraph in enumerate(translated.paragraphs):
@@ -1236,6 +1257,56 @@ def _render_results(
                     )
                 unit_index += 1
     return tuple(results[index] for index in sorted(results))
+
+
+def _inline_style_render_decisions(
+    paragraph: FlowParagraph,
+) -> tuple[InlineStyleRenderDecision, ...]:
+    applied = tuple(
+        InlineStyleRenderDecision(
+            status="applied",
+            text_sha256=run.text_sha256,
+            source_start=run.source_start,
+            source_end=run.source_end,
+            text_start=run.text_start,
+            text_end=run.text_end,
+            mapping_kind=run.mapping_kind.value,
+            confidence=run.confidence.value,
+            defer_reason=None,
+            font_size_points=run.font_size_points,
+            color_rgb=run.color_rgb,
+            bold_requested=run.bold_requested,
+            bold_applied=run.bold_applied,
+            italic_requested=run.italic_requested,
+            italic_applied=run.italic_applied,
+            source_font_name=run.source_font_name,
+            source_font_family_group=run.source_font_family_group,
+        )
+        for run in paragraph.inline_styles.applied
+    )
+    deferred = tuple(
+        InlineStyleRenderDecision(
+            status="deferred",
+            text_sha256=item.candidate.text_sha256,
+            source_start=item.candidate.source_start,
+            source_end=item.candidate.source_end,
+            text_start=None,
+            text_end=None,
+            mapping_kind=None,
+            confidence=None,
+            defer_reason=item.reason.value,
+            font_size_points=item.candidate.font_size_points,
+            color_rgb=item.candidate.color_rgb,
+            bold_requested=item.candidate.bold_requested,
+            bold_applied=False,
+            italic_requested=item.candidate.italic_requested,
+            italic_applied=False,
+            source_font_name=item.candidate.source_font_name,
+            source_font_family_group=item.candidate.source_font_family_group,
+        )
+        for item in paragraph.inline_styles.deferred
+    )
+    return applied + deferred
 
 
 def _unplanned_result(

@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from pdftranslate.rendering.inline_styles import (
+    InlineStyleMapping,
+    InlineStyleRun,
+    validate_inline_style_runs,
+)
+
 
 class ContentDisposition(StrEnum):
     FLOWABLE_BODY = "flowable_body"
@@ -124,12 +130,14 @@ class FlowParagraph:
     source_fragment_rects: tuple[Rect, ...]
     style: ReflowStyle
     color: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    inline_styles: InlineStyleMapping = InlineStyleMapping()
 
     def __post_init__(self) -> None:
         if self.occurrence_index < 0 or self.source_page_number < 1:
             raise ValueError("flow paragraph occurrence and page must be valid")
         if not self.paragraph_id or not self.text or not self.source_fragment_rects:
             raise ValueError("flow paragraph identity, text, and fragments are required")
+        validate_inline_style_runs(self.text, self.inline_styles.applied)
 
 
 @dataclass(frozen=True)
@@ -149,6 +157,7 @@ class PlacementSegment:
     line_count: int
     color: tuple[float, float, float]
     state: PlacementState
+    inline_runs: tuple[InlineStyleRun, ...] = ()
     alignment: ReflowAlignment = ReflowAlignment.LEFT
     first_line_indent: float = 0.0
     left_indent: float = 0.0
@@ -161,6 +170,11 @@ class PlacementSegment:
     italic_applied: bool = False
     mixed_style: bool = False
     fallback_count: int = 0
+
+    def __post_init__(self) -> None:
+        if self.text_end - self.text_start != len(self.text):
+            raise ValueError("placement segment offsets must match its text")
+        validate_inline_style_runs(self.text, self.inline_runs)
 
 
 @dataclass(frozen=True)

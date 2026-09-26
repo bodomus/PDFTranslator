@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import html
-import math
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pymupdf
 
 from pdftranslate.rendering.errors import OutputPdfError
+from pdftranslate.rendering.inline_styles import InlineStyleRun, validate_inline_style_runs
 from pdftranslate.rendering.reflow.models import (
     LayoutPlan,
     PlacementSegment,
@@ -23,6 +25,12 @@ _FONT_NAME = "PDFTranslateReflowFont"
 _PDF_VALIDATION_TEXT = str.maketrans(
     {**{character: "-" for character in "‐‑‒–—−"}, "\ufd3e": "(", "\ufd3f": ")"}
 )
+
+
+@dataclass(frozen=True)
+class RichTextLayout:
+    html: str
+    css: str
 
 
 class PyMuPdfMeasurer:
@@ -47,34 +55,54 @@ class PyMuPdfMeasurer:
         height: float,
         style: ReflowStyle,
         first_segment: bool,
+        inline_runs: tuple[InlineStyleRun, ...] = (),
     ) -> Measurement:
         if not text:
             return Measurement(True, 0.0, 0)
         page = self._document.new_page(width=self._page_width, height=self._page_height)
         try:
+            rich_text = build_rich_text(
+                text,
+                self._font_path,
+                style,
+                (0.0, 0.0, 0.0),
+                first_line_indent=style.first_line_indent if first_segment else 0.0,
+                inline_runs=inline_runs,
+            )
             remaining, scale = page.insert_htmlbox(
                 pymupdf.Rect(0, 0, width, height),
-                _segment_html(text),
-                css=_segment_css(
-                    self._font_path,
-                    style,
-                    (0.0, 0.0, 0.0),
-                    first_line_indent=style.first_line_indent if first_segment else 0.0,
-                ),
+                rich_text.html,
+                css=rich_text.css,
                 archive=self._archive,
                 scale_low=1,
                 overlay=False,
+            )
+            line_count = _rendered_line_count(
+                page,
+                pymupdf.Rect(0, 0, width, height),
             )
         finally:
             self._document.delete_page(page.number)
         if remaining < -1e-6 or abs(scale - 1.0) > 1e-6:
             return Measurement(False, height, 0)
-        used = max(style.font_size * style.line_height, height - float(remaining))
+        maximum_size = max(
+            (run.font_size_points or style.font_size for run in inline_runs),
+            default=style.font_size,
+        )
+        used = max(maximum_size * style.line_height, height - float(remaining))
         return Measurement(
             True,
             used,
-            max(1, math.ceil(used / (style.font_size * style.line_height))),
+            line_count,
         )
+
+
+def _rendered_line_count(page: pymupdf.Page, clip: pymupdf.Rect) -> int:
+    """Count physical text lines emitted by PyMuPDF inside a measured HTML box."""
+    layout = page.get_text("dict", clip=clip)
+    return sum(
+        len(block.get("lines", ())) for block in layout.get("blocks", ()) if block.get("type") == 0
+    )
 
 
 def redact_reflow_fragments(
@@ -144,15 +172,18 @@ def insert_reflow_segments(
                 mixed_style=segment.mixed_style,
                 fallback_count=segment.fallback_count,
             )
+            rich_text = build_rich_text(
+                segment.text,
+                font_path,
+                style,
+                segment.color,
+                first_line_indent=segment.first_line_indent,
+                inline_runs=segment.inline_runs,
+            )
             remaining, scale = page.insert_htmlbox(
                 _pymupdf_rect(segment.target_rect),
-                _segment_html(segment.text),
-                css=_segment_css(
-                    font_path,
-                    style,
-                    segment.color,
-                    first_line_indent=segment.first_line_indent,
-                ),
+                rich_text.html,
+                css=rich_text.css,
                 archive=archive,
                 scale_low=1,
             )
@@ -163,26 +194,49 @@ def insert_reflow_segments(
                 )
 
 
-def _segment_html(text: str) -> str:
-    escaped = html.escape(text).replace("\n", "<br>")
-    return f"<p>{escaped.encode('ascii', 'xmlcharrefreplace').decode('ascii')}</p>"
-
-
-def _segment_css(
+def build_rich_text(
+    text: str,
     font_path: Path,
     style: ReflowStyle,
     color: tuple[float, float, float],
     *,
     first_line_indent: float,
-) -> str:
+    inline_runs: tuple[InlineStyleRun, ...] = (),
+) -> RichTextLayout:
+    """Build the single deterministic representation used for measuring and inserting."""
+    validate_inline_style_runs(text, inline_runs)
+    chunks: list[str] = []
+    cursor = 0
+    run_css: list[str] = []
+    for index, run in enumerate(inline_runs):
+        chunks.append(_escaped_html(text[cursor : run.text_start]))
+        chunks.append(f'<span class="r{index}">{_escaped_html(run.text)}</span>')
+        properties: list[str] = []
+        if run.font_size_points is not None:
+            properties.append(f"font-size: {run.font_size_points:.6f}pt")
+        if run.color_rgb is not None:
+            red, green, blue = (round(component * 255) for component in run.color_rgb)
+            properties.append(f"color: rgb({red}, {green}, {blue})")
+        run_css.append(f".r{index} {{ {'; '.join(properties)}; }}")
+        cursor = run.text_end
+    chunks.append(_escaped_html(text[cursor:]))
+
     red, green, blue = (round(component * 255) for component in color)
-    return (
+    css = (
         f'@font-face {{ font-family: "{_FONT_NAME}"; src: url("{font_path.name}"); }} '
         "* { margin: 0; padding: 0; } "
         f'p {{ font-family: "{_FONT_NAME}"; font-size: {style.font_size:.6f}pt; '
         f"line-height: {style.line_height:.6f}; text-align: {style.alignment.value}; "
         f"text-indent: {first_line_indent:.6f}pt; color: rgb({red}, {green}, {blue}); }}"
     )
+    if run_css:
+        css = f"{css} {' '.join(run_css)}"
+    return RichTextLayout(html=f"<p>{''.join(chunks)}</p>", css=css)
+
+
+def _escaped_html(text: str) -> str:
+    escaped = html.escape(text).replace("\n", "<br>")
+    return escaped.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
 def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
@@ -207,6 +261,7 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
                     f"expected_tail={expected[-160:]!r}; local_tail={local[-160:]!r}; "
                     f"page_diagnostic={normalized_page[:160]!r}"
                 )
+            _validate_saved_inline_styles(page, clip, segment)
     finally:
         document.close()
 
@@ -232,3 +287,60 @@ def _pymupdf_rect(rect: Rect) -> pymupdf.Rect:
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).translate(_PDF_VALIDATION_TEXT)
     return " ".join(normalized.split())
+
+
+def _validate_saved_inline_styles(
+    page: pymupdf.Page, clip: pymupdf.Rect, segment: PlacementSegment
+) -> None:
+    if not segment.inline_runs:
+        return
+    raw = page.get_text("dict", clip=clip)
+    spans = [
+        span
+        for block in raw.get("blocks", ())
+        if isinstance(block, dict)
+        for line in block.get("lines", ())
+        if isinstance(line, dict)
+        for span in line.get("spans", ())
+        if isinstance(span, dict) and isinstance(span.get("text"), str)
+    ]
+    extracted = "".join(str(span["text"]) for span in spans)
+    start = extracted.find(segment.text)
+    if start < 0 or extracted.find(segment.text, start + 1) >= 0:
+        return
+    styled_spans = _span_character_ranges(spans)
+    for run in segment.inline_runs:
+        absolute_start = start + run.text_start
+        absolute_end = start + run.text_end
+        selected = tuple(
+            span
+            for span_start, span_end, span in styled_spans
+            if span_start < absolute_end and span_end > absolute_start
+        )
+        if not selected:
+            return
+        if run.font_size_points is not None and any(
+            abs(float(span.get("size", 0.0)) - run.font_size_points) > 0.35 for span in selected
+        ):
+            raise OutputPdfError("saved PDF inline font size does not match the measured run")
+        if run.color_rgb is not None:
+            expected_color = _packed_color(run.color_rgb)
+            if any(int(span.get("color", -1)) != expected_color for span in selected):
+                raise OutputPdfError("saved PDF inline color does not match the inserted run")
+
+
+def _span_character_ranges(
+    spans: list[dict[str, Any]],
+) -> tuple[tuple[int, int, dict[str, Any]], ...]:
+    result: list[tuple[int, int, dict[str, Any]]] = []
+    cursor = 0
+    for span in spans:
+        text = str(span["text"])
+        result.append((cursor, cursor + len(text), span))
+        cursor += len(text)
+    return tuple(result)
+
+
+def _packed_color(color: tuple[float, float, float]) -> int:
+    red, green, blue = (round(component * 255) for component in color)
+    return (red << 16) | (green << 8) | blue
