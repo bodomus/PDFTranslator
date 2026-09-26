@@ -105,9 +105,11 @@ inserted pages, unsupported pages, and unplaced count.
 
 PDFTR-32 extends that shared representation with immutable inline runs for BODY, HEADING, and
 FOOTNOTE. Only exact preserved substrings with deterministic order may override the paragraph base
-font size or RGB color. Prefix fitting and continuation splitting clip/rebase the same runs before
-measurement and insertion. Ambiguous, missing, overlapping, invalid, and unsupported face/family
-candidates are deferred, and diagnostics record hashes/offsets rather than plaintext.
+font size or RGB color. Repeated source or target occurrences are ambiguous without independent
+identity evidence; equal counts alone never authorize ordinal mapping. Prefix fitting and
+continuation splitting clip/rebase the same runs before measurement and insertion. Ambiguous,
+missing, overlapping, invalid, and unsupported face/family candidates are deferred, and diagnostics
+record hashes/offsets rather than plaintext.
 
 Multi-column footnotes, endnotes, marginal notes, tables, arbitrary columns, sidebars, floating
 figures, verse, and complex mathematical layout remain explicit fail-closed follow-ups. See
@@ -143,3 +145,7 @@ alignment, font size, line height, and one-time spacing as ordinary planning. It
 configured minimum following BODY lines, not the whole paragraph. Negative first-line indents are
 accepted when their physical start remains inside the flow region; unsafe hanging-indent geometry
 fails closed before mutation rather than being clamped.
+
+Production PyMuPDF measurement obtains that minimum from emitted physical text-line objects. Inline
+font-size can change height and wrapping, but a taller span on one physical line no longer inflates
+the orphan guard's rendered-line count.

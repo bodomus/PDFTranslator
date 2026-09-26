@@ -199,14 +199,17 @@ Safe negative first-line indents remain supported when the resulting first-line 
 the flow region. A hanging indent that escapes the region, or any indent combination that leaves
 non-positive line geometry, fails before PDF mutation. The heading orphan guard measures the
 minimum following BODY content with this same style-aware geometry and `TextMeasurer` contract;
-it does not rely on a separate font-size/line-height estimate.
+it does not rely on a separate font-size/line-height estimate. Production PyMuPDF measurement
+counts the physical text-line objects emitted by the shared HTML layout, so a larger inline span on
+one line cannot masquerade as several following BODY lines.
 
 The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
 Bold and italic are retained as requested values but reported as unapplied until a safe local font
 variant resolver exists. The resolved paragraph style remains the base for mixed paragraphs.
 PDFTR-32 applies only exact, order-preserving source-backed inline font-size and RGB-color runs;
 missing, ambiguous, overlapping, invalid, or face/family-only candidates are deferred. Source
-offsets are never reused as target offsets.
+offsets are never reused as target offsets, and equal repeated source/target counts are not treated
+as proof of occurrence identity.
 
 Inline runs are immutable translated-text ranges. Every prefix measurement and continuation
 segment clips and rebases them before calling the same escaped HTML/CSS builder used for insertion,

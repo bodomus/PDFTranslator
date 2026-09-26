@@ -139,7 +139,7 @@ def map_inline_styles(
     base_italic: bool,
     base_font_family_group: str | None,
 ) -> InlineStyleMapping:
-    """Map only exact, uniquely ordered preserved source runs into translated text."""
+    """Map only exact, uniquely occurring preserved source runs into translated text."""
     candidates = _source_candidates(
         paragraph,
         base_font_size=base_font_size,
@@ -180,7 +180,8 @@ def map_inline_styles(
             )
             continue
         if (
-            len(source_occurrences) != len(target_occurrences)
+            len(source_occurrences) != 1
+            or len(target_occurrences) != 1
             or candidate.source_start not in source_occurrences
         ):
             deferred.append(
@@ -189,8 +190,7 @@ def map_inline_styles(
                 )
             )
             continue
-        ordinal = source_occurrences.index(candidate.source_start)
-        target_start = target_occurrences[ordinal]
+        target_start = target_occurrences[0]
         target_end = target_start + len(candidate.text)
         if translated_text[target_start:target_end] != candidate.text:
             deferred.append(

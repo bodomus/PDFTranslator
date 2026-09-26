@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import html
-import math
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +77,10 @@ class PyMuPdfMeasurer:
                 scale_low=1,
                 overlay=False,
             )
+            line_count = _rendered_line_count(
+                page,
+                pymupdf.Rect(0, 0, width, height),
+            )
         finally:
             self._document.delete_page(page.number)
         if remaining < -1e-6 or abs(scale - 1.0) > 1e-6:
@@ -90,8 +93,16 @@ class PyMuPdfMeasurer:
         return Measurement(
             True,
             used,
-            max(1, math.ceil(used / (style.font_size * style.line_height))),
+            line_count,
         )
+
+
+def _rendered_line_count(page: pymupdf.Page, clip: pymupdf.Rect) -> int:
+    """Count physical text lines emitted by PyMuPDF inside a measured HTML box."""
+    layout = page.get_text("dict", clip=clip)
+    return sum(
+        len(block.get("lines", ())) for block in layout.get("blocks", ()) if block.get("type") == 0
+    )
 
 
 def redact_reflow_fragments(

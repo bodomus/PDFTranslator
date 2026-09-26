@@ -93,9 +93,10 @@ zero.
 Dominant paragraph values do not erase inline variation. All mixed font-family, size, weight,
 italic, and color flags are copied into `ResolvedParagraphStyle`. PDFTR-32 additionally derives
 immutable source-backed candidates from retained spans. A candidate is applied only when its exact
-text survives in the translated paragraph with equal source/target occurrence counts and a
-deterministic ordinal mapping; source offsets are never treated as translated offsets. Missing,
-ambiguous, overlapping, invalid, or unsupported candidates are explicitly deferred.
+text occurs exactly once in both the source and translated paragraph. Equal repeated occurrence
+counts do not prove identity, so repeated candidates are deferred rather than assigned by ordinal;
+source offsets are never treated as translated offsets. Missing, ambiguous, overlapping, invalid,
+or unsupported candidates are explicitly deferred.
 
 ## Developer inspection
 

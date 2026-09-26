@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Deferred repeated inline-style tokens unless both source and translated text contain exactly one
+  occurrence, and made PyMuPDF heading-orphan checks count physical rendered lines instead of
+  deriving logical lines from inline-inflated height.
 - Made the heading orphan guard use the same style-aware BODY measurement path as normal reflow,
   and rejected hanging indents whose physical first-line start escapes the safe flow region.
 - Prevented the typography inspection JSON output from aliasing and overwriting its source PDF.

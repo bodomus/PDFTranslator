@@ -26,6 +26,7 @@ from pdftranslate.rendering.reflow import (
     FlowParagraph,
     FlowRegion,
     Measurement,
+    PlannerOptions,
     Rect,
     ReflowContentKind,
     ReflowStyle,
@@ -149,6 +150,25 @@ def test_repeated_token_is_deferred_when_source_and_target_counts_do_not_prove_m
     mapping = _mapping(paragraph)
 
     assert not mapping.applied
+    assert {item.reason for item in mapping.deferred} == {
+        InlineStyleDeferReason.AMBIGUOUS_TARGET_OCCURRENCE
+    }
+
+
+def test_equal_repeated_source_and_target_counts_do_not_prove_identity() -> None:
+    paragraph = _paragraph(
+        (
+            TextSpan(text="API", bbox=BOX, font_size=14, text_color=0xFF0000),
+            TextSpan(text=" and ", bbox=BOX, font_size=10, text_color=0),
+            TextSpan(text="API", bbox=BOX, font_size=14, text_color=0x0000FF),
+        ),
+        "API и API",
+    )
+
+    mapping = _mapping(paragraph)
+
+    assert not mapping.applied
+    assert len(mapping.deferred) == 2
     assert {item.reason for item in mapping.deferred} == {
         InlineStyleDeferReason.AMBIGUOUS_TARGET_OCCURRENCE
     }
@@ -406,6 +426,79 @@ def test_pymupdf_measurement_accounts_for_inline_font_size(cyrillic_font_path: P
         )
 
     assert rich.used_height > plain.used_height
+
+
+def test_pymupdf_heading_orphan_uses_physical_lines_with_inline_size(
+    cyrillic_font_path: Path,
+) -> None:
+    rect = Rect(40, 0, 260, 30)
+    base = ReflowStyle(font_size=10, line_height=1, space_before=0, space_after=0)
+    preface = FlowParagraph(
+        0,
+        "preface",
+        1,
+        "body",
+        ContentDisposition.FLOWABLE_BODY,
+        "preface",
+        rect,
+        (rect,),
+        base,
+    )
+    heading = FlowParagraph(
+        1,
+        "heading",
+        1,
+        "heading",
+        ContentDisposition.FLOWABLE_HEADING,
+        "Heading",
+        rect,
+        (rect,),
+        ReflowStyle(
+            font_size=10,
+            line_height=1,
+            space_before=0,
+            space_after=0,
+            heading=True,
+        ),
+    )
+    body_text = "API"
+    body = FlowParagraph(
+        2,
+        "body",
+        1,
+        "body",
+        ContentDisposition.FLOWABLE_BODY,
+        body_text,
+        rect,
+        (rect,),
+        base,
+        inline_styles=InlineStyleMapping(applied=(_run(0, 3, body_text, size=28),)),
+    )
+
+    with PyMuPdfMeasurer(300, 200, cyrillic_font_path) as measurer:
+        measured = measurer.measure(
+            body_text,
+            width=220,
+            height=50,
+            style=base,
+            first_segment=True,
+            inline_runs=body.inline_styles.applied,
+        )
+        plan = plan_flow(
+            (preface, heading, body),
+            (
+                FlowRegion(1, Rect(40, 0, 260, 60), 0, 0, 1),
+                FlowRegion(2, Rect(40, 0, 260, 100), 0, 1, 1, True),
+            ),
+            measurer,
+            options=PlannerOptions(minimum_body_after_heading_lines=2),
+        )
+
+    heading_segment = next(item for item in plan.segments if item.occurrence_index == 1)
+    body_segment = next(item for item in plan.segments if item.occurrence_index == 2)
+    assert measured.line_count == 1
+    assert heading_segment.target_page_number == 2
+    assert body_segment.target_page_number == 2
 
 
 def test_invalid_or_overlapping_target_runs_are_rejected() -> None:

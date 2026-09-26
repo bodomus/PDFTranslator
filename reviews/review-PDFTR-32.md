@@ -16,17 +16,23 @@
 - Added deterministic tests for shifted offsets, repeated ambiguity, partial mapping, run-aware
   fitting, crossing continuations, headings, footnotes, invalid contracts, escaping, diagnostics,
   and saved selectable size/color.
+- Follow-up: removed count-equality/ordinal identity assumptions for repeated tokens and changed
+  production line counting to PyMuPDF's physical rendered lines, with `2→2` and real-measurer
+  heading-orphan regressions.
 - Updated README, CHANGELOG, architecture/style docs, ProjectWiki, investigation, plan, and
   implementation report.
 
 ## Validation
 
-- Focused suites: 49 passed.
-- Full gate: 354 passed, 1 skipped, 89.08% coverage.
+- Original PDFTR-32 focused suites: 49 passed.
+- Original PDFTR-32 full gate: 354 passed, 1 skipped, 89.08% coverage.
 - ProjectWiki lint: 15 pages, 104 links, zero errors/warnings.
 - Ruff format/check and strict mypy over 97 source files: clean.
 - `scripts/check.ps1`: passed.
-- Post-change code-review graph: 1,496 nodes / 13,356 edges; no affected known flow.
+- Follow-up focused suites: 46 passed. Current full gate: 356 passed, 1 skipped, 89.10% coverage;
+  Ruff, strict mypy, and ProjectWiki lint passed.
+- Follow-up CRG update: 1,548 nodes / 13,859 edges / 149 files, with no affected known flow.
+- Original PDFTR-32 post-change graph: 1,496 nodes / 13,356 edges; no affected known flow.
 - Real Robitzsch render: 46 mixed-style paragraphs, 167 candidates, 0 safely applicable runs,
   167 deferred (37 not preserved, 130 unsupported-property-only), zero BODY/FOOTNOTE unplaced
   characters, zero overflow, four inserted pages, eight final pages.

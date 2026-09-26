@@ -25,8 +25,10 @@ deferred without making an otherwise safe paragraph fail.
   `TextSpan` evidence; no second PDF extraction path was added.
 - Reconstructed source offsets using the existing paragraph joining and soft-hyphen rules. Any
   fragment/span mismatch is deferred as unsafe instead of searched approximately.
-- Mapped exact text by equal source/target occurrence counts and source ordinal. Source character
-  offsets are never copied to translated text, and fuzzy or semantic alignment is not used.
+- Mapped exact text only when it occurs once in both source and target. Repeated source or target
+  occurrences are ambiguous without independent identity evidence; ordinal assignment is not used.
+  Source character offsets are never copied to translated text, and fuzzy or semantic alignment is
+  not used.
 - Applied only font size and RGB color. Bold/italic stay requested-but-unapplied; source font name
   and family stay diagnostic evidence.
 - Preserved schema 1.3, translation/cache behavior, source immutability, atomic publication,
@@ -143,6 +145,19 @@ planner behavior to source inspection. Final retrieval verdict: **KEEP WITH CONT
 - Ruff format/check: clean.
 - Strict mypy: clean across 97 source files.
 - `scripts/check.ps1`: passed completely.
+
+### Follow-up validation (2026-09-26)
+
+- Focused `test_inline_styles.py` plus `test_reflow_production.py`: 46 passed.
+- Added explicit `2 source / 2 target` ambiguity coverage; both candidates defer with
+  `AMBIGUOUS_TARGET_OCCURRENCE`.
+- Added a real `PyMuPdfMeasurer` orphan regression proving a 28 pt inline span on one physical line
+  reports one rendered line and moves a heading when two following lines are required.
+- Full `scripts/check.ps1`: 356 passed, 1 skipped, 89.10% coverage; Ruff format/lint, strict mypy,
+  and ProjectWiki lint all passed.
+- Post-change CRG update: 1,548 nodes, 13,859 edges, 149 files; zero affected known flows. The
+  reported 0.60 risk remains the whole PDFTR-32 branch diff against `master`, not an isolated
+  follow-up score.
 
 ## Documentation and artifacts
 

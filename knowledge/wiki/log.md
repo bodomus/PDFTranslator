@@ -3,7 +3,7 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-25
+updated: 2026-09-26
 tags:
 - project-wiki
 - log
@@ -16,6 +16,11 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-09-26
+
+- Tightened PDFTR-32 repeated-token mapping so equal source/target counts do not imply identity,
+  and documented production PyMuPDF physical-line counting for inline-aware heading orphan checks.
 
 ## 2026-09-25
 

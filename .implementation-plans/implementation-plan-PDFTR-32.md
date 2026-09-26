@@ -38,3 +38,13 @@
 5. `./scripts/check.ps1` as the final local quality gate.
 6. Controlled deterministic PDF inspection with the bundled Liberation Sans font; use natural
    cached evidence only if available and report zero safely mapped natural runs honestly.
+
+## Follow-up fix (2026-09-26)
+
+1. Replace repeated-token ordinal mapping with a conservative uniqueness gate: exactly one source
+   occurrence and exactly one target occurrence are required by the available evidence.
+2. Count physical PyMuPDF text lines from the measured HTML result instead of dividing used height
+   by the paragraph base line height.
+3. Add regressions for ambiguous `2 source / 2 target` mapping and a real PyMuPDF heading-orphan
+   case where one tall inline span remains one physical line.
+4. Re-run focused tests, ProjectWiki lint, CRG impact analysis, and the full check script.

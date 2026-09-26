@@ -47,9 +47,10 @@ font resolution remain separate concepts.
 One physical paragraph gap is represented once: space-before may resolve from evidence/baseline,
 while space-after is zero with an explicit invariant decision. Mixed inline font/size/weight/
 italic/color flags survive. PDFTR-32 maps source-backed inline candidates only when exact preserved
-text gives a deterministic, ordered translated range. Font size and RGB color can be applied;
-bold, italic, and source font family remain requested evidence. Ambiguous or unsupported candidates
-are explicitly deferred.
+text occurs exactly once in both source and translated paragraphs. Equal repeated occurrence counts
+do not prove identity and are deferred rather than assigned by ordinal. Font size and RGB color can
+be applied; bold, italic, and source font family remain requested evidence. Ambiguous or unsupported
+candidates are explicitly deferred.
 
 The standalone inspection script can emit evidence and resolved decisions side by side with
 `--resolved`; it rejects source/output aliases. The Robitzsch baseline confirms stable Garamond

@@ -168,3 +168,21 @@ runs, and exposes privacy-safe decisions. Thread those runs through the existing
 measure every prefix with the same rich HTML/CSS builder used for insertion, retain strict text
 accounting and saved validation, and extend diagnostics. Do not alter translation, schema 1.3,
 font resolution, or fixed-layout rendering.
+
+## Follow-up investigation (2026-09-26)
+
+- Current repeated-token mapping equates matching source/target occurrence counts with identity and
+  selects by ordinal. For `2 source / 2 target`, the translation supplies no occurrence-level
+  evidence proving that either styled source token owns the corresponding target token.
+- The existing contract has no independent alignment metadata. The smallest safe rule is therefore
+  to apply an exact candidate only when it occurs once in the source and once in the target; every
+  repeated source or target occurrence is `AMBIGUOUS_TARGET_OCCURRENCE`.
+- `PyMuPdfMeasurer.line_count` currently divides used height by the base paragraph line height.
+  Because inline font size legitimately raises used height, one physical rendered line can be
+  reported as two or more logical lines.
+- The scratch PyMuPDF page already contains the shared HTML measurement result and no other text.
+  Counting its emitted text-line objects is direct production evidence and feeds the existing
+  heading-orphan path without changing planner or measurer contracts.
+- Blast radius remains local to inline mapping, PyMuPDF measurement, focused tests, and affected
+  documentation; schema, translation, cache/resume, CLI, OCR, and model/device behavior are
+  unchanged.
