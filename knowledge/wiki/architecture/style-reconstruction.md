@@ -3,7 +3,7 @@ title: Paragraph style reconstruction architecture
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-09-24
+updated: 2026-09-25
 tags:
 - typography
 - styles
@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - diagnostics
 sources:
+- ../../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
 - ../../../Tickets/PDFTR-28.md
@@ -27,8 +28,8 @@ related:
 
 # Paragraph style reconstruction architecture
 
-PDFTranslate has a pure style-policy boundary between source typography evidence and future
-rendering. It derives a versioned `ResolvedStyleDocument` from `TypographyBaseline`, with one
+PDFTranslate has a pure style-policy boundary between source typography evidence and rendering.
+It derives a versioned `ResolvedStyleDocument` from `TypographyBaseline`, with one
 immutable `ResolvedParagraphStyle` per authoritative occurrence. The derived contract is not
 embedded in `ExtractedDocument`, cache, or resume artifacts.
 
@@ -45,7 +46,10 @@ font resolution remain separate concepts.
 
 One physical paragraph gap is represented once: space-before may resolve from evidence/baseline,
 while space-after is zero with an explicit invariant decision. Mixed inline font/size/weight/
-italic/color flags survive, but inline runs are not rendered yet.
+italic/color flags survive. PDFTR-32 maps source-backed inline candidates only when exact preserved
+text gives a deterministic, ordered translated range. Font size and RGB color can be applied;
+bold, italic, and source font family remain requested evidence. Ambiguous or unsupported candidates
+are explicitly deferred.
 
 The standalone inspection script can emit evidence and resolved decisions side by side with
 `--resolved`; it rejects source/output aliases. The Robitzsch baseline confirms stable Garamond
@@ -61,3 +65,10 @@ occurrence but never becomes the lookup key. The selected Cyrillic-capable font 
 authoritative; exact source font identity is unchanged evidence, while requested bold/italic are
 diagnosed as unapplied until a safe variant resolver exists. FOOTNOTE preserves `heading=False`
 and uses the same one-time continuation spacing rules without changing separator geometry.
+
+Inline runs are clipped and rebased for every measured prefix and final continuation segment.
+Measurement and insertion share the same escaped HTML/CSS representation with downscaling
+disabled, so run-aware pagination cannot diverge from placement. Saved validation checks exact
+segment-local text and validates size/color when extracted span alignment is unambiguous.
+Privacy-safe block/document diagnostics report applied and deferred counts, reasons, offsets, and
+text hashes without storing run plaintext.

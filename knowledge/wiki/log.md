@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-23
+updated: 2026-09-25
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../Tickets/PDFTR-19.md
 - ../../Tickets/PDFTR-20-strict-render-completeness.md
 related:
@@ -15,6 +16,13 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-09-25
+
+- Added the PDFTR-32 safe inline-run boundary for BODY, HEADING, and FOOTNOTE reflow: exact
+  preserved-text mapping, size/color-only application, run-aware prefix/continuation measurement,
+  shared insertion representation, saved-style validation, and privacy-safe applied/deferred
+  diagnostics. Corrected stale pages that still described production typography as inactive.
 
 This records meaningful knowledge-base changes, not every Git commit or formatting edit.
 

@@ -91,8 +91,11 @@ reason. PDFTR-27 currently assigns gap-before low confidence, so real unresolved
 zero.
 
 Dominant paragraph values do not erase inline variation. All mixed font-family, size, weight,
-italic, and color flags are copied into `ResolvedParagraphStyle`. Inline render runs remain future
-scope.
+italic, and color flags are copied into `ResolvedParagraphStyle`. PDFTR-32 additionally derives
+immutable source-backed candidates from retained spans. A candidate is applied only when its exact
+text survives in the translated paragraph with equal source/target occurrence counts and a
+deterministic ordinal mapping; source offsets are never treated as translated offsets. Missing,
+ambiguous, overlapping, invalid, or unsupported candidates are explicitly deferred.
 
 ## Developer inspection
 
@@ -149,9 +152,13 @@ only after the final segment. Alignment and paragraph indents persist across con
 Measurement and insertion use the same HTML/CSS path so the chosen font, line height, alignment,
 indent, and color are evaluated consistently.
 
-The current font boundary deliberately does not synthesize bold or italic faces. Diagnostics retain
-the requested values and report both as unapplied. Mixed-style evidence and fallback counts also
-remain visible, while inline run reconstruction stays out of scope. BODY, HEADING, and FOOTNOTE
-diagnostics expose the applied contract. The FOOTNOTE adapter preserves `heading=False`; its
-resolved spacing replaces the former synthetic trailing gap and follows the same first/final
+The current font boundary deliberately does not synthesize bold or italic faces or substitute a
+source font family. Diagnostics retain the requested values and report both faces as unapplied.
+For BODY, HEADING, and FOOTNOTE, exact proven runs may override font size and RGB color over the
+resolved paragraph base. Planner prefix trials and final continuation segments clip and rebase the
+same immutable runs used by insertion; both paths share one escaped HTML/CSS representation with
+`scale_low=1`. Saved validation first proves exact local text and, where PyMuPDF exposes an
+unambiguous span mapping, verifies the run size and color. Per-run diagnostics store hashes and
+offsets rather than plaintext, with applied/deferred totals at block and document level. The
+FOOTNOTE adapter preserves `heading=False`; its resolved spacing follows the same first/final
 segment semantics as the other roles.

@@ -203,8 +203,17 @@ it does not rely on a separate font-size/line-height estimate.
 
 The renderer continues to use the selected Cyrillic-capable font rather than source font identity.
 Bold and italic are retained as requested values but reported as unapplied until a safe local font
-variant resolver exists. Mixed inline styles use the resolved paragraph-dominant style and retain a
-diagnostic flag.
+variant resolver exists. The resolved paragraph style remains the base for mixed paragraphs.
+PDFTR-32 applies only exact, order-preserving source-backed inline font-size and RGB-color runs;
+missing, ambiguous, overlapping, invalid, or face/family-only candidates are deferred. Source
+offsets are never reused as target offsets.
+
+Inline runs are immutable translated-text ranges. Every prefix measurement and continuation
+segment clips and rebases them before calling the same escaped HTML/CSS builder used for insertion,
+with downscaling disabled. Post-save validation retains the strict segment-local text check and,
+when extracted spans align unambiguously, also checks run size and color. Diagnostics expose
+candidate/applied/deferred counts, applied-character totals, mapping/confidence/reason metadata,
+and SHA-256 text evidence without run plaintext.
 
 Each HEADING must have an occurrence-index match with the same occurrence index and paragraph id,
 and the resolved role must remain HEADING. Missing or mismatched styles make the page ineligible.
@@ -345,7 +354,7 @@ segment is checked only in its padded target clip; page-wide text is diagnostic.
 reports expose strategy, target pages and rectangles, offsets, segments, continuations, inserted
 pages, unsupported pages, zero-unplaced state, applied BODY/HEADING typography,
 mixed-style/fallback state,
-and requested-versus-applied bold/italic state.
+requested-versus-applied bold/italic state, and privacy-safe inline-run decisions.
 
 PDFTR-24 adds ordered footnote-group pagination without broadening the body eligibility boundary.
 Unsafe or multi-column footnotes remain fixed-layout only when complete; otherwise strict render

@@ -3,7 +3,7 @@ title: Body, heading, and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-24
+updated: 2026-09-25
 tags:
 - rendering
 - reflow
@@ -11,6 +11,7 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
 - ../../../Tickets/PDFTR-29-body-typography-fidelity.md
@@ -102,14 +103,20 @@ HTML/CSS representation with downscaling disabled.
 Render diagnostics expose strategy, target pages/rectangles, segment and continuation counts,
 inserted pages, unsupported pages, and unplaced count.
 
+PDFTR-32 extends that shared representation with immutable inline runs for BODY, HEADING, and
+FOOTNOTE. Only exact preserved substrings with deterministic order may override the paragraph base
+font size or RGB color. Prefix fitting and continuation splitting clip/rebase the same runs before
+measurement and insertion. Ambiguous, missing, overlapping, invalid, and unsupported face/family
+candidates are deferred, and diagnostics record hashes/offsets rather than plaintext.
+
 Multi-column footnotes, endnotes, marginal notes, tables, arbitrary columns, sidebars, floating
 figures, verse, and complex mathematical layout remain explicit fail-closed follow-ups. See
 `docs/reflow-architecture.md` for the full decision record and historical PoC command.
 
 PDFTR-27 adds a separate derived typography-evidence contract over the same logical occurrences.
-It does not replace or feed `ReflowStyle` yet, so the production size, spacing, pagination, and
-placement behavior documented here remain unchanged. See
-[Typography evidence architecture](typography-evidence.md) for the downstream style-input boundary.
+PDFTR-28 resolves it, and PDFTR-29 through PDFTR-32 consume the relevant paragraph and exact inline
+evidence in production without persisting it in schema 1.3. See
+[Typography evidence architecture](typography-evidence.md) for the source-evidence boundary.
 
 PDFTR-28 resolves that evidence into a role-aware renderer-facing contract with traceable
 fallbacks. PDFTR-29 activates BODY, PDFTR-30 activates HEADING, and PDFTR-31 activates FOOTNOTE through one common mapping with
