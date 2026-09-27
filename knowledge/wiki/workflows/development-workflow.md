@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-27
 tags:
 - development
 - tickets
@@ -12,6 +12,8 @@ sources:
 - ../../../AGENTS.md
 - ../../../.codex/PRE_TICKET_WORKFLOW.md
 - ../../../scripts/check.ps1
+- ../../../scripts/agent_cycle.py
+- ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
 related:
 - ../index.md
 - wiki-maintenance.md
@@ -38,6 +40,26 @@ authoritative; Graphify and CRG guide discovery but do not replace source verifi
 - Add tests for behavior changes and preserve platform/runtime safety constraints.
 - Update user documentation and changelog for visible behavior.
 - Do not update Wiki pages until implementation knowledge is known.
+
+## Sequential two-agent tickets
+
+Tickets that explicitly use the agent cycle add repository-local coordination under the ignored
+`.agent-cycle/<TICKET>/` root. `manifest.json` is authoritative system state. `handoff.json` has
+three ownership sections: validator-derived `system`, claims from `implementer`, and an exact-SHA
+result from `reviewer`. Concrete LLM products may be assignment metadata but never state-machine
+roles or ownership keys.
+
+The implementer is the single repository writer. The reviewer runs only after handoff, checks the
+recorded SHA read-only, and returns `PASS`, `CHANGES_REQUIRED`, or `BLOCKED`. A new implementation SHA makes the
+earlier result stale. The validator enforces one active role, clean-tree review gates, immutable
+review artifacts, exact repeated-finding detection, and at most two automated review rounds.
+Round-two changes required stops for human inspection. Final review and merge remain human-owned.
+
+`scripts/agent_cycle.py` validates and records this state; it is not an orchestrator and does not
+launch agents, fetch, retry, merge, or create pull requests. PDFTR-33 is the explicit bootstrap
+exception in which Codex implemented the validator before the post-ticket role boundary existed.
+Recovery is conservative: invalid or corrupt state fails closed rather than being guessed or
+silently regenerated.
 
 ## Completion
 

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "mcp": {
+    "youtrack": {
+      "type": "remote",
+      "url": "https://bodomus.youtrack.cloud/mcp"
+    }
+  }
+}

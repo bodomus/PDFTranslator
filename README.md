@@ -48,6 +48,28 @@ Read [knowledge/AGENTS.md](knowledge/AGENTS.md) before maintaining the Wiki. Exi
 `knowledge/raw/` are immutable evidence during normal maintenance, and only pages affected by
 durable new knowledge should change after a non-trivial ticket.
 
+## Two-agent ticket cycles
+
+Tickets that explicitly opt into the repository agent cycle use local ignored state under
+`.agent-cycle/<TICKET>/`. The implementer is the only writer; after it commits and pushes, the
+reviewer checks one exact SHA read-only. The validator enforces sequential ownership, strict
+`system`/`implementer`/`reviewer` handoff sections, stale-review invalidation, and a maximum of two
+review rounds. Concrete agent products are optional orchestration metadata, not contract roles.
+Final merge remains a human decision.
+
+```powershell
+uv run python scripts/agent_cycle.py init PDFTR-34
+uv run python scripts/agent_cycle.py begin-implementation PDFTR-34
+uv run python scripts/agent_cycle.py handoff PDFTR-34 --file .agent-cycle/PDFTR-34/implementer.json
+uv run python scripts/agent_cycle.py begin-review PDFTR-34 --sha <FULL-40-CHARACTER-SHA>
+uv run python scripts/agent_cycle.py record-review PDFTR-34 --file .agent-cycle/PDFTR-34/reviewer.json
+uv run python scripts/agent_cycle.py status PDFTR-34
+```
+
+See [the two-agent workflow skill](.agents/skills/two-agent-ticket-workflow/SKILL.md) for role and
+recovery contracts. The tool records workflow state only; it does not launch agents, fetch, merge,
+or create pull requests. PDFTR-33 itself is the one explicitly authorized bootstrap exception.
+
 Source-backed paragraph typography can be inspected without translation or rendering. The
 standalone developer command reports occurrence identity, role, dominant source style,
 confidence/provenance, geometry inference, and mixed-style flags; optional JSON output belongs

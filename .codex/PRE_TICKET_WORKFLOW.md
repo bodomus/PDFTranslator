@@ -20,8 +20,18 @@ Neither graph is authoritative.
 **Current Python source, tests, lockfile, generated diagnostic artifacts, runtime behavior,
 and maintained documentation remain authoritative.**
 
-Explicit user instructions take precedence, followed by applicable `AGENTS.md`, followed by
-this workflow.
+Explicit user instructions take precedence, followed by applicable `AGENTS.md`. For tickets that
+explicitly use the repository agent cycle, `.agents/skills/two-agent-ticket-workflow/SKILL.md`
+governs role ownership and sequential SHA-bound coordination, while this workflow governs normal
+repository investigation and validation. Applicable nested `AGENTS.md` files remain in force.
+
+### Two-agent coordination overlay
+
+For post-PDFTR-33 agent-cycle tickets, the normal pre-ticket workflow still applies. The implementer
+is the only repository writer; the reviewer checks one exact immutable SHA without changing project
+files. The roles run sequentially and use `scripts/agent_cycle.py` for validated local state.
+Concrete products are assignment metadata rather than state-machine identities. PDFTR-33 is the
+documented bootstrap exception because this coordination layer did not exist at its start.
 
 ## 1. Project context
 

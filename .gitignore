@@ -24,6 +24,7 @@ htmlcov/
 *.swp
 
 # Runtime output
+/.agent-cycle/
 output/
 translated/
 *.document.json
