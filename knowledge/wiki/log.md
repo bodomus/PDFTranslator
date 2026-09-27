@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-26
+updated: 2026-09-27
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-33-two-agent-ticket-handoff-contract-validator.md
 - ../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../Tickets/PDFTR-19.md
 - ../../Tickets/PDFTR-20-strict-render-completeness.md
@@ -16,6 +17,12 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-09-27
+
+- Added the durable sequential agent-cycle workflow: DeepSeek as single writer, Codex as read-only
+  exact-SHA reviewer, validator-owned shared state, two bounded review rounds, stale-review and
+  repeated-finding stops, human final merge ownership, and the explicit PDFTR-33 bootstrap exception.
 
 ## 2026-09-26
 

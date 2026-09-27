@@ -32,6 +32,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added the repository-local `.agent-cycle` contract and fail-closed validator for sequential
+  DeepSeek implementation and exact-SHA, read-only Codex review. The versioned three-section
+  handoff (`shared`, `deepseek`, `codex`) enforces ownership, clean-tree and branch/HEAD binding,
+  active-role exclusion, immutable review artifacts, stale-review invalidation, exact repeated
+  findings, external stops, and the two-round limit without launching agents or automating merge.
 - Safe source-backed inline style runs for production BODY, HEADING, and FOOTNOTE reflow. Exact,
   order-preserving translated substrings can retain local font size and RGB color through shared
   measurement/insertion, continuation clipping, and saved-PDF validation; ambiguous or unsupported
