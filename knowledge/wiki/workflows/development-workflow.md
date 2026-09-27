@@ -45,11 +45,12 @@ authoritative; Graphify and CRG guide discovery but do not replace source verifi
 
 Tickets that explicitly use the agent cycle add repository-local coordination under the ignored
 `.agent-cycle/<TICKET>/` root. `manifest.json` is authoritative system state. `handoff.json` has
-three ownership sections: validator-derived `shared`, implementation claims from `deepseek`, and
-an exact-SHA review result from `codex`.
+three ownership sections: validator-derived `system`, claims from `implementer`, and an exact-SHA
+result from `reviewer`. Concrete LLM products may be assignment metadata but never state-machine
+roles or ownership keys.
 
-DeepSeek is the single repository writer. Codex runs only after handoff, reviews the recorded SHA
-read-only, and returns `PASS`, `CHANGES_REQUIRED`, or `BLOCKED`. A new implementation SHA makes the
+The implementer is the single repository writer. The reviewer runs only after handoff, checks the
+recorded SHA read-only, and returns `PASS`, `CHANGES_REQUIRED`, or `BLOCKED`. A new implementation SHA makes the
 earlier result stale. The validator enforces one active role, clean-tree review gates, immutable
 review artifacts, exact repeated-finding detection, and at most two automated review rounds.
 Round-two changes required stops for human inspection. Final review and merge remain human-owned.

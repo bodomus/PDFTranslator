@@ -20,9 +20,10 @@ related:
 
 ## 2026-09-27
 
-- Added the durable sequential agent-cycle workflow: DeepSeek as single writer, Codex as read-only
-  exact-SHA reviewer, validator-owned shared state, two bounded review rounds, stale-review and
-  repeated-finding stops, human final merge ownership, and the explicit PDFTR-33 bootstrap exception.
+- Added the durable, product-neutral sequential agent-cycle workflow: one implementation writer,
+  one read-only exact-SHA reviewer, validator-owned system state, two bounded review rounds,
+  stale-review and repeated-finding stops, human final merge ownership, and the explicit PDFTR-33
+  bootstrap exception.
 
 ## 2026-09-26
 

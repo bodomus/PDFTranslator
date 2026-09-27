@@ -4,24 +4,29 @@ Schema version `1.0` uses `.agent-cycle/<TICKET>/`:
 
 ```text
 manifest.json       system-owned authoritative state
-handoff.json        validated shared/deepseek/codex sections
-review-1.json       immutable normalized Codex result, when recorded
-review-2.json       immutable normalized Codex result, when recorded
+handoff.json        validated system/implementer/reviewer sections
+review-1.json       immutable normalized reviewer result, when recorded
+review-2.json       immutable normalized reviewer result, when recorded
 ```
 
 The entire `.agent-cycle/` root is local runtime state and is ignored by Git.
 
 ## Ownership
 
-- `shared`: validator-written projection of ticket, branch, merge base, current HEAD, review round,
+- `system`: validator-written projection of ticket, branch, merge base, current HEAD, review round,
   and state. Agents cannot supply this section.
-- `deepseek`: implementation claims supplied by DeepSeek and accepted only during `handoff`.
-- `codex`: SHA-bound review result supplied by Codex and accepted only during `record-review`.
+- `implementer`: implementation claims accepted only during `handoff`.
+- `reviewer`: SHA-bound review result accepted only during `record-review`.
+
+The complete top-level shape is exactly
+`{"schema_version":"1.0","system":{},"implementer":{},"reviewer":{}}`, with the role sections
+containing the fields documented below when populated. Product names may appear only as external
+assignment metadata; they are not schema keys, enum values, transitions, or ownership domains.
 
 The validator writes `handoff.json` atomically after validating the role-specific input. An agent
 must never replace the whole handoff or edit another owner's section.
 
-## DeepSeek input
+## Implementer input
 
 ```json
 {
@@ -40,7 +45,7 @@ must never replace the whole handoff or edit another owner's section.
 
 Check values are `PASS`, `FAIL`, or `NOT_RUN`. Unknown and missing fields fail closed.
 
-## Codex input
+## Reviewer input
 
 ```json
 {

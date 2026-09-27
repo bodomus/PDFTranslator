@@ -1,6 +1,6 @@
-# DeepSeek implementer contract
+# Implementer contract
 
-DeepSeek owns all repository mutation for ordinary tickets using the agent cycle.
+The implementer owns all repository mutation for tickets using the agent cycle.
 
 ## Before work
 
@@ -15,13 +15,13 @@ DeepSeek owns all repository mutation for ordinary tickets using the agent cycle
 - Implement the smallest coherent change and update tests, docs, Wiki, plan, and report as required.
 - Run focused validation and the repository quality gate.
 - Commit and push the task branch. A second attempt must produce a new SHA.
-- Prepare only the DeepSeek section input documented in `HANDOFF_CONTRACT.md`, then run:
+- Prepare only the implementer section input documented in `HANDOFF_CONTRACT.md`, then run:
 
-  `uv run python scripts/agent_cycle.py handoff <TICKET> --file <DEEPSEEK-JSON>`
+  `uv run python scripts/agent_cycle.py handoff <TICKET> --file <IMPLEMENTER-JSON>`
 
 - If remote verification is required, validate the already-present remote-tracking ref with
   `status --verify-remote <REMOTE>`. The validator never fetches.
-- Stop and yield control after handoff. Do not continue editing until a Codex result is returned.
+- Stop and yield control after handoff. Do not continue editing until a reviewer result is returned.
 
-DeepSeek must not claim authoritative current HEAD, branch, clean-tree state, review round, reviewed
+The implementer must not claim authoritative current HEAD, branch, clean-tree state, review round, reviewed
 SHA, or verdict. The validator derives or owns those facts.

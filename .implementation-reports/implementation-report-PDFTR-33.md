@@ -2,24 +2,26 @@
 
 ## Outcome
 
-Implemented a repository-local, fail-closed contract for strictly sequential DeepSeek
-implementation and exact-SHA, read-only Codex review. The tool records workflow state only; it
+Implemented a repository-local, fail-closed contract for strictly sequential implementation and
+exact-SHA, read-only review. The tool records workflow state only; it
 does not launch agents, call model APIs, fetch, retry, merge, create pull requests, or supervise
 processes.
 
 PDFTR-33 is explicitly documented as the bootstrap exception authorized by the user: Codex
 implemented the infrastructure before its post-ticket role controls existed. For ordinary later
-agent-cycle tickets, DeepSeek is the only project-file writer and Codex is read-only.
+agent-cycle tickets, the implementer is the only project-file writer and the reviewer is read-only.
+DeepSeek/Codex may be assigned by orchestration metadata, but product names are not validator roles.
 
 ## Contract and state
 
 - `.agent-cycle/` is ignored persistent local coordination state, distinct from disposable `temp/`.
 - Each ticket has strict `manifest.json` authoritative state and `handoff.json` with exactly three
-  ownership sections: `shared`, `deepseek`, and `codex`.
-- `shared` is derived by the validator; DeepSeek and Codex provide only their role-specific inputs.
+  ownership sections: `system`, `implementer`, and `reviewer`.
+- `system` is derived by the validator; the two agents provide only their role-specific inputs.
 - Normalized `review-1.json` and `review-2.json` artifacts are immutable once recorded.
 - Ticket IDs, JSON fields, schema version, enum values, Git SHAs, review rounds, findings, and paths
   are validated explicitly; unknown/missing fields and corrupt state fail closed.
+- Legacy product-named handoff sections and `active_agent` values are rejected explicitly.
 
 ## Validator behavior
 
@@ -48,13 +50,13 @@ rounds. Optional remote verification compares an existing remote-tracking ref an
 
 ## Tests and validation
 
-- Focused validator tests: `25 passed`.
+- Focused validator tests: `29 passed`.
 - New deterministic coverage includes safe ticket IDs, isolated initialization, strict three-section
   handoff, dirty-tree rejection, exact SHA binding, stale PASS after a new commit, two-round stop,
   repeated findings, review-time mutation, invalid verdict, active-role exclusion, corrupt JSON,
   new-SHA requirement, wrong repository root, manual commit between phases, local remote-tip
   verification, and non-zero CLI failure.
-- Full pytest: `381 passed, 1 skipped`; coverage `89.10%`.
+- Full pytest: `385 passed, 1 skipped`; coverage `89.10%`.
 - `scripts/check.ps1`: passed (Wiki lint, Ruff format/check, mypy, full pytest).
 - Standalone strict mypy for the new script: passed.
 - Skill `quick_validate.py`: passed.

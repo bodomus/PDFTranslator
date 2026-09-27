@@ -52,13 +52,14 @@
 
 When a post-PDFTR-33 ticket explicitly uses the agent cycle:
 
-- DeepSeek is the only implementation writer;
-- Codex is a strictly read-only reviewer of one exact Git SHA;
+- the implementer is the only repository writer;
+- the reviewer is strictly read-only and reviews one exact Git SHA;
 - implementation and review are sequential in one branch and working directory;
 - a new implementation SHA invalidates earlier reviews;
 - at most two automated review rounds are allowed;
 - final review and merge remain human decisions.
 
-Follow `.agents/skills/two-agent-ticket-workflow/SKILL.md`. PDFTR-33 is the explicit bootstrap
-exception because Codex created the contract before it existed; that exception does not apply to
-later tickets.
+The current assignment is DeepSeek as implementer and Codex as reviewer. Product names are
+orchestrator metadata, never schema keys, enum values, transitions, or ownership domains. Follow
+`.agents/skills/two-agent-ticket-workflow/SKILL.md`. PDFTR-33 is the explicit bootstrap exception
+because Codex created the contract before it existed; that exception does not apply to later tickets.

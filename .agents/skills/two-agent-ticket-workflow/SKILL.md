@@ -1,6 +1,6 @@
 ---
 name: two-agent-ticket-workflow
-description: Run post-PDFTR-33 PDFTranslate tickets with DeepSeek as the single repository writer and Codex as a sequential, read-only reviewer bound to one exact Git SHA through repository-local .agent-cycle state.
+description: Run PDFTranslate tickets with one implementation writer and one sequential, read-only reviewer bound to an exact Git SHA through repository-local .agent-cycle state.
 ---
 
 # Two-agent ticket workflow
@@ -11,17 +11,19 @@ rules to the normal repository investigation and validation workflow; it does no
 
 ## Invariants
 
-- DeepSeek is the only agent permitted to modify project files, commit, or push.
-- Codex reviews exactly one explicit immutable SHA and does not modify project files.
+- The implementer is the only role permitted to modify project files, commit, or push.
+- The reviewer checks exactly one explicit immutable SHA and does not modify project files.
 - The roles run sequentially in one ticket branch and one working directory.
 - A new implementation SHA invalidates every earlier review result.
-- At most two automated Codex review rounds are allowed.
+- At most two automated review rounds are allowed.
 - Final review and merge decisions remain human-owned.
 - `scripts/agent_cycle.py` derives Git facts and validates transitions; neither agent's prose is
   authoritative for branch, HEAD, cleanliness, state, round, or verdict.
 
 PDFTR-33 itself is the one bootstrap exception: the user explicitly authorized Codex to implement
 the infrastructure before these controls existed. Do not generalize that exception to later tickets.
+The current DeepSeek/Codex assignment is orchestration metadata; the contract itself uses only the
+`implementer` and `reviewer` roles.
 
 ## Role routing
 
@@ -32,10 +34,10 @@ the infrastructure before these controls existed. Do not generalize that excepti
 ## Normal sequence
 
 1. Initialize a clean task-branch cycle and begin implementation.
-2. DeepSeek implements, validates, commits, and pushes one SHA, then records its handoff and stops.
-3. Codex begins a review for that exact SHA, remains read-only, records `PASS`,
+2. The implementer implements, validates, commits, and pushes one SHA, then records its handoff and stops.
+3. The reviewer begins a review for that exact SHA, remains read-only, records `PASS`,
    `CHANGES_REQUIRED`, or `BLOCKED`, and stops.
-4. If changes are required after round one, DeepSeek produces and pushes a new SHA before a second
+4. If changes are required after round one, the implementer produces and pushes a new SHA before a second
    review. Round-two changes required or a repeated exact finding stops the cycle.
 5. A human performs the final review and decides whether to merge.
 

@@ -4,7 +4,7 @@
 
 - Add concise two-agent routing and the PDFTR-33 bootstrap exception to `AGENTS.md` and
   `.codex/PRE_TICKET_WORKFLOW.md`.
-- Add a dedicated skill with focused DeepSeek, Codex, and handoff contracts.
+- Add a dedicated skill with focused implementer, reviewer, and handoff contracts.
 - Document recovery, human merge ownership, and the future-orchestrator boundary.
 
 ## 2. State model
@@ -26,8 +26,8 @@
 
 ## 5. Review artifact and three-section handoff
 
-- Store one strict handoff document with `shared`, `deepseek`, and `codex` sections.
-- Keep system-derived shared facts in the manifest and mirror only validated values into shared handoff.
+- Store one strict handoff document with `system`, `implementer`, and `reviewer` sections.
+- Keep system-derived facts in the manifest and mirror only validated values into the system section.
 - Accept reviewer results from an explicit JSON file and reject wrong ticket, SHA, verdict, shape, or
   round; never let either agent overwrite another section directly.
 
@@ -36,7 +36,8 @@
 - Use isolated repository-local Git fixtures.
 - Cover ticket/path safety, initialization, corrupt JSON, dirty handoff, active-role exclusion,
   exact-SHA review, stale PASS after new commit, invalid verdict, round cap, repeated findings,
-  review-time repository mutation, optional remote-tip verification, and CLI failure exits.
+  review-time repository mutation, optional remote-tip verification, CLI failure exits, and rejection
+  of the legacy product-named section and active-agent values.
 
 ## 7. Wiki and user documentation
 

@@ -1,6 +1,6 @@
-# Codex reviewer contract
+# Reviewer contract
 
-Codex is a strict read-only reviewer for ordinary post-PDFTR-33 agent-cycle tickets.
+The reviewer is strictly read-only for ordinary post-PDFTR-33 agent-cycle tickets.
 
 ## Entry gate
 
@@ -14,7 +14,7 @@ Codex is a strict read-only reviewer for ordinary post-PDFTR-33 agent-cycle tick
 - Run only validation that cannot format, regenerate, update, or otherwise modify project files.
 - Do not edit source, tests, docs, Wiki, plans, reports, or `reviews/`.
 - Do not commit, amend, push, reset, stash, rebase, switch task branches, or resolve conflicts.
-- The only permitted result is a structured Codex review input for the validator. If the execution
+- The only permitted result is a structured reviewer input for the validator. If the execution
   environment cannot create that ignored coordination input safely, return the same JSON on stdout
   for a system runner to persist.
 
@@ -24,7 +24,7 @@ Codex is a strict read-only reviewer for ordinary post-PDFTR-33 agent-cycle tick
 - Bind `reviewed_sha` to the exact SHA supplied at review start.
 - `PASS` has no findings. `CHANGES_REQUIRED` has concrete machine-readable findings and required
   fixes. `BLOCKED` has a machine-readable reason.
-- Record with `uv run python scripts/agent_cycle.py record-review <TICKET> --file <CODEX-JSON>` and
+- Record with `uv run python scripts/agent_cycle.py record-review <TICKET> --file <REVIEWER-JSON>` and
   stop. The validator rejects any repository mutation during the review window.
 
 A new implementation commit invalidates the old review. Never reuse an earlier PASS for a new HEAD.

@@ -1,4 +1,4 @@
-"""Validate and record sequential DeepSeek/Codex ticket-cycle state."""
+"""Validate and record sequential implementer/reviewer ticket-cycle state."""
 
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ class CycleState(StrEnum):
 
 
 class ActiveAgent(StrEnum):
-    DEEPSEEK = "deepseek"
-    CODEX = "codex"
+    IMPLEMENTER = "implementer"
+    REVIEWER = "reviewer"
 
 
 class ReviewVerdict(StrEnum):
@@ -103,8 +103,8 @@ MANIFEST_KEYS = {
     "review_started_status",
     "stop_reason",
 }
-HANDOFF_KEYS = {"schema_version", "shared", "deepseek", "codex"}
-SHARED_KEYS = {
+HANDOFF_KEYS = {"schema_version", "system", "implementer", "reviewer"}
+SYSTEM_KEYS = {
     "ticket",
     "branch",
     "base_sha",
@@ -112,7 +112,7 @@ SHARED_KEYS = {
     "review_round",
     "state",
 }
-DEEPSEEK_KEYS = {
+IMPLEMENTER_KEYS = {
     "schema_version",
     "ticket",
     "implementation_attempt",
@@ -241,21 +241,21 @@ def begin_implementation(repo_root: Path, ticket: str) -> dict[str, Any]:
     if state not in {CycleState.NEW, CycleState.CHANGES_REQUIRED}:
         raise CycleError(f"cannot begin implementation from {state.value}")
     manifest["state"] = CycleState.IMPLEMENTING.value
-    manifest["active_agent"] = ActiveAgent.DEEPSEEK.value
+    manifest["active_agent"] = ActiveAgent.IMPLEMENTER.value
     manifest["current_head_sha"] = facts.head_sha
     manifest["working_tree_clean"] = True
     manifest["review_started_head"] = None
     manifest["review_started_status"] = None
-    handoff["codex"] = None
-    _sync_shared(handoff, manifest)
+    handoff["reviewer"] = None
+    _sync_system(handoff, manifest)
     _write_cycle(directory, manifest, handoff)
     return manifest
 
 
 def record_handoff(repo_root: Path, ticket: str, input_file: Path) -> dict[str, Any]:
     directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
-    if manifest["active_agent"] != ActiveAgent.DEEPSEEK.value:
-        raise CycleError("handoff requires deepseek to be the active agent")
+    if manifest["active_agent"] != ActiveAgent.IMPLEMENTER.value:
+        raise CycleError("handoff requires implementer to be the active agent")
     if manifest["state"] != CycleState.IMPLEMENTING.value:
         raise CycleError("handoff requires IMPLEMENTING state")
     _require_clean(facts, "handoff")
@@ -263,7 +263,7 @@ def record_handoff(repo_root: Path, ticket: str, input_file: Path) -> dict[str, 
         previous = _load_json(directory / f"review-{manifest['review_round']}.json")
         if previous.get("reviewed_sha") == facts.head_sha:
             raise CycleError("a changes-required handoff must point to a new implementation SHA")
-    deepseek = _validate_deepseek_input(_load_json(input_file), ticket, manifest)
+    implementer = _validate_implementer_input(_load_json(input_file), ticket, manifest)
     manifest["current_head_sha"] = facts.head_sha
     manifest["working_tree_clean"] = True
     manifest["active_agent"] = None
@@ -272,9 +272,9 @@ def record_handoff(repo_root: Path, ticket: str, input_file: Path) -> dict[str, 
         if manifest["review_round"] == 0
         else CycleState.READY_FOR_REVIEW_2.value
     )
-    handoff["deepseek"] = deepseek
-    handoff["codex"] = None
-    _sync_shared(handoff, manifest)
+    handoff["implementer"] = implementer
+    handoff["reviewer"] = None
+    _sync_system(handoff, manifest)
     _write_cycle(directory, manifest, handoff)
     return manifest
 
@@ -293,20 +293,20 @@ def begin_review(repo_root: Path, ticket: str, expected_sha: str) -> dict[str, A
         raise CycleError("expected review SHA must match both current Git HEAD and manifest HEAD")
     manifest["review_round"] += 1
     manifest["state"] = CycleState.REVIEWING.value
-    manifest["active_agent"] = ActiveAgent.CODEX.value
+    manifest["active_agent"] = ActiveAgent.REVIEWER.value
     manifest["review_started_head"] = facts.head_sha
     manifest["review_started_status"] = list(facts.status)
     manifest["working_tree_clean"] = True
-    handoff["codex"] = None
-    _sync_shared(handoff, manifest)
+    handoff["reviewer"] = None
+    _sync_system(handoff, manifest)
     _write_cycle(directory, manifest, handoff)
     return manifest
 
 
 def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, Any]:
     directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
-    if manifest["active_agent"] != ActiveAgent.CODEX.value:
-        raise CycleError("record-review requires codex to be the active agent")
+    if manifest["active_agent"] != ActiveAgent.REVIEWER.value:
+        raise CycleError("record-review requires reviewer to be the active agent")
     if manifest["state"] != CycleState.REVIEWING.value:
         raise CycleError("record-review requires REVIEWING state")
     if facts.head_sha != manifest["review_started_head"]:
@@ -341,8 +341,8 @@ def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, A
     manifest["stop_reason"] = stop_reason
     manifest["review_started_head"] = None
     manifest["review_started_status"] = None
-    handoff["codex"] = review_document
-    _sync_shared(handoff, manifest)
+    handoff["reviewer"] = review_document
+    _sync_system(handoff, manifest)
     _atomic_write_json(artifact_path, review_document)
     _write_cycle(directory, manifest, handoff)
     return manifest
@@ -360,7 +360,7 @@ def stop_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
     manifest["stop_reason"] = reason
     manifest["review_started_head"] = None
     manifest["review_started_status"] = None
-    _sync_shared(handoff, manifest)
+    _sync_system(handoff, manifest)
     _write_cycle(directory, manifest, handoff)
     return manifest
 
@@ -374,11 +374,11 @@ def cycle_status(
         errors.append("Git HEAD differs from manifest current_head_sha")
     if facts.clean != manifest["working_tree_clean"]:
         errors.append("working-tree cleanliness differs from manifest")
-    codex = handoff["codex"]
+    reviewer = handoff["reviewer"]
     review_valid = bool(
-        codex is not None
-        and codex["reviewed_sha"] == facts.head_sha
-        and codex["reviewed_sha"] == manifest["current_head_sha"]
+        reviewer is not None
+        and reviewer["reviewed_sha"] == facts.head_sha
+        and reviewer["reviewed_sha"] == manifest["current_head_sha"]
     )
     remote_tip: str | None = None
     if verify_remote is not None:
@@ -474,22 +474,22 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
 def _validate_handoff(document: dict[str, Any], manifest: dict[str, Any]) -> None:
     _require_exact_keys(document, HANDOFF_KEYS, "handoff")
     _require_schema(document, "handoff")
-    shared = document["shared"]
-    if not isinstance(shared, dict):
-        raise CycleError("handoff shared section must be an object")
-    _require_exact_keys(shared, SHARED_KEYS, "handoff shared")
-    expected_shared = _shared_from_manifest(manifest)
-    if shared != expected_shared:
-        raise CycleError("handoff shared section does not match authoritative manifest state")
-    deepseek = document["deepseek"]
-    if deepseek is not None:
-        _validate_deepseek_input(deepseek, manifest["ticket"], manifest, persisted=True)
-    codex = document["codex"]
-    if codex is not None:
-        _validate_review_input(codex, manifest["ticket"], manifest, persisted=True)
+    system = document["system"]
+    if not isinstance(system, dict):
+        raise CycleError("handoff system section must be an object")
+    _require_exact_keys(system, SYSTEM_KEYS, "handoff system")
+    expected_system = _system_from_manifest(manifest)
+    if system != expected_system:
+        raise CycleError("handoff system section does not match authoritative manifest state")
+    implementer = document["implementer"]
+    if implementer is not None:
+        _validate_implementer_input(implementer, manifest["ticket"], manifest, persisted=True)
+    reviewer = document["reviewer"]
+    if reviewer is not None:
+        _validate_review_input(reviewer, manifest["ticket"], manifest, persisted=True)
 
 
-def _validate_deepseek_input(
+def _validate_implementer_input(
     document: dict[str, Any],
     ticket: str,
     manifest: dict[str, Any],
@@ -497,11 +497,11 @@ def _validate_deepseek_input(
     persisted: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(document, dict):
-        raise CycleError("deepseek handoff must be a JSON object")
-    _require_exact_keys(document, DEEPSEEK_KEYS, "deepseek handoff")
-    _require_schema(document, "deepseek handoff")
+        raise CycleError("implementer handoff must be a JSON object")
+    _require_exact_keys(document, IMPLEMENTER_KEYS, "implementer handoff")
+    _require_schema(document, "implementer handoff")
     if document["ticket"] != ticket:
-        raise CycleError("deepseek handoff belongs to a different ticket")
+        raise CycleError("implementer handoff belongs to a different ticket")
     expected_attempt = manifest["review_round"] + 1
     if document["implementation_attempt"] != expected_attempt:
         if not persisted:
@@ -509,7 +509,7 @@ def _validate_deepseek_input(
         if not isinstance(document["implementation_attempt"], int):
             raise CycleError("invalid persisted implementation_attempt")
     if document["status"] != "COMPLETE":
-        raise CycleError("deepseek status must be COMPLETE")
+        raise CycleError("implementer status must be COMPLETE")
     report = document["implementation_report"]
     expected_report = f".implementation-reports/implementation-report-{ticket}.md"
     if report != expected_report:
@@ -519,7 +519,7 @@ def _validate_deepseek_input(
             raise CycleError(f"invalid {field}: {document[field]!r}")
     for field in ("known_limitations", "notes"):
         if not _is_string_list(document[field]):
-            raise CycleError(f"deepseek {field} must be a string list")
+            raise CycleError(f"implementer {field} must be a string list")
     return document
 
 
@@ -531,9 +531,9 @@ def _validate_review_input(
     persisted: bool = False,
 ) -> ReviewInput:
     if not isinstance(document, dict):
-        raise CycleError("codex review must be a JSON object")
-    _require_exact_keys(document, REVIEW_KEYS, "codex review")
-    _require_schema(document, "codex review")
+        raise CycleError("reviewer input must be a JSON object")
+    _require_exact_keys(document, REVIEW_KEYS, "reviewer input")
+    _require_schema(document, "reviewer input")
     if document["ticket"] != ticket:
         raise CycleError("review artifact belongs to a different ticket")
     review_round = document["review_round"]
@@ -617,13 +617,13 @@ def _review_to_dict(review: ReviewInput) -> dict[str, Any]:
 def _blank_handoff(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "shared": _shared_from_manifest(manifest),
-        "deepseek": None,
-        "codex": None,
+        "system": _system_from_manifest(manifest),
+        "implementer": None,
+        "reviewer": None,
     }
 
 
-def _shared_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+def _system_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "ticket": manifest["ticket"],
         "branch": manifest["branch"],
@@ -634,8 +634,8 @@ def _shared_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sync_shared(handoff: dict[str, Any], manifest: dict[str, Any]) -> None:
-    handoff["shared"] = _shared_from_manifest(manifest)
+def _sync_system(handoff: dict[str, Any], manifest: dict[str, Any]) -> None:
+    handoff["system"] = _system_from_manifest(manifest)
 
 
 def _write_cycle(directory: Path, manifest: dict[str, Any], handoff: dict[str, Any]) -> None:
@@ -727,15 +727,15 @@ def _parser() -> argparse.ArgumentParser:
     init = subparsers.add_parser("init", help="initialize a clean ticket cycle")
     init.add_argument("ticket")
     init.add_argument("--base-branch", default="master")
-    begin = subparsers.add_parser("begin-implementation", help="grant DeepSeek write ownership")
+    begin = subparsers.add_parser("begin-implementation", help="grant implementer write ownership")
     begin.add_argument("ticket")
-    handoff = subparsers.add_parser("handoff", help="record a validated DeepSeek handoff")
+    handoff = subparsers.add_parser("handoff", help="record a validated implementer handoff")
     handoff.add_argument("ticket")
     handoff.add_argument("--file", type=Path, required=True)
-    review = subparsers.add_parser("begin-review", help="begin exact-SHA read-only Codex review")
+    review = subparsers.add_parser("begin-review", help="begin exact-SHA read-only reviewer phase")
     review.add_argument("ticket")
     review.add_argument("--sha", required=True)
-    record = subparsers.add_parser("record-review", help="record immutable Codex review result")
+    record = subparsers.add_parser("record-review", help="record immutable reviewer result")
     record.add_argument("ticket")
     record.add_argument("--file", type=Path, required=True)
     status = subparsers.add_parser("status", help="validate and display current state")

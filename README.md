@@ -51,17 +51,18 @@ durable new knowledge should change after a non-trivial ticket.
 ## Two-agent ticket cycles
 
 Tickets that explicitly opt into the repository agent cycle use local ignored state under
-`.agent-cycle/<TICKET>/`. DeepSeek is the only implementation writer; after it commits and pushes,
-Codex reviews one exact SHA read-only. The validator enforces sequential ownership, strict
-`shared`/`deepseek`/`codex` handoff sections, stale-review invalidation, and a maximum of two review
-rounds. Final merge remains a human decision.
+`.agent-cycle/<TICKET>/`. The implementer is the only writer; after it commits and pushes, the
+reviewer checks one exact SHA read-only. The validator enforces sequential ownership, strict
+`system`/`implementer`/`reviewer` handoff sections, stale-review invalidation, and a maximum of two
+review rounds. Concrete agent products are optional orchestration metadata, not contract roles.
+Final merge remains a human decision.
 
 ```powershell
 uv run python scripts/agent_cycle.py init PDFTR-34
 uv run python scripts/agent_cycle.py begin-implementation PDFTR-34
-uv run python scripts/agent_cycle.py handoff PDFTR-34 --file .agent-cycle/PDFTR-34/deepseek.json
+uv run python scripts/agent_cycle.py handoff PDFTR-34 --file .agent-cycle/PDFTR-34/implementer.json
 uv run python scripts/agent_cycle.py begin-review PDFTR-34 --sha <FULL-40-CHARACTER-SHA>
-uv run python scripts/agent_cycle.py record-review PDFTR-34 --file .agent-cycle/PDFTR-34/codex.json
+uv run python scripts/agent_cycle.py record-review PDFTR-34 --file .agent-cycle/PDFTR-34/reviewer.json
 uv run python scripts/agent_cycle.py status PDFTR-34
 ```
 
