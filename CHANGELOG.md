@@ -32,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added an inline-style summary to the human-readable HTML diagnostic report. The report table now
+  exposes inline-style candidate, applied, deferred, and applied-character counts directly from
+  `ReportSummary`, with explicit zero rows and no change to the embedded JSON, rendering behavior,
+  translation behavior, or the diagnostics schema.
 - Added the repository-local `.agent-cycle` contract and fail-closed validator for sequential
   implementation and exact-SHA, read-only review. The versioned, product-neutral three-section
   handoff (`system`, `implementer`, `reviewer`) enforces ownership, clean-tree and branch/HEAD binding,

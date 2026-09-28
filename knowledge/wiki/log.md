@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-27
+updated: 2026-09-28
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-34-human-readable-inline-style-diagnostics-summary.md
 - ../../Tickets/PDFTR-33-two-agent-ticket-handoff-contract-validator.md
 - ../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../Tickets/PDFTR-19.md
@@ -17,6 +18,13 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-09-28
+
+- Exposed the four document-level inline-style totals (candidates, applied, deferred, and
+  applied-character counts) in the human-readable HTML diagnostic summary. The rows read directly
+  from `ReportSummary`, render explicit zeros, and change neither the embedded machine-readable
+  JSON, rendering/translation behavior, nor the diagnostics schema.
 
 ## 2026-09-27
 

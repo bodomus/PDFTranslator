@@ -626,7 +626,9 @@ confidence, group ID, policy, and ambiguity; ambiguous groups produce the stable
 `REPEATED_ELEMENT_AMBIGUOUS` finding. Reused historical stages and unavailable VRAM remain
 `null`/`unknown`, never guessed.
 The report also records the renderer's selected font and promotes renderer warnings to stable
-`RENDER_WARNING` findings.
+`RENDER_WARNING` findings. The HTML summary additionally surfaces the document inline-style totals
+— candidate, applied, deferred, and applied-character counts — directly from `ReportSummary`, so
+mixed-style evidence is readable without opening the embedded JSON.
 
 Source and translated text are excluded by default. Use `--include-report-text` only for explicit
 local debugging; it requires `--report`. The HTML file embeds its CSS and uses no network assets.
