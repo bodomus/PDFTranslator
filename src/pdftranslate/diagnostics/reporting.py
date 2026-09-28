@@ -42,6 +42,7 @@ def write_report(
 def _render_html(report: TranslationReport) -> str:
     payload = html.escape(report.model_dump_json(indent=2))
     title = html.escape(f"PDFTranslate report - {report.status}")
+    inline_styled_characters = report.summary.inline_style_applied_character_count
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{title}</title><style>
@@ -59,6 +60,10 @@ td,th{{border:1px solid #ccd3db;padding:.4rem .65rem;text-align:left}}
 <tr><th>Footnote segments</th><td>{report.summary.footnote_segments}</td></tr>
 <tr><th>Footnote continuation pages</th><td>{report.summary.footnote_continuation_pages}</td></tr>
 <tr><th>Footnote unplaced text</th><td>{report.summary.footnote_unplaced_text_count}</td></tr>
+<tr><th>Inline style candidates</th><td>{report.summary.inline_style_candidate_count}</td></tr>
+<tr><th>Inline styles applied</th><td>{report.summary.inline_style_applied_count}</td></tr>
+<tr><th>Inline styles deferred</th><td>{report.summary.inline_style_deferred_count}</td></tr>
+<tr><th>Inline styled characters</th><td>{inline_styled_characters}</td></tr>
 </table>
 <h2>Machine-readable details</h2><pre>{payload}</pre></body></html>
 """

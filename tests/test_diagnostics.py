@@ -8,6 +8,8 @@ import pytest
 from pdftranslate.diagnostics import (
     BlockDiagnostic,
     DiagnosticCode,
+    InlineStyleDiagnostic,
+    PageDiagnostic,
     ReportSummary,
     TranslationReport,
     write_report,
@@ -142,3 +144,170 @@ def test_report_writer_never_replaces_an_existing_artifact(tmp_path: Path) -> No
     assert "Footnotes reflowed</th><td>3" in html
     assert "Footnote segments</th><td>5" in html
     assert "Footnote continuation pages</th><td>2" in html
+
+
+def _base_summary(**overrides: int) -> ReportSummary:
+    values: dict[str, object] = {
+        "page_count": 1,
+        "pages_by_type": {"text": 1},
+        "blocks_extracted": 2,
+        "blocks_translated": 1,
+        "blocks_skipped": 0,
+        "cache_hits": 1,
+        "cache_misses": 1,
+        "translated_segments": 1,
+        "ocr_pages": 0,
+        "font_reductions": 0,
+        "expanded_blocks": 0,
+        "overflow_blocks": 0,
+        "input_size": 100,
+        "output_size": 200,
+        "elapsed_seconds": 0.5,
+        "stage_durations": {},
+    }
+    values.update(overrides)
+    return ReportSummary(**values)  # type: ignore[arg-type]
+
+
+def _report_with_summary(
+    summary: ReportSummary,
+    *,
+    run_id: str = "run",
+    pages: tuple[PageDiagnostic, ...] = (),
+) -> TranslationReport:
+    return TranslationReport(
+        run_id=run_id,
+        status="success",
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        input_path="input.pdf",
+        output_path="output.pdf",
+        summary=summary,
+        pages=pages,
+    )
+
+
+def _summary_table(html_text: str) -> str:
+    return html_text[html_text.index("<table>") : html_text.index("</table>")]
+
+
+def test_html_summary_exposes_inline_style_totals(tmp_path: Path) -> None:
+    summary = _base_summary(
+        inline_style_candidate_count=12,
+        inline_style_applied_count=3,
+        inline_style_deferred_count=9,
+        inline_style_applied_character_count=41,
+    )
+    report = _report_with_summary(summary)
+
+    (html_path,) = write_report(report, tmp_path / "nonzero", report_format="html")
+    html = html_path.read_text("utf-8")
+    table = _summary_table(html)
+
+    assert "Inline style candidates</th><td>12</td>" in table
+    assert "Inline styles applied</th><td>3</td>" in table
+    assert "Inline styles deferred</th><td>9</td>" in table
+    assert "Inline styled characters</th><td>41</td>" in table
+
+
+def test_html_summary_keeps_explicit_zero_inline_style_totals(tmp_path: Path) -> None:
+    summary = _base_summary(
+        inline_style_candidate_count=0,
+        inline_style_applied_count=0,
+        inline_style_deferred_count=0,
+        inline_style_applied_character_count=0,
+    )
+    report = _report_with_summary(summary, run_id="zero")
+
+    (html_path,) = write_report(report, tmp_path / "zero", report_format="html")
+    html = html_path.read_text("utf-8")
+    table = _summary_table(html)
+
+    assert html.startswith("<!doctype html>")
+    assert "Inline style candidates</th><td>0</td>" in table
+    assert "Inline styles applied</th><td>0</td>" in table
+    assert "Inline styles deferred</th><td>0</td>" in table
+    assert "Inline styled characters</th><td>0</td>" in table
+
+
+def test_html_inline_style_summary_is_privacy_safe(tmp_path: Path) -> None:
+    marker_hash = "a" * 64
+    source_sentinel = "PRIVATE-SOURCE-SENTINEL"
+    translated_sentinel = "PRIVATE-TRANSLATED-SENTINEL"
+    block = BlockDiagnostic(
+        block_id="block-1",
+        page_number=1,
+        source_bbox=BoundingBox(x0=0, y0=0, x1=10, y1=10),
+        final_state="rendered",
+        source_text=source_sentinel,
+        translated_text=translated_sentinel,
+        inline_style_candidate_count=1,
+        inline_style_applied_count=1,
+        inline_style_applied_character_count=5,
+        inline_style_decisions=(
+            InlineStyleDiagnostic(
+                status="applied",
+                text_sha256=marker_hash,
+                font_size_points=12.0,
+            ),
+        ),
+    )
+    page = PageDiagnostic(
+        page_number=1,
+        classification="text",
+        width=100,
+        height=100,
+        ocr_status="not_processed",
+        blocks=(block,),
+    )
+    summary = _base_summary(
+        inline_style_candidate_count=1,
+        inline_style_applied_count=1,
+        inline_style_applied_character_count=5,
+    )
+    report = _report_with_summary(summary, run_id="privacy", pages=(page,))
+
+    (html_path,) = write_report(report, tmp_path / "privacy", report_format="html")
+    html = html_path.read_text("utf-8")
+    table = _summary_table(html)
+
+    assert marker_hash not in table
+    assert source_sentinel not in table
+    assert translated_sentinel not in table
+    assert "inline_style_decisions" not in table
+    # The embedded machine-readable details keep their existing behavior.
+    assert marker_hash in html
+
+
+def test_html_summary_keeps_existing_rows(tmp_path: Path) -> None:
+    summary = _base_summary(
+        page_count=4,
+        blocks_extracted=10,
+        blocks_translated=7,
+        cache_hits=5,
+        cache_misses=2,
+        overflow_blocks=1,
+        footnotes_reflowed=3,
+    )
+    report = _report_with_summary(summary, run_id="existing")
+
+    (html_path,) = write_report(report, tmp_path / "existing", report_format="html")
+    table = _summary_table(html_path.read_text("utf-8"))
+
+    assert "Pages</th><td>4</td>" in table
+    assert "Blocks</th><td>7/10</td>" in table
+    assert "Cache</th><td>5 hit / 2 miss</td>" in table
+    assert "Overflow</th><td>1</td>" in table
+    assert "Footnotes reflowed</th><td>3</td>" in table
+
+
+def test_html_summary_escapes_run_context(tmp_path: Path) -> None:
+    summary = _base_summary(inline_style_candidate_count=7)
+    report = _report_with_summary(summary, run_id="<b>run</b>")
+
+    (html_path,) = write_report(report, tmp_path / "escaping", report_format="html")
+    html = html_path.read_text("utf-8")
+
+    assert "<b>run</b>" not in html
+    assert "&lt;b&gt;run&lt;/b&gt;" in html
+    assert "Inline style candidates</th><td>7</td>" in _summary_table(html)
