@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-09-27
+updated: 2026-10-01
 tags:
 - development
 - tickets
@@ -13,6 +13,7 @@ sources:
 - ../../../.codex/PRE_TICKET_WORKFLOW.md
 - ../../../scripts/check.ps1
 - ../../../scripts/agent_cycle.py
+- ../../../scripts/pi_ticket_cycle.py
 - ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
 related:
 - ../index.md
@@ -60,6 +61,15 @@ launch agents, fetch, retry, merge, or create pull requests. PDFTR-33 is the exp
 exception in which Codex implemented the validator before the post-ticket role boundary existed.
 Recovery is conservative: invalid or corrupt state fails closed rather than being guessed or
 silently regenerated.
+
+`scripts/pi_ticket_cycle.py` automates that validated sequence for explicitly assigned tickets. It
+imports the validator rather than reimplementing it: it initializes or reuses a `NEW` cycle, runs
+the Pi implementer, validates the handoff and exact SHA from Git plus `agent_cycle`, runs a
+technically read-only Pi reviewer on that SHA, and records the reviewer JSON through
+`record-review`. It allows one fix/review retry with a required new SHA, stops on abnormal exit,
+a dirty tree, or malformed/wrong-SHA output, and returns control to the human after `PASS`,
+`BLOCKED`, or the two-round limit. Provider, model, and tool names are configuration; deterministic
+tests replace Pi and never contact providers or the network.
 
 ## Completion
 

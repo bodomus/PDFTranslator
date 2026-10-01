@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-28
+updated: 2026-10-01
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
 - ../../Tickets/PDFTR-34-human-readable-inline-style-diagnostics-summary.md
 - ../../Tickets/PDFTR-33-two-agent-ticket-handoff-contract-validator.md
 - ../../Tickets/PDFTR-32-safe-inline-style-runs.md
@@ -18,6 +19,15 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-01
+
+- Documented `scripts/pi_ticket_cycle.py`, the sequential Pi two-agent runner. The runner imports
+  `scripts/agent_cycle.py` as the unchanged workflow authority, sequences the Pi implementer and a
+  technically read-only Pi reviewer over an exact SHA, records reviewer JSON through the validator,
+  allows one fix/review retry with a required new SHA, and stops for human review. Provider, model,
+  and tool names remain configuration; the change does not touch the package, schemas, rendering,
+  translation, OCR, model, or cache boundaries.
 
 ## 2026-09-28
 

@@ -70,6 +70,24 @@ See [the two-agent workflow skill](.agents/skills/two-agent-ticket-workflow/SKIL
 recovery contracts. The tool records workflow state only; it does not launch agents, fetch, merge,
 or create pull requests. PDFTR-33 itself is the one explicitly authorized bootstrap exception.
 
+### One-command Pi runner
+
+`scripts/pi_ticket_cycle.py` automates the same sequence without changing the validator's
+authority:
+
+```powershell
+uv run python scripts/pi_ticket_cycle.py PDFTR-36
+```
+
+It imports `scripts/agent_cycle.py`, initializes or reuses a `NEW` cycle, runs a Pi implementer
+(default `deepseek / deepseek-v4-pro`), validates the handoff and exact SHA deterministically,
+starts a read-only Pi reviewer (default `openai-codex / gpt-6.1-sol` with `read,grep,find,ls`), and
+records the reviewer JSON through the validator. It supports at most one fix/review retry, stops on
+abnormal exit, a dirty tree, or malformed/wrong-SHA output, and never creates a pull request or
+merges. Provider, model, and tool names are configuration; `agent_cycle.py` remains the workflow
+authority, and the tests never invoke Pi, providers, or the network.
+
+
 Source-backed paragraph typography can be inspected without translation or rendering. The
 standalone developer command reports occurrence identity, role, dominant source style,
 confidence/provenance, geometry inference, and mixed-style flags; optional JSON output belongs
