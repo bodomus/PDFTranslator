@@ -66,6 +66,36 @@ PDFTR-35 — Pi sequential two-agent runner MVP.
   never invoke Pi, providers, network, models, CUDA, or OCR.
 - Updated `README.md`, `CHANGELOG.md`, and the affected Wiki pages and log.
 
+## Review round 1 remediation (implementation attempt 2)
+
+The read-only reviewer returned `CHANGES_REQUIRED` for SHA `0eee70ff` with six findings; all are
+addressed in this attempt:
+
+- **R1 (`_platform_command`)**: prompts are no longer passed on the command line. The full
+  multiline UTF-8 prompt is delivered on stdin, which Pi documents as prepended to the first prompt
+  and which also selects print mode. A Windows fake npm-style `.cmd` shim and a POSIX shim verify
+  exact delivery of a prompt larger than 8191 characters containing quotes, Cyrillic, and shell
+  metacharacters, without contacting providers.
+- **R2 (`_implementer_prompt`)**: both prompts now start with an explicit automatic-runner override
+  that supersedes the manual CLI transition steps in the referenced contracts. The implementer is
+  told the runner already called `begin-implementation` and owns `handoff`; the reviewer is told
+  the runner already called `begin-review` and owns `record-review`. Tests load the real repository
+  contracts and assert the prohibition and single transition per phase.
+- **R3 (`main`/`validate_reviewer_config`)**: reviewer tools are validated against a fixed
+  `READ_ONLY_TOOLS` allowlist before any ticket text, Git, or cycle-state work. Empty, writable,
+  and unknown tool sets are rejected through both the CLI and the direct `run_cycle` API, and an
+  explicit read-only `--tools` argument is always sent.
+- **R4 (`SubprocessExecutor.run`)**: children start in their own process group/session and
+  cancellation terminates the whole owned process tree with bounded terminate/kill escalation
+  (`taskkill /T` then `/F /T` on Windows; process-group `SIGTERM` then `SIGKILL` on POSIX). A real
+  spawned-descendant test asserts every descendant is gone before cancellation returns.
+- **R5 (`extract_review_json`)**: extraction now requires exactly one JSON object anywhere in the
+  output, rejects unmatched review delimiters, and rejects any extra bare object, so contradictory
+  sentinel/fence/bare results fail closed and stop the cycle with no review artifact.
+- **R6 (`run_cycle`)**: executable availability is preflighted before the cycle can claim an active
+  role, and any operational failure during an active phase is normalized through `stop_cycle` into
+  a deterministic stop with an actionable message and no orphaned `IMPLEMENTING`/`REVIEWING` role.
+
 ## Graph and source validation
 
 - Graphify findings: before the refresh the graph lacked `scripts/agent_cycle.py`; after
@@ -89,8 +119,9 @@ PDFTR-35 — Pi sequential two-agent runner MVP.
 
 ## Validation
 
-- Focused tests: `uv run pytest tests/test_pi_ticket_cycle.py --no-cov -q` — 28 passed. (`--no-cov`
-  avoids the repository-wide 80% coverage gate when running one file.)
+- Focused tests: `uv run pytest tests/test_pi_ticket_cycle.py --no-cov -q` — 48 passed. (`--no-cov`
+  avoids the repository-wide 80% coverage gate when running one file.) This includes a real
+  `SubprocessExecutor` prompt-transport test and a real process-tree cancellation test.
 - Full tests: `.\scripts\check.ps1` — `418 passed, 1 skipped`, total coverage 89.10%.
 - Ruff format: `271 files already formatted`.
 - Ruff lint: `All checks passed!`.

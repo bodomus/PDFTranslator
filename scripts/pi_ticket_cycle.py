@@ -8,10 +8,11 @@ state. Concrete provider and model names are configuration, never workflow conce
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
-import re
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -38,12 +39,14 @@ from scripts.agent_cycle import (  # noqa: E402
 
 REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
 REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
-_JSON_FENCE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+
+# The reviewer is technically read-only: only these tools may ever be granted.
+READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls"})
 
 IMPLEMENTER_FALLBACK = (
     "The implementer is the only repository writer. Implement the ticket, add tests, run the "
-    "quality gate, commit, push, and record the implementer handoff. Never claim checks passed "
-    "unless they actually ran."
+    "quality gate, commit, push, and prepare the handoff input. Never claim checks passed unless "
+    "they actually ran."
 )
 REVIEWER_FALLBACK = (
     "The reviewer is strictly read-only. Do not modify, create, delete, commit, or push anything. "
@@ -106,11 +109,36 @@ class RunOutcome:
 class PiExecutor(Protocol):
     """Runs one Pi child process and returns its captured result."""
 
-    def run(self, command: Sequence[str], *, cwd: Path, log_path: Path) -> CommandResult: ...
+    def ensure_available(self) -> None: ...
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: Path,
+        log_path: Path,
+        stdin_text: str,
+    ) -> CommandResult: ...
+
+
+def validate_reviewer_config(config: RunnerConfig) -> None:
+    """Reject any reviewer configuration that is not explicitly read-only."""
+    tools = config.reviewer.tools
+    if not tools:
+        raise RunnerError("reviewer tools must be a non-empty read-only allowlist")
+    unknown = sorted(set(tools) - READ_ONLY_TOOLS)
+    if unknown:
+        raise RunnerError(
+            f"reviewer tools must stay within {sorted(READ_ONLY_TOOLS)}; rejected: {unknown}"
+        )
 
 
 def resolve_executable(name: str) -> str:
     """Resolve a configured executable through PATH or fail with actionable guidance."""
+    if os.path.dirname(name):
+        candidate = Path(name)
+        if candidate.is_file():
+            return str(candidate.resolve())
     resolved = shutil.which(name)
     if resolved is None:
         raise RunnerError(
@@ -136,35 +164,83 @@ def _platform_command(executable: str, arguments: Sequence[str]) -> list[str]:
     return [executable, *arguments]
 
 
+def _group_popen_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _taskkill(pid: int, *, force: bool) -> None:
+    arguments = ["taskkill", "/T", "/PID", str(pid)]
+    if force:
+        arguments.insert(1, "/F")
+    subprocess.run(arguments, capture_output=True, text=True, check=False)
+
+
+def _signal_group(pid: int, signum: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(os.getpgid(pid), signum)
+
+
+def _terminate_process_tree(process: subprocess.Popen[str], grace_seconds: float) -> None:
+    """Terminate an entire owned process tree with bounded terminate/kill escalation."""
+    if os.name == "nt":
+        _taskkill(process.pid, force=False)
+        try:
+            process.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            _taskkill(process.pid, force=True)
+            process.wait()
+        else:
+            _taskkill(process.pid, force=True)
+        return
+    _signal_group(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        _signal_group(process.pid, signal.SIGKILL)
+        process.wait()
+    else:
+        _signal_group(process.pid, signal.SIGKILL)
+
+
 @dataclass
 class SubprocessExecutor:
-    """Standard-library Pi executor with strict process handling and diagnostic logging."""
+    """Standard-library Pi executor with tree cancellation and diagnostic logging."""
 
+    executable: str = "pi"
     grace_seconds: float = 10.0
 
-    def run(self, command: Sequence[str], *, cwd: Path, log_path: Path) -> CommandResult:
+    def ensure_available(self) -> None:
+        resolve_executable(self.executable)
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: Path,
+        log_path: Path,
+        stdin_text: str,
+    ) -> CommandResult:
         resolved = resolve_executable(command[0])
         actual = _platform_command(resolved, list(command[1:]))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         process = subprocess.Popen(
             actual,
             cwd=cwd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             shell=False,
+            **_group_popen_kwargs(),
         )
         try:
-            stdout, stderr = process.communicate()
+            stdout, stderr = process.communicate(input=stdin_text)
         except KeyboardInterrupt as error:
-            process.terminate()
-            try:
-                process.wait(timeout=self.grace_seconds)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _terminate_process_tree(process, self.grace_seconds)
             raise RunnerCancelled("active Pi child process was cancelled") from error
         _write_log(log_path, command, stdout, stderr)
         return CommandResult(process.returncode, stdout, stderr)
@@ -194,40 +270,46 @@ def _write_log(log_path: Path, command: Sequence[str], stdout: str, stderr: str)
     log_path.write_text(content, encoding="utf-8")
 
 
-def _pi_command(config: RoleConfig, prompt: str, executable: str) -> list[str]:
-    command = [executable, "--provider", config.provider, "--model", config.model]
+def _pi_arguments(config: RoleConfig, executable: str) -> list[str]:
+    arguments = [executable, "--provider", config.provider, "--model", config.model]
     if config.tools:
-        command.extend(["--tools", ",".join(config.tools)])
-    command.extend(["-p", prompt])
-    return command
+        arguments.extend(["--tools", ",".join(config.tools)])
+    arguments.append("-p")
+    return arguments
 
 
 def extract_review_json(stdout: str) -> dict[str, Any]:
-    """Extract exactly one unambiguous reviewer JSON object or fail closed."""
-    candidates = _sentinel_candidates(stdout)
-    if not candidates:
-        candidates = [match.group(1).strip() for match in _JSON_FENCE.finditer(stdout)]
-    if not candidates:
-        stripped = stdout.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            candidates = [stripped]
-    if len(candidates) != 1:
-        raise RunnerError(f"expected exactly one reviewer JSON result, found {len(candidates)}")
-    try:
-        document = json.loads(candidates[0])
-    except json.JSONDecodeError as error:
-        raise RunnerError(f"reviewer result is not valid JSON: {error}") from error
-    if not isinstance(document, dict):
-        raise RunnerError("reviewer result JSON must be an object")
-    return document
+    """Extract exactly one unambiguous reviewer JSON object or fail closed.
+
+    The prompt is delivered on stdin and Pi may wrap the result; accept exactly one JSON
+    object anywhere in the output. Any second object, or an unmatched review delimiter,
+    fails closed so a contradictory verdict can never be recorded.
+    """
+    if stdout.count(REVIEW_SENTINEL_BEGIN) != stdout.count(REVIEW_SENTINEL_END):
+        raise RunnerError("reviewer output has unmatched review delimiters")
+    objects = _json_objects(stdout)
+    if len(objects) != 1:
+        raise RunnerError(f"expected exactly one reviewer JSON result, found {len(objects)}")
+    return objects[0]
 
 
-def _sentinel_candidates(stdout: str) -> list[str]:
-    pattern = re.compile(
-        re.escape(REVIEW_SENTINEL_BEGIN) + r"(.*?)" + re.escape(REVIEW_SENTINEL_END),
-        re.DOTALL,
-    )
-    return [match.group(1).strip() for match in pattern.finditer(stdout)]
+def _json_objects(text: str) -> list[dict[str, Any]]:
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    index = 0
+    while index < len(text):
+        start = text.find("{", index)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+        index = end
+    return objects
 
 
 def _load_ticket_text(repo_root: Path, ticket: str) -> str:
@@ -282,6 +364,14 @@ def _implementer_prompt(
         f"You are the implementer for ticket {ticket} (attempt {attempt}).",
         "You are the only role permitted to modify project files, commit, or push.",
         "",
+        "## Automated runner override (takes precedence over the contract below)",
+        "The runner has already entered the implementer phase via scripts/agent_cycle.py.",
+        "- Do NOT run scripts/agent_cycle.py or any begin-implementation, handoff, begin-review,",
+        "  record-review, or stop transition. The runner owns every phase transition.",
+        "- Do NOT modify anything under .agent-cycle/.",
+        "- Only implement, test, commit, push, and prepare your handoff input, then exit.",
+        "Any manual transition command in the reference contract below is superseded.",
+        "",
         "## Ticket",
         ticket_text.strip(),
         "",
@@ -289,7 +379,7 @@ def _implementer_prompt(
         "Follow AGENTS.md and .codex/PRE_TICKET_WORKFLOW.md. Preserve unrelated user changes.",
         "Keep scope ticket-focused and add or update tests for every behavior change.",
         "",
-        "## Implementer contract",
+        "## Implementer contract (reference; manual transition steps are superseded)",
         contract.strip(),
         "",
         "## Current cycle context",
@@ -358,13 +448,21 @@ def _reviewer_prompt(
     return "\n".join(
         [
             f"You are the read-only reviewer for ticket {ticket}, review round {review_round}.",
-            "READ-ONLY: do not modify, create, delete, commit, push, or run commands that write.",
+            "",
+            "## Automated runner override (takes precedence over the contract below)",
+            "The runner has already entered the review phase via scripts/agent_cycle.py and owns",
+            "record-review. You are strictly read-only and must not run any transition.",
+            "- Do NOT run scripts/agent_cycle.py or any begin-review, record-review, or stop.",
+            "- Do NOT modify, create, delete, commit, push, or run any command that writes.",
+            "- Return only the single JSON object described below.",
+            "Any manual transition command in the reference contract below is superseded.",
+            "",
             f"Exact reviewed SHA: {reviewed_sha}",
             "",
             "## Ticket and acceptance criteria",
             ticket_text.strip(),
             "",
-            "## Reviewer contract",
+            "## Reviewer contract (reference; manual transition steps are superseded)",
             contract.strip(),
             "",
             "## Required output",
@@ -393,6 +491,23 @@ def _abort(repo_root: Path, ticket: str, reason: str) -> NoReturn:
     except CycleError as error:
         raise RunnerError(f"{message} (failed to record stop: {error})") from error
     raise RunnerError(message)
+
+
+def _execute_child(
+    executor: PiExecutor,
+    command: Sequence[str],
+    *,
+    repo_root: Path,
+    ticket: str,
+    log_path: Path,
+    stdin_text: str,
+) -> CommandResult:
+    try:
+        return executor.run(command, cwd=repo_root, log_path=log_path, stdin_text=stdin_text)
+    except RunnerCancelled:
+        raise
+    except Exception as error:  # noqa: BLE001 - normalize any operational failure into a clean stop
+        _abort(repo_root, ticket, f"Pi process failure: {error}")
 
 
 def _require_clean_tree(repo_root: Path, ticket: str, base_branch: str, role: str) -> None:
@@ -446,7 +561,9 @@ def run_cycle(
     """Drive the sequential Pi cycle for one ticket; return the terminal outcome."""
     active_config = config or RunnerConfig()
     ticket = validate_ticket_id(ticket)
+    validate_reviewer_config(active_config)
     repo_root = repo_root.resolve()
+    executor.ensure_available()
     if ticket_text is None:
         ticket_text = _load_ticket_text(repo_root, ticket)
     implementer_contract = _load_contract(
@@ -487,13 +604,13 @@ def run_cycle(
                 findings=findings,
                 handoff_path=_handoff_path(directory),
             )
-            implementer_command = _pi_command(
-                active_config.implementer, implementer_prompt, active_config.executable
-            )
-            implementer_result = executor.run(
-                implementer_command,
-                cwd=repo_root,
+            implementer_result = _execute_child(
+                executor,
+                _pi_arguments(active_config.implementer, active_config.executable),
+                repo_root=repo_root,
+                ticket=ticket,
                 log_path=directory / f"pi-implementer-round-{attempt}.log",
+                stdin_text=implementer_prompt,
             )
             if implementer_result.returncode != 0:
                 _abort(
@@ -517,13 +634,13 @@ def run_cycle(
                 reviewed_sha=reviewed_sha,
                 review_round=review_round,
             )
-            reviewer_command = _pi_command(
-                active_config.reviewer, reviewer_prompt, active_config.executable
-            )
-            reviewer_result = executor.run(
-                reviewer_command,
-                cwd=repo_root,
+            reviewer_result = _execute_child(
+                executor,
+                _pi_arguments(active_config.reviewer, active_config.executable),
+                repo_root=repo_root,
+                ticket=ticket,
                 log_path=directory / f"pi-reviewer-round-{review_round}.log",
+                stdin_text=reviewer_prompt,
             )
             if reviewer_result.returncode != 0:
                 _abort(
@@ -546,6 +663,8 @@ def run_cycle(
             if manifest["state"] == "CHANGES_REQUIRED":
                 continue
             return _outcome(manifest, active_config)
+    except KeyboardInterrupt:
+        _abort(repo_root, ticket, "cancelled by user")
     except RunnerCancelled as error:
         _abort(repo_root, ticket, f"cancelled: {error}")
     except CycleError as error:
@@ -610,7 +729,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
         outcome = run_cycle(
             root,
             arguments.ticket,
-            executor=SubprocessExecutor(),
+            executor=SubprocessExecutor(arguments.pi_executable),
             config=config,
             ticket_text=ticket_text,
         )

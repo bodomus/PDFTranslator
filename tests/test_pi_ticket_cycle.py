@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
+import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from uuid import uuid4
@@ -13,15 +16,22 @@ from scripts.pi_ticket_cycle import (
     REVIEW_SENTINEL_BEGIN,
     REVIEW_SENTINEL_END,
     CommandResult,
+    RoleConfig,
     RunnerCancelled,
     RunnerConfig,
     RunnerError,
+    SubprocessExecutor,
+    _group_popen_kwargs,
+    _terminate_process_tree,
     extract_review_json,
+    main,
     resolve_executable,
     run_cycle,
+    validate_reviewer_config,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+CONTRACT_SOURCE = REPOSITORY_ROOT / ".agents" / "skills" / "two-agent-ticket-workflow"
 BASE_BRANCH = "master"
 TASK_BRANCH = "pi/PDFTR-35-test"
 TICKET = "PDFTR-35"
@@ -55,7 +65,11 @@ def git_repo() -> Iterator[Path]:
             "# Ticket\n\nAcceptance criteria: the cycle stops for human review.\n",
             encoding="utf-8",
         )
-        _git(root, "add", ".gitignore", "tracked.txt", f"Tickets/{TICKET}-test-ticket.md")
+        contract_dir = root / ".agents" / "skills" / "two-agent-ticket-workflow"
+        contract_dir.mkdir(parents=True)
+        for name in ("IMPLEMENTER_CONTRACT.md", "REVIEWER_CONTRACT.md"):
+            shutil.copyfile(CONTRACT_SOURCE / name, contract_dir / name)
+        _git(root, "add", ".")
         _git(root, "commit", "-m", "initial")
         _git(root, "switch", "-c", TASK_BRANCH)
         yield root
@@ -97,7 +111,7 @@ class FakePi:
 
     def __init__(self, repo: Path) -> None:
         self.repo = repo
-        self.commands: list[tuple[str, ...]] = []
+        self.invocations: list[tuple[tuple[str, ...], str]] = []
         self.implementer_runs = 0
         self.reviewer_runs = 0
         self.implementer_exit = 0
@@ -109,14 +123,31 @@ class FakePi:
         self.dirty_after_implementer = False
         self.cancel_implementer = False
         self.cancel_reviewer = False
+        self.run_raises: Exception | None = None
         self.reviewer_stdout_override: str | None = None
         self.reviewer_payload_overrides: dict[int, dict[str, object]] = {}
 
-    def run(self, command: Sequence[str], *, cwd: Path, log_path: Path) -> CommandResult:
+    @property
+    def commands(self) -> list[tuple[str, ...]]:
+        return [command for command, _stdin in self.invocations]
+
+    def ensure_available(self) -> None:
+        return None
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: Path,
+        log_path: Path,
+        stdin_text: str,
+    ) -> CommandResult:
         captured = tuple(str(part) for part in command)
-        self.commands.append(captured)
+        self.invocations.append((captured, stdin_text))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("fake pi log\n", encoding="utf-8")
+        if self.run_raises is not None:
+            raise self.run_raises
         role = _provider(captured)
         if role == "deepseek":
             return self._implementer()
@@ -224,8 +255,10 @@ def test_changes_required_then_new_sha_then_round_two_pass(git_repo: Path) -> No
     assert outcome.state == "PASSED"
     assert fake.implementer_runs == 2
     assert fake.reviewer_runs == 2
-    prompts = [command[-1] for command in fake.commands if _provider(command) == "deepseek"]
-    assert "R1" in prompts[1]
+    implementer_prompts = [
+        stdin for command, stdin in fake.invocations if _provider(command) == "deepseek"
+    ]
+    assert "R1" in implementer_prompts[1]
     review_1 = json.loads((cycle_directory(git_repo, TICKET) / "review-1.json").read_text("utf-8"))
     review_2 = json.loads((cycle_directory(git_repo, TICKET) / "review-2.json").read_text("utf-8"))
     assert review_1["reviewed_sha"] != review_2["reviewed_sha"]
@@ -394,6 +427,250 @@ def test_agent_cycle_remains_the_transition_authority(git_repo: Path) -> None:
     assert handoff["implementer"]["status"] == "COMPLETE"
     assert handoff["reviewer"]["verdict"] == "PASS"
     assert handoff["reviewer"]["reviewed_sha"] == outcome.implementation_sha
+
+
+# --- R2: prompts supersede manual transitions ----------------------------------------------
+
+
+def test_prompts_supersede_manual_transitions(git_repo: Path) -> None:
+    fake = FakePi(git_repo)
+
+    outcome = _run(git_repo, fake)
+
+    implementer_prompt = fake.invocations[0][1]
+    reviewer_prompt = fake.invocations[1][1]
+    assert "Automated runner override" in implementer_prompt
+    assert "Automated runner override" in reviewer_prompt
+    assert "Do NOT run scripts/agent_cycle.py" in implementer_prompt
+    assert "Do NOT run scripts/agent_cycle.py" in reviewer_prompt
+    assert "begin-implementation" in implementer_prompt
+    assert "record-review" in reviewer_prompt
+    assert "read-only" in reviewer_prompt.lower()
+    assert outcome.review_rounds == 1
+    assert fake.implementer_runs == 1
+    assert fake.reviewer_runs == 1
+    assert cycle_status(git_repo, TICKET)["review_round"] == 1
+
+
+# --- R3: reviewer read-only configuration ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [(), ("read", "bash"), ("write",), ("read", "unknown"), ("",), ("read", "edit", "write")],
+)
+def test_unsafe_reviewer_tools_rejected_before_state(
+    git_repo: Path, tools: tuple[str, ...]
+) -> None:
+    config = RunnerConfig(
+        reviewer=RoleConfig("openai-codex", "gpt-6.1-sol", tools), base_branch=BASE_BRANCH
+    )
+    fake = FakePi(git_repo)
+
+    with pytest.raises(RunnerError, match="reviewer tools"):
+        run_cycle(git_repo, TICKET, executor=fake, config=config)
+
+    assert fake.invocations == []
+    assert not (git_repo / ".agent-cycle").exists()
+
+
+def test_safe_reviewer_config_is_accepted() -> None:
+    validate_reviewer_config(_config())
+
+
+@pytest.mark.parametrize("value", ["", "read,bash", "read,write,edit", "unknown"])
+def test_cli_rejects_unsafe_reviewer_tools(git_repo: Path, value: str) -> None:
+    code = main(
+        [TICKET, "--reviewer-tools", value, "--repo-root", str(git_repo), "--base-branch", "master"]
+    )
+
+    assert code == 1
+    assert not (git_repo / ".agent-cycle").exists()
+
+
+# --- R1: prompt transport -------------------------------------------------------------------
+
+
+def _make_stdin_capture_shim(directory: Path, capture: Path) -> str:
+    script = directory / "capture.py"
+    script.write_text(
+        "import pathlib, sys\npathlib.Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        shim = directory / "pi-fake.cmd"
+        shim.write_text(
+            f'@ECHO off\r\n"{sys.executable}" "{script}" "{capture}" %*\r\n',
+            encoding="utf-8",
+        )
+        return str(shim)
+    shim = directory / "pi-fake.sh"
+    shim.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "{script}" "{capture}" "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return str(shim)
+
+
+def test_subprocess_executor_preserves_large_multiline_prompt(tmp_path: Path) -> None:
+    capture = tmp_path / "captured.txt"
+    shim = _make_stdin_capture_shim(tmp_path, capture)
+    prompt = "Quotes 'single' \"double\" metacharacters & | < > ^ %PATH% $VAR `tick`\n" + (
+        "Юникод-строка проверки транспорта промпта. " * 400
+    )
+    assert len(prompt) > 8191
+
+    executor = SubprocessExecutor(shim)
+    result = executor.run(
+        [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+        cwd=tmp_path,
+        log_path=tmp_path / "log.txt",
+        stdin_text=prompt,
+    )
+
+    assert result.returncode == 0
+    assert capture.read_text(encoding="utf-8") == prompt
+
+
+# --- R4: process-tree cancellation ----------------------------------------------------------
+
+
+def _pid_exists(pid: int) -> bool:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_terminate_process_tree_reaps_descendants(tmp_path: Path) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "open(sys.argv[1], 'w').write(str(child.pid))\n"
+        "time.sleep(120)\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        [sys.executable, str(parent_script), str(child_pid_file)],
+        **_group_popen_kwargs(),
+    )
+    try:
+        deadline = time.time() + 30
+        while not child_pid_file.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        assert child_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+
+        _terminate_process_tree(process, 5.0)
+
+        assert process.poll() is not None
+        deadline = time.time() + 15
+        while _pid_exists(child_pid) and time.time() < deadline:
+            time.sleep(0.1)
+        assert not _pid_exists(child_pid)
+    finally:
+        if process.poll() is None:
+            _terminate_process_tree(process, 1.0)
+
+
+# --- R5: single unambiguous reviewer result -------------------------------------------------
+
+
+def test_extract_review_json_rejects_sentinel_and_fence_conflict() -> None:
+    passing = {"schema_version": "1.0", "verdict": "PASS"}
+    failing = {"schema_version": "1.0", "verdict": "CHANGES_REQUIRED"}
+    stdout = (
+        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
+        f"```json\n{json.dumps(failing)}\n```\n"
+    )
+
+    with pytest.raises(RunnerError, match="exactly one reviewer JSON"):
+        extract_review_json(stdout)
+
+
+def test_extract_review_json_rejects_unmatched_delimiters() -> None:
+    passing = {"schema_version": "1.0", "verdict": "PASS"}
+    stdout = f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n"
+
+    with pytest.raises(RunnerError, match="unmatched review delimiters"):
+        extract_review_json(stdout)
+
+
+def test_extract_review_json_rejects_bare_extra_object() -> None:
+    passing = {"schema_version": "1.0", "verdict": "PASS"}
+    failing = {"schema_version": "1.0", "verdict": "CHANGES_REQUIRED"}
+    stdout = (
+        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
+        f"Also consider: {json.dumps(failing)}\n"
+    )
+
+    with pytest.raises(RunnerError, match="exactly one reviewer JSON"):
+        extract_review_json(stdout)
+
+
+def test_ambiguous_reviewer_output_stops_without_pass_artifact(git_repo: Path) -> None:
+    fake = FakePi(git_repo)
+    passing = {
+        "schema_version": "1.0",
+        "ticket": TICKET,
+        "review_round": 1,
+        "reviewed_sha": _git(git_repo, "rev-parse", "HEAD"),
+        "verdict": "PASS",
+        "findings": [],
+        "blocked_reason": None,
+    }
+    failing = dict(passing, verdict="CHANGES_REQUIRED", findings=[_finding("R1")])
+    fake.reviewer_stdout_override = (
+        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
+        f"```json\n{json.dumps(failing)}\n```\n"
+    )
+
+    with pytest.raises(RunnerError, match="reviewer output rejected"):
+        _run(git_repo, fake)
+
+    assert fake.reviewer_runs == 1
+    assert _state(git_repo) == "STOPPED"
+    assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
+
+
+# --- R6: operational failures fail closed ---------------------------------------------------
+
+
+def test_missing_executable_does_not_claim_active_role(git_repo: Path) -> None:
+    with pytest.raises(RunnerError, match="not found on PATH"):
+        run_cycle(
+            git_repo,
+            TICKET,
+            executor=SubprocessExecutor("pdftr-missing-pi-executable"),
+            config=_config(),
+        )
+
+    assert not (git_repo / ".agent-cycle").exists()
+
+
+def test_executor_operational_failure_stops_active_phase(git_repo: Path) -> None:
+    fake = FakePi(git_repo)
+    fake.run_raises = OSError("spawn failed")
+
+    with pytest.raises(RunnerError, match="Pi process failure"):
+        _run(git_repo, fake)
+
+    assert fake.reviewer_runs == 0
+    assert _state(git_repo) == "STOPPED"
 
 
 # --- Extraction unit coverage ---------------------------------------------------------------

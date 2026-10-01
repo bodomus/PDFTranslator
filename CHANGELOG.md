@@ -36,10 +36,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `scripts/agent_cycle.py` (the unchanged workflow authority), runs a Pi implementer, validates the
   handoff and exact SHA deterministically, runs a technically read-only Pi reviewer, records the
   reviewer JSON through the validator, supports one fix/review retry with a required new SHA, and
-  stops for human review after `PASS`, `BLOCKED`, or the two-round limit. It fails closed on
-  abnormal exit, dirty tree, malformed or wrong-SHA output, cancels cleanly, and never opens a pull
-  request or merges. Provider/model/tool names are configuration, and deterministic tests never
-  invoke real providers.
+  stops for human review after `PASS`, `BLOCKED`, or the two-round limit. Prompts are delivered on
+  stdin so large multilingual prompts are not subject to Windows command-line limits; reviewer tool
+  configuration is validated against a fixed read-only allowlist before any state change; the
+  reviewer result must be a single unambiguous JSON object; cancellation terminates the whole
+  owned process tree; and ordinary process failures stop the active phase cleanly. Provider, model,
+  and tool names are configuration, and deterministic tests never invoke real providers.
 - Added an inline-style summary to the human-readable HTML diagnostic report. The report table now
   exposes inline-style candidate, applied, deferred, and applied-character counts directly from
   `ReportSummary`, with explicit zero rows and no change to the embedded JSON, rendering behavior,
