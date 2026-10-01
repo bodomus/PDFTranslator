@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Hardened `scripts/pi_ticket_cycle.py` against the PDFTR-35A safety findings. Implementer prompts
+  now permit exactly the role-owned handoff input while protecting validator-owned coordination
+  files and the contracts no longer tell a read-only reviewer to write one; cancellation and any
+  post-spawn failure terminate and verify the whole owned process tree via a Windows Job Object or a
+  saved POSIX process group; the reviewer parser requires exactly one supported JSON envelope and
+  rejects malformed, truncated, array-wrapped, extra, or reversed-delimiter results; and operational
+  failures reap children before the cycle records a stop. `scripts/agent_cycle.py` also accepts
+  suffixed follow-up ticket IDs such as `PDFTR-35A`.
 - Deferred repeated inline-style tokens unless both source and translated text contain exactly one
   occurrence, and made PyMuPDF heading-orphan checks count physical rendered lines instead of
   deriving logical lines from inline-inflated height.

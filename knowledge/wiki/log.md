@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
 - ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
 - ../../Tickets/PDFTR-34-human-readable-inline-style-diagnostics-summary.md
 - ../../Tickets/PDFTR-33-two-agent-ticket-handoff-contract-validator.md
@@ -22,6 +23,11 @@ related:
 
 ## 2026-10-01
 
+- Hardened the Pi two-agent runner after the PDFTR-35A safety findings: role ownership is
+  consistent (implementer writes only its handoff input, read-only reviewer returns JSON on stdout,
+  runner persists validated output), cancellation and post-spawn failures terminate the whole owned
+  process tree through a Windows Job Object or a saved POSIX process group, and the reviewer parser
+  requires exactly one supported envelope and fails closed on malformed or contradictory output.
 - Documented `scripts/pi_ticket_cycle.py`, the sequential Pi two-agent runner. The runner imports
   `scripts/agent_cycle.py` as the unchanged workflow authority, sequences the Pi implementer and a
   technically read-only Pi reviewer over an exact SHA, records reviewer JSON through the validator,

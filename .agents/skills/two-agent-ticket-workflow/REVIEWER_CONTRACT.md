@@ -14,9 +14,9 @@ The reviewer is strictly read-only for ordinary post-PDFTR-33 agent-cycle ticket
 - Run only validation that cannot format, regenerate, update, or otherwise modify project files.
 - Do not edit source, tests, docs, Wiki, plans, reports, or `reviews/`.
 - Do not commit, amend, push, reset, stash, rebase, switch task branches, or resolve conflicts.
-- The only permitted result is a structured reviewer input for the validator. If the execution
-  environment cannot create that ignored coordination input safely, return the same JSON on stdout
-  for a system runner to persist.
+- You never write a coordination file. Return exactly one structured JSON object on stdout, where
+  the runner specifies. The runner persists that output into the ignored `.agent-cycle/<TICKET>/`
+  runtime area and passes it to the validator.
 
 ## Result
 
@@ -24,7 +24,10 @@ The reviewer is strictly read-only for ordinary post-PDFTR-33 agent-cycle ticket
 - Bind `reviewed_sha` to the exact SHA supplied at review start.
 - `PASS` has no findings. `CHANGES_REQUIRED` has concrete machine-readable findings and required
   fixes. `BLOCKED` has a machine-readable reason.
-- Record with `uv run python scripts/agent_cycle.py record-review <TICKET> --file <REVIEWER-JSON>` and
-  stop. The validator rejects any repository mutation during the review window.
+- When an automated runner drives the cycle, it executes `begin-review` before this role starts and
+  `record-review` after it exits; do not run any `agent_cycle.py` transition yourself. Only a manual
+  human workflow records the result with
+  `uv run python scripts/agent_cycle.py record-review <TICKET> --file <REVIEWER-JSON>`, and the
+  validator rejects any repository mutation during the review window.
 
 A new implementation commit invalidates the old review. Never reuse an earlier PASS for a new HEAD.

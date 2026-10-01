@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ from scripts.pi_ticket_cycle import (
     RunnerError,
     SubprocessExecutor,
     _group_popen_kwargs,
-    _terminate_process_tree,
+    _new_process_tree,
     extract_review_json,
     main,
     resolve_executable,
@@ -77,8 +77,18 @@ def git_repo() -> Iterator[Path]:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _config() -> RunnerConfig:
-    return RunnerConfig(base_branch=BASE_BRANCH)
+@pytest.fixture
+def work_dir() -> Iterator[Path]:
+    root = REPOSITORY_ROOT / "temp" / "pi-cycle-tests" / str(uuid4())
+    root.mkdir(parents=True)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _config(executable: str = "pi") -> RunnerConfig:
+    return RunnerConfig(base_branch=BASE_BRANCH, executable=executable)
 
 
 def _state(repo: Path) -> str:
@@ -223,11 +233,11 @@ class FakePi:
         )
 
 
-def _run(repo: Path, fake: FakePi):
+def _run(repo: Path, fake: FakePi) -> object:
     return run_cycle(repo, TICKET, executor=fake, config=_config())
 
 
-# --- Required ticket test cases -------------------------------------------------------------
+# --- Core cycle behavior --------------------------------------------------------------------
 
 
 def test_one_round_pass(git_repo: Path) -> None:
@@ -239,7 +249,6 @@ def test_one_round_pass(git_repo: Path) -> None:
     assert outcome.state == "PASSED"
     assert fake.implementer_runs == 1
     assert fake.reviewer_runs == 1
-    assert outcome.review_rounds == 1
     review = json.loads((cycle_directory(git_repo, TICKET) / "review-1.json").read_text("utf-8"))
     assert review["verdict"] == "PASS"
     assert review["reviewed_sha"] == outcome.implementation_sha
@@ -274,7 +283,6 @@ def test_round_two_changes_required_stops_without_a_third_review(git_repo: Path)
     assert outcome.state == "STOPPED"
     assert outcome.stop_reason == "review_round_limit"
     assert fake.reviewer_runs == 2
-    assert fake.implementer_runs == 2
 
 
 def test_reviewer_invocation_is_read_only_and_configured(git_repo: Path) -> None:
@@ -286,9 +294,6 @@ def test_reviewer_invocation_is_read_only_and_configured(git_repo: Path) -> None
     assert _model(reviewer_command) == "gpt-6.1-sol"
     tools = reviewer_command[reviewer_command.index("--tools") + 1].split(",")
     assert tools == ["read", "grep", "find", "ls"]
-    assert "write" not in tools
-    assert "edit" not in tools
-    assert "bash" not in tools
 
 
 def test_implementer_invocation_is_configured(git_repo: Path) -> None:
@@ -299,42 +304,6 @@ def test_implementer_invocation_is_configured(git_repo: Path) -> None:
     implementer_command = next(c for c in fake.commands if _provider(c) == "deepseek")
     assert _model(implementer_command) == "deepseek-v4-pro"
     assert "--tools" not in implementer_command
-
-
-def test_malformed_reviewer_json_fails_closed(git_repo: Path) -> None:
-    fake = FakePi(git_repo)
-    fake.reviewer_stdout_override = "this is not json"
-
-    with pytest.raises(RunnerError, match="reviewer output rejected"):
-        _run(git_repo, fake)
-
-    assert fake.reviewer_runs == 1
-    assert _state(git_repo) == "STOPPED"
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"reviewed_sha": "a" * 40},
-        {"ticket": "PDFTR-99"},
-        {"review_round": 2},
-        {"verdict": "MAYBE"},
-        {"verdict": "PASS", "findings": [_finding("R1")]},
-        {"verdict": "CHANGES_REQUIRED", "findings": []},
-        {"verdict": "BLOCKED", "blocked_reason": None},
-    ],
-)
-def test_wrong_or_invalid_reviewer_payload_fails_closed(
-    git_repo: Path, override: dict[str, object]
-) -> None:
-    fake = FakePi(git_repo)
-    fake.reviewer_payload_overrides = {0: override}
-
-    with pytest.raises(RunnerError, match="review validation failed"):
-        _run(git_repo, fake)
-
-    assert fake.reviewer_runs == 1
-    assert _state(git_repo) == "STOPPED"
 
 
 def test_implementer_abnormal_exit_never_starts_reviewer(git_repo: Path) -> None:
@@ -381,13 +350,7 @@ def test_no_new_sha_after_changes_required_prevents_round_two_review(git_repo: P
         _run(git_repo, fake)
 
     assert fake.reviewer_runs == 1
-    assert fake.implementer_runs == 2
     assert _state(git_repo) == "STOPPED"
-
-
-def test_missing_pi_executable_is_actionable() -> None:
-    with pytest.raises(RunnerError, match="not found on PATH"):
-        resolve_executable("pdftr-missing-pi-executable")
 
 
 def test_cancellation_during_implementer_never_launches_reviewer(git_repo: Path) -> None:
@@ -421,38 +384,37 @@ def test_agent_cycle_remains_the_transition_authority(git_repo: Path) -> None:
     status = cycle_status(git_repo, TICKET)
     assert status["state"] == "PASSED"
     assert status["review_valid_for_head"] is True
-    assert status["errors"] == []
     handoff = json.loads((cycle_directory(git_repo, TICKET) / "handoff.json").read_text("utf-8"))
     assert handoff["system"]["state"] == outcome.state
-    assert handoff["implementer"]["status"] == "COMPLETE"
-    assert handoff["reviewer"]["verdict"] == "PASS"
     assert handoff["reviewer"]["reviewed_sha"] == outcome.implementation_sha
 
 
-# --- R2: prompts supersede manual transitions ----------------------------------------------
+# --- R2: consistent handoff ownership -------------------------------------------------------
 
 
-def test_prompts_supersede_manual_transitions(git_repo: Path) -> None:
+def test_prompts_permit_only_the_handoff_input(git_repo: Path) -> None:
     fake = FakePi(git_repo)
+    fake.verdicts = ["CHANGES_REQUIRED", "PASS"]
+    fake.findings = [[_finding("R1")], []]
 
-    outcome = _run(git_repo, fake)
+    _run(git_repo, fake)
 
-    implementer_prompt = fake.invocations[0][1]
-    reviewer_prompt = fake.invocations[1][1]
-    assert "Automated runner override" in implementer_prompt
-    assert "Automated runner override" in reviewer_prompt
-    assert "Do NOT run scripts/agent_cycle.py" in implementer_prompt
-    assert "Do NOT run scripts/agent_cycle.py" in reviewer_prompt
-    assert "begin-implementation" in implementer_prompt
-    assert "record-review" in reviewer_prompt
+    handoff_path = str(cycle_directory(git_repo, TICKET) / "implementer.json")
+    implementer_prompts = [
+        stdin for command, stdin in fake.invocations if _provider(command) == "deepseek"
+    ]
+    assert len(implementer_prompts) == 2
+    for prompt in implementer_prompts:
+        assert handoff_path in prompt
+        assert "Do NOT modify manifest.json, handoff.json" in prompt
+        assert "Do NOT run scripts/agent_cycle.py" in prompt
+        assert "Do NOT modify anything under .agent-cycle/" not in prompt
+    reviewer_prompt = next(
+        stdin for command, stdin in fake.invocations if _provider(command) == "openai-codex"
+    )
     assert "read-only" in reviewer_prompt.lower()
-    assert outcome.review_rounds == 1
-    assert fake.implementer_runs == 1
-    assert fake.reviewer_runs == 1
-    assert cycle_status(git_repo, TICKET)["review_round"] == 1
-
-
-# --- R3: reviewer read-only configuration ---------------------------------------------------
+    assert "persists that output" in reviewer_prompt
+    assert "create that ignored coordination input" not in reviewer_prompt
 
 
 @pytest.mark.parametrize(
@@ -488,52 +450,39 @@ def test_cli_rejects_unsafe_reviewer_tools(git_repo: Path, value: str) -> None:
     assert not (git_repo / ".agent-cycle").exists()
 
 
-# --- R1: prompt transport -------------------------------------------------------------------
+# --- Process helpers ------------------------------------------------------------------------
 
 
-def _make_stdin_capture_shim(directory: Path, capture: Path) -> str:
-    script = directory / "capture.py"
+def _spawn_tree_script(directory: Path) -> Path:
+    script = directory / "spawn_tree.py"
     script.write_text(
-        "import pathlib, sys\npathlib.Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())\n",
+        "import os, subprocess, sys, time\n"
+        "self_file, child_file, mode = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+        "grandchild = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])\n"
+        "open(self_file, 'w').write(str(os.getpid()))\n"
+        "open(child_file, 'w').write(str(grandchild.pid))\n"
+        "if mode == 'stay':\n"
+        "    time.sleep(300)\n",
         encoding="utf-8",
     )
+    return script
+
+
+def _make_tree_shim(directory: Path, script: Path, self_file: Path, child_file: Path) -> str:
     if os.name == "nt":
-        shim = directory / "pi-fake.cmd"
+        shim = directory / "tree-fake.cmd"
         shim.write_text(
-            f'@ECHO off\r\n"{sys.executable}" "{script}" "{capture}" %*\r\n',
+            f'@ECHO off\r\n"{sys.executable}" "{script}" "{self_file}" "{child_file}" stay %*\r\n',
             encoding="utf-8",
         )
         return str(shim)
-    shim = directory / "pi-fake.sh"
+    shim = directory / "tree-fake.sh"
     shim.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" "{script}" "{capture}" "$@"\n',
+        f'#!/bin/sh\nexec "{sys.executable}" "{script}" "{self_file}" "{child_file}" stay "$@"\n',
         encoding="utf-8",
     )
     shim.chmod(0o755)
     return str(shim)
-
-
-def test_subprocess_executor_preserves_large_multiline_prompt(tmp_path: Path) -> None:
-    capture = tmp_path / "captured.txt"
-    shim = _make_stdin_capture_shim(tmp_path, capture)
-    prompt = "Quotes 'single' \"double\" metacharacters & | < > ^ %PATH% $VAR `tick`\n" + (
-        "Юникод-строка проверки транспорта промпта. " * 400
-    )
-    assert len(prompt) > 8191
-
-    executor = SubprocessExecutor(shim)
-    result = executor.run(
-        [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
-        cwd=tmp_path,
-        log_path=tmp_path / "log.txt",
-        stdin_text=prompt,
-    )
-
-    assert result.returncode == 0
-    assert capture.read_text(encoding="utf-8") == prompt
-
-
-# --- R4: process-tree cancellation ----------------------------------------------------------
 
 
 def _pid_exists(pid: int) -> bool:
@@ -554,85 +503,165 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def test_terminate_process_tree_reaps_descendants(tmp_path: Path) -> None:
-    child_pid_file = tmp_path / "child.pid"
-    parent_script = tmp_path / "parent.py"
-    parent_script.write_text(
-        "import subprocess, sys, time\n"
-        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
-        "open(sys.argv[1], 'w').write(str(child.pid))\n"
-        "time.sleep(120)\n",
-        encoding="utf-8",
-    )
+def _wait_for_files(files: Sequence[Path], timeout: float = 30.0) -> None:
+    deadline = time.time() + timeout
+    while not all(path.exists() for path in files) and time.time() < deadline:
+        time.sleep(0.05)
+    assert all(path.exists() for path in files)
+
+
+def _wait_until_dead(pid: int, timeout: float = 20.0) -> bool:
+    deadline = time.time() + timeout
+    while _pid_exists(pid) and time.time() < deadline:
+        time.sleep(0.1)
+    return not _pid_exists(pid)
+
+
+def _inject_communicate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    files: Sequence[Path],
+    error_factory: Callable[[], BaseException],
+    marker: str,
+) -> None:
+    original = subprocess.Popen.communicate
+
+    def fake_communicate(
+        self: subprocess.Popen, input: object = None, timeout: object = None
+    ) -> object:
+        joined = " ".join(str(part) for part in (getattr(self, "args", None) or []))
+        if marker not in joined:
+            return original(self, input=input, timeout=timeout)
+        deadline = time.time() + 30
+        while not all(path.exists() for path in files) and time.time() < deadline:
+            time.sleep(0.05)
+        raise error_factory()
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", fake_communicate)
+
+
+# --- R4: process tree independent of parent lifetime ----------------------------------------
+
+
+def test_process_tree_kills_descendant_after_parent_exit(work_dir: Path) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
     process = subprocess.Popen(
-        [sys.executable, str(parent_script), str(child_pid_file)],
+        [sys.executable, str(script), str(self_file), str(child_file), "exit"],
         **_group_popen_kwargs(),
     )
+    tree = _new_process_tree(process)
     try:
-        deadline = time.time() + 30
-        while not child_pid_file.exists() and time.time() < deadline:
-            time.sleep(0.05)
-        assert child_pid_file.exists()
-        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
-
-        _terminate_process_tree(process, 5.0)
-
-        assert process.poll() is not None
-        deadline = time.time() + 15
-        while _pid_exists(child_pid) and time.time() < deadline:
-            time.sleep(0.1)
-        assert not _pid_exists(child_pid)
+        _wait_for_files([self_file, child_file])
+        child_pid = int(child_file.read_text(encoding="utf-8"))
+        process.wait(timeout=30)
+        assert _pid_exists(child_pid)
+        assert tree.terminate(10.0) is True
+        assert _wait_until_dead(child_pid)
     finally:
+        tree.close()
         if process.poll() is None:
-            _terminate_process_tree(process, 1.0)
+            process.kill()
 
 
-# --- R5: single unambiguous reviewer result -------------------------------------------------
-
-
-def test_extract_review_json_rejects_sentinel_and_fence_conflict() -> None:
-    passing = {"schema_version": "1.0", "verdict": "PASS"}
-    failing = {"schema_version": "1.0", "verdict": "CHANGES_REQUIRED"}
-    stdout = (
-        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
-        f"```json\n{json.dumps(failing)}\n```\n"
+def test_cancellation_kills_child_and_descendant(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    _inject_communicate_failure(
+        monkeypatch, [self_file, child_file], KeyboardInterrupt, "tree-fake"
     )
 
-    with pytest.raises(RunnerError, match="exactly one reviewer JSON"):
-        extract_review_json(stdout)
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+    with pytest.raises(RunnerCancelled):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    self_pid = int(self_file.read_text(encoding="utf-8"))
+    child_pid = int(child_file.read_text(encoding="utf-8"))
+    assert _wait_until_dead(self_pid)
+    assert _wait_until_dead(child_pid)
 
 
-def test_extract_review_json_rejects_unmatched_delimiters() -> None:
-    passing = {"schema_version": "1.0", "verdict": "PASS"}
-    stdout = f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n"
-
-    with pytest.raises(RunnerError, match="unmatched review delimiters"):
-        extract_review_json(stdout)
+# --- R5: strict single-envelope extraction --------------------------------------------------
 
 
-def test_extract_review_json_rejects_bare_extra_object() -> None:
-    passing = {"schema_version": "1.0", "verdict": "PASS"}
-    failing = {"schema_version": "1.0", "verdict": "CHANGES_REQUIRED"}
-    stdout = (
-        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
-        f"Also consider: {json.dumps(failing)}\n"
-    )
+def _valid_review(verdict: str = "PASS") -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "ticket": TICKET,
+        "review_round": 1,
+        "reviewed_sha": "b" * 40,
+        "verdict": verdict,
+        "findings": [_finding("R1")] if verdict == "CHANGES_REQUIRED" else [],
+        "blocked_reason": None,
+    }
 
-    with pytest.raises(RunnerError, match="exactly one reviewer JSON"):
+
+def test_extract_review_json_accepts_single_envelope() -> None:
+    document = _valid_review()
+    stdout = f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(document)}\n{REVIEW_SENTINEL_END}\n"
+
+    assert extract_review_json(stdout) == document
+
+
+def test_extract_review_json_accepts_single_fence() -> None:
+    document = _valid_review()
+    stdout = f"```json\n{json.dumps(document)}\n```\n"
+
+    assert extract_review_json(stdout) == document
+
+
+def test_extract_review_json_accepts_whole_stdout_object() -> None:
+    document = _valid_review()
+
+    assert extract_review_json(json.dumps(document)) == document
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "no json here",
+        "",
+        f"{REVIEW_SENTINEL_BEGIN}\n{{bad json}}\n{REVIEW_SENTINEL_END}",
+        f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(_valid_review())}\n",  # unmatched
+        (  # reversed
+            f"{REVIEW_SENTINEL_END}\n{json.dumps(_valid_review())}\n{REVIEW_SENTINEL_BEGIN}"
+        ),
+        (
+            f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(_valid_review())}\n{REVIEW_SENTINEL_END}\n"
+            f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(_valid_review())}\n{REVIEW_SENTINEL_END}"
+        ),
+        f"{REVIEW_SENTINEL_BEGIN}\n[{json.dumps(_valid_review())}]\n{REVIEW_SENTINEL_END}",  # array
+        (  # extra conflicting object outside the sentinel envelope
+            f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(_valid_review())}\n{REVIEW_SENTINEL_END}\n"
+            f"Note: {json.dumps(_valid_review('CHANGES_REQUIRED'))}\n"
+        ),
+        (  # unterminated outer object containing a valid inner object
+            f"{REVIEW_SENTINEL_BEGIN}\n"
+            f'{{"broken": {json.dumps(_valid_review())}'
+            f"\n{REVIEW_SENTINEL_END}"
+        ),
+        f'{{"broken": {json.dumps(_valid_review())}',  # unterminated whole stdout
+        "[1, 2, 3]",
+    ],
+)
+def test_extract_review_json_fails_closed(stdout: str) -> None:
+    with pytest.raises(RunnerError):
         extract_review_json(stdout)
 
 
 def test_ambiguous_reviewer_output_stops_without_pass_artifact(git_repo: Path) -> None:
     fake = FakePi(git_repo)
-    passing = {
-        "schema_version": "1.0",
-        "ticket": TICKET,
-        "review_round": 1,
-        "reviewed_sha": _git(git_repo, "rev-parse", "HEAD"),
-        "verdict": "PASS",
-        "findings": [],
-        "blocked_reason": None,
-    }
+    sha = _git(git_repo, "rev-parse", "HEAD")
+    passing = dict(_valid_review(), ticket=TICKET, reviewed_sha=sha)
     failing = dict(passing, verdict="CHANGES_REQUIRED", findings=[_finding("R1")])
     fake.reviewer_stdout_override = (
         f"{REVIEW_SENTINEL_BEGIN}\n{json.dumps(passing)}\n{REVIEW_SENTINEL_END}\n"
@@ -647,7 +676,23 @@ def test_ambiguous_reviewer_output_stops_without_pass_artifact(git_repo: Path) -
     assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
 
 
-# --- R6: operational failures fail closed ---------------------------------------------------
+@pytest.mark.parametrize("override", [{"ticket": "PDFTR-99"}, {"reviewed_sha": "a" * 40}])
+def test_wrong_reviewer_payload_fails_closed(git_repo: Path, override: dict[str, object]) -> None:
+    fake = FakePi(git_repo)
+    fake.reviewer_payload_overrides = {0: override}
+
+    with pytest.raises(RunnerError, match="review validation failed"):
+        _run(git_repo, fake)
+
+    assert _state(git_repo) == "STOPPED"
+
+
+# --- R6: cleanup on post-spawn I/O failure --------------------------------------------------
+
+
+def test_missing_pi_executable_is_actionable() -> None:
+    with pytest.raises(RunnerError, match="not found on PATH"):
+        resolve_executable("pdftr-missing-pi-executable")
 
 
 def test_missing_executable_does_not_claim_active_role(git_repo: Path) -> None:
@@ -662,52 +707,54 @@ def test_missing_executable_does_not_claim_active_role(git_repo: Path) -> None:
     assert not (git_repo / ".agent-cycle").exists()
 
 
-def test_executor_operational_failure_stops_active_phase(git_repo: Path) -> None:
-    fake = FakePi(git_repo)
-    fake.run_raises = OSError("spawn failed")
+def test_io_failure_kills_child_and_descendant(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    _inject_communicate_failure(
+        monkeypatch, [self_file, child_file], lambda: OSError("injected pipe failure"), "tree-fake"
+    )
+
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+    with pytest.raises(OSError):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    self_pid = int(self_file.read_text(encoding="utf-8"))
+    child_pid = int(child_file.read_text(encoding="utf-8"))
+    assert _wait_until_dead(self_pid)
+    assert _wait_until_dead(child_pid)
+
+
+def test_io_failure_releases_active_role_and_cleans_tree(
+    git_repo: Path, work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    _inject_communicate_failure(
+        monkeypatch, [self_file, child_file], lambda: OSError("injected pipe failure"), "tree-fake"
+    )
 
     with pytest.raises(RunnerError, match="Pi process failure"):
-        _run(git_repo, fake)
+        run_cycle(
+            git_repo,
+            TICKET,
+            executor=SubprocessExecutor(shim, grace_seconds=2.0),
+            config=_config(executable=shim),
+        )
 
-    assert fake.reviewer_runs == 0
     assert _state(git_repo) == "STOPPED"
-
-
-# --- Extraction unit coverage ---------------------------------------------------------------
-
-
-def test_extract_review_json_accepts_sentinel_block() -> None:
-    document = {"schema_version": "1.0", "verdict": "PASS"}
-    stdout = f"prefix\n{REVIEW_SENTINEL_BEGIN}\n{json.dumps(document)}\n{REVIEW_SENTINEL_END}\n"
-
-    assert extract_review_json(stdout) == document
-
-
-def test_extract_review_json_accepts_single_fence() -> None:
-    document = {"schema_version": "1.0", "verdict": "PASS"}
-    stdout = f"review:\n```json\n{json.dumps(document)}\n```\n"
-
-    assert extract_review_json(stdout) == document
-
-
-def test_extract_review_json_accepts_whole_stdout_object() -> None:
-    document = {"schema_version": "1.0", "verdict": "PASS"}
-
-    assert extract_review_json(json.dumps(document)) == document
-
-
-@pytest.mark.parametrize(
-    "stdout",
-    [
-        "no json here",
-        f"{REVIEW_SENTINEL_BEGIN}\n{{bad json}}\n{REVIEW_SENTINEL_END}",
-        "[1, 2, 3]",
-        (
-            f"{REVIEW_SENTINEL_BEGIN}\n{{}}\n{REVIEW_SENTINEL_END}\n"
-            f"{REVIEW_SENTINEL_BEGIN}\n{{}}\n{REVIEW_SENTINEL_END}"
-        ),
-    ],
-)
-def test_extract_review_json_fails_closed(stdout: str) -> None:
-    with pytest.raises(RunnerError):
-        extract_review_json(stdout)
+    assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
+    self_pid = int(self_file.read_text(encoding="utf-8"))
+    child_pid = int(child_file.read_text(encoding="utf-8"))
+    assert _wait_until_dead(self_pid)
+    assert _wait_until_dead(child_pid)

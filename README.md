@@ -82,13 +82,18 @@ uv run python scripts/pi_ticket_cycle.py PDFTR-36
 It imports `scripts/agent_cycle.py`, initializes or reuses a `NEW` cycle, runs a Pi implementer
 (default `deepseek / deepseek-v4-pro`), validates the handoff and exact SHA deterministically,
 starts a read-only Pi reviewer (default `openai-codex / gpt-6.1-sol` with `read,grep,find,ls`), and
-records the reviewer JSON through the validator. Reviewer tool configuration must stay within the
-fixed read-only allowlist and is rejected before any cycle state changes; prompts are delivered on
-stdin so large multilingual prompts are not limited by Windows command lines. It supports at most
+records the reviewer JSON through the validator. The implementer may write project files and only
+its own handoff input; the reviewer returns one structured JSON object on stdout and never writes a
+coordination file — the runner persists that output into ignored `.agent-cycle` state. Reviewer tool
+configuration must stay within the fixed read-only allowlist and is rejected before any cycle state
+changes; prompts are delivered on stdin so large multilingual prompts are not limited by Windows
+command lines; and the runner requires exactly one unambiguous reviewer result. It supports at most
 one fix/review retry, requires a new SHA, and stops on abnormal exit, a dirty tree, a missing
-executable, cancellation, or malformed/ambiguous/wrong-SHA output. It never creates a pull request
-or merges. Provider, model, and tool names are configuration; `agent_cycle.py` remains the workflow
-authority, and the tests never invoke Pi, providers, or the network.
+executable, cancellation, malformed/ambiguous/wrong-SHA output, or any post-spawn I/O failure. A
+Job Object (Windows) or process group (POSIX) guarantees no Pi descendant survives the runner, on
+success or failure. It never creates a pull request or merges. Provider, model, and tool names are
+configuration; `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi,
+providers, or the network.
 
 
 Source-backed paragraph typography can be inspected without translation or rendering. The

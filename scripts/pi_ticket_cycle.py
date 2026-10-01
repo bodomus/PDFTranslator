@@ -11,10 +11,12 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +41,7 @@ from scripts.agent_cycle import (  # noqa: E402
 
 REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
 REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
+_JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```", re.DOTALL)
 
 # The reviewer is technically read-only: only these tools may ever be granted.
 READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls"})
@@ -177,36 +180,200 @@ def _taskkill(pid: int, *, force: bool) -> None:
     subprocess.run(arguments, capture_output=True, text=True, check=False)
 
 
-def _signal_group(pid: int, signum: int) -> None:
+def _signal_group(pgid: int, signum: int) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.killpg(os.getpgid(pid), signum)
+        os.killpg(pgid, signum)
 
 
-def _terminate_process_tree(process: subprocess.Popen[str], grace_seconds: float) -> None:
-    """Terminate an entire owned process tree with bounded terminate/kill escalation."""
-    if os.name == "nt":
-        _taskkill(process.pid, force=False)
-        try:
-            process.wait(timeout=grace_seconds)
-        except subprocess.TimeoutExpired:
-            _taskkill(process.pid, force=True)
-            process.wait()
-        else:
-            _taskkill(process.pid, force=True)
-        return
-    _signal_group(process.pid, signal.SIGTERM)
+def _group_exists(pgid: int) -> bool:
     try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        _signal_group(process.pid, signal.SIGKILL)
-        process.wait()
-    else:
-        _signal_group(process.pid, signal.SIGKILL)
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
+    import ctypes
+    from ctypes import wintypes
+
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class _BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_void_p),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    class _BasicAccountingInformation(ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", wintypes.LARGE_INTEGER),
+            ("TotalKernelTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalUserTime", wintypes.LARGE_INTEGER),
+            ("ThisPeriodTotalKernelTime", wintypes.LARGE_INTEGER),
+            ("TotalPageFaultCount", wintypes.DWORD),
+            ("TotalProcesses", wintypes.DWORD),
+            ("ActiveProcesses", wintypes.DWORD),
+            ("TotalTerminatedProcesses", wintypes.DWORD),
+        ]
+
+    _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
+    _KERNEL32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    _KERNEL32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    _KERNEL32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    _KERNEL32.QueryInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _KERNEL32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+    def _create_job_object(process: subprocess.Popen[str]) -> int | None:
+        job = _KERNEL32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        limit = _ExtendedLimitInformation()
+        limit.BasicLimitInformation.LimitFlags = _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        configured = _KERNEL32.SetInformationJobObject(
+            job,
+            _JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limit),
+            ctypes.sizeof(limit),
+        )
+        if not configured:
+            _KERNEL32.CloseHandle(job)
+            return None
+        if not _KERNEL32.AssignProcessToJobObject(job, wintypes.HANDLE(process._handle)):
+            _KERNEL32.CloseHandle(job)
+            return None
+        return job
+
+    def _job_active_processes(job: int) -> int:
+        accounting = _BasicAccountingInformation()
+        returned = wintypes.DWORD(0)
+        queried = _KERNEL32.QueryInformationJobObject(
+            job,
+            _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            ctypes.byref(accounting),
+            ctypes.sizeof(accounting),
+            ctypes.byref(returned),
+        )
+        if not queried:
+            return -1
+        return int(accounting.ActiveProcesses)
+
+    class _WindowsProcessTree:
+        def __init__(self, process: subprocess.Popen[str]) -> None:
+            self._process = process
+            self._job = _create_job_object(process)
+
+        def terminate(self, grace_seconds: float) -> bool:
+            if self._job is None:
+                _taskkill(self._process.pid, force=True)
+                return self._process.poll() is not None
+            if _job_active_processes(self._job) == 0:
+                return True
+            if self._process.poll() is None:
+                _taskkill(self._process.pid, force=False)
+                if self._wait_until_empty(grace_seconds):
+                    return True
+            _KERNEL32.TerminateJobObject(self._job, 1)
+            return self._wait_until_empty(grace_seconds)
+
+        def close(self) -> None:
+            if self._job is not None:
+                _KERNEL32.CloseHandle(self._job)
+                self._job = None
+
+        def _wait_until_empty(self, timeout: float) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if _job_active_processes(self._job) == 0:
+                    return True
+                time.sleep(0.05)
+            return _job_active_processes(self._job) == 0
+
+
+class _PosixProcessTree:
+    def __init__(self, process: subprocess.Popen[str]) -> None:
+        self._process = process
+        try:
+            self._pgid: int | None = os.getpgid(process.pid)
+        except (ProcessLookupError, OSError):
+            self._pgid = None
+
+    def terminate(self, grace_seconds: float) -> bool:
+        if self._pgid is None:
+            return True
+        _signal_group(self._pgid, signal.SIGTERM)
+        if self._wait_until_empty(grace_seconds):
+            return True
+        _signal_group(self._pgid, signal.SIGKILL)
+        return self._wait_until_empty(grace_seconds)
+
+    def close(self) -> None:
+        self._pgid = None
+
+    def _wait_until_empty(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not _group_exists(self._pgid):
+                return True
+            time.sleep(0.05)
+        return not _group_exists(self._pgid)
+
+
+def _new_process_tree(process: subprocess.Popen[str]) -> Any:
+    if os.name == "nt":
+        return _WindowsProcessTree(process)
+    return _PosixProcessTree(process)
 
 
 @dataclass
 class SubprocessExecutor:
-    """Standard-library Pi executor with tree cancellation and diagnostic logging."""
+    """Standard-library Pi executor with owned process-tree cleanup and diagnostics."""
 
     executable: str = "pi"
     grace_seconds: float = 10.0
@@ -237,13 +404,44 @@ class SubprocessExecutor:
             shell=False,
             **_group_popen_kwargs(),
         )
+        tree = _new_process_tree(process)
         try:
             stdout, stderr = process.communicate(input=stdin_text)
-        except KeyboardInterrupt as error:
-            _terminate_process_tree(process, self.grace_seconds)
-            raise RunnerCancelled("active Pi child process was cancelled") from error
-        _write_log(log_path, command, stdout, stderr)
-        return CommandResult(process.returncode, stdout, stderr)
+        except BaseException as error:
+            cleanup_error = self._cleanup(tree, process, "failure")
+            if cleanup_error is not None:
+                raise cleanup_error from error
+            if isinstance(error, KeyboardInterrupt):
+                raise RunnerCancelled("active Pi child process was cancelled") from error
+            raise
+        else:
+            cleanup_error = self._cleanup(tree, process, "completion")
+            if cleanup_error is not None:
+                raise cleanup_error
+            _write_log(log_path, command, stdout, stderr)
+            return CommandResult(process.returncode, stdout, stderr)
+        finally:
+            tree.close()
+
+    def _cleanup(
+        self, tree: Any, process: subprocess.Popen[str], context: str
+    ) -> RunnerError | None:
+        try:
+            terminated = tree.terminate(self.grace_seconds)
+        except OSError as error:
+            return RunnerError(f"failed to terminate the Pi process tree during {context}: {error}")
+        try:
+            if process.poll() is None:
+                process.wait(timeout=self.grace_seconds)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                process.kill()
+            process.wait()
+        if not terminated:
+            return RunnerError(
+                f"could not confirm termination of the Pi process tree during {context}"
+            )
+        return None
 
 
 def _describe_command(command: Sequence[str]) -> str:
@@ -279,37 +477,50 @@ def _pi_arguments(config: RoleConfig, executable: str) -> list[str]:
 
 
 def extract_review_json(stdout: str) -> dict[str, Any]:
-    """Extract exactly one unambiguous reviewer JSON object or fail closed.
+    """Extract exactly one reviewer JSON object from exactly one supported envelope.
 
-    The prompt is delivered on stdin and Pi may wrap the result; accept exactly one JSON
-    object anywhere in the output. Any second object, or an unmatched review delimiter,
-    fails closed so a contradictory verdict can never be recorded.
+    Envelopes are, in priority order: a single ordered sentinel pair, else a single JSON fence,
+    else the whole trimmed stdout. The complete envelope body must parse as one JSON object with no
+    trailing content. Any extra object, duplicate/reversed/unmatched delimiter, array, malformed or
+    truncated body fails closed. `agent_cycle` remains the authority for validating the object.
     """
-    if stdout.count(REVIEW_SENTINEL_BEGIN) != stdout.count(REVIEW_SENTINEL_END):
-        raise RunnerError("reviewer output has unmatched review delimiters")
-    objects = _json_objects(stdout)
-    if len(objects) != 1:
-        raise RunnerError(f"expected exactly one reviewer JSON result, found {len(objects)}")
-    return objects[0]
+    body, outside = _single_envelope(stdout)
+    if "{" in outside:
+        raise RunnerError("reviewer output contains JSON text outside the result envelope")
+    body = body.strip()
+    if not body:
+        raise RunnerError("reviewer result envelope is empty")
+    try:
+        document = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RunnerError(f"reviewer result is not valid JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise RunnerError("reviewer result must be a single JSON object")
+    return document
 
 
-def _json_objects(text: str) -> list[dict[str, Any]]:
-    decoder = json.JSONDecoder()
-    objects: list[dict[str, Any]] = []
-    index = 0
-    while index < len(text):
-        start = text.find("{", index)
-        if start < 0:
-            break
-        try:
-            value, end = decoder.raw_decode(text, start)
-        except json.JSONDecodeError:
-            index = start + 1
-            continue
-        if isinstance(value, dict):
-            objects.append(value)
-        index = end
-    return objects
+def _single_envelope(stdout: str) -> tuple[str, str]:
+    begin_count = stdout.count(REVIEW_SENTINEL_BEGIN)
+    end_count = stdout.count(REVIEW_SENTINEL_END)
+    if begin_count or end_count:
+        if begin_count != 1 or end_count != 1:
+            raise RunnerError("reviewer output has duplicate or unmatched review delimiters")
+        begin = stdout.find(REVIEW_SENTINEL_BEGIN)
+        end = stdout.find(REVIEW_SENTINEL_END)
+        if end < begin:
+            raise RunnerError("reviewer output has reversed review delimiters")
+        body = stdout[begin + len(REVIEW_SENTINEL_BEGIN) : end]
+        outside = stdout[:begin] + stdout[end + len(REVIEW_SENTINEL_END) :]
+        return body, outside
+    matches = list(_JSON_FENCE.finditer(stdout))
+    if matches:
+        if len(matches) != 1:
+            raise RunnerError("reviewer output has multiple fenced results")
+        match = matches[0]
+        body = match.group(1)
+        outside = stdout[: match.start()] + stdout[match.end() :]
+        return body, outside
+    return stdout, ""
 
 
 def _load_ticket_text(repo_root: Path, ticket: str) -> str:
@@ -368,9 +579,14 @@ def _implementer_prompt(
         "The runner has already entered the implementer phase via scripts/agent_cycle.py.",
         "- Do NOT run scripts/agent_cycle.py or any begin-implementation, handoff, begin-review,",
         "  record-review, or stop transition. The runner owns every phase transition.",
-        "- Do NOT modify anything under .agent-cycle/.",
-        "- Only implement, test, commit, push, and prepare your handoff input, then exit.",
-        "Any manual transition command in the reference contract below is superseded.",
+        "- You MAY create or replace only your designated handoff input file:",
+        f"    {handoff_path}",
+        "- Do NOT modify manifest.json, handoff.json, review-*.json, reviewer-input-*.json, or any",
+        "  other file under .agent-cycle/. The runner and validator own all other coordination",
+        "  state.",
+        "- Only implement, test, commit, push, and prepare that handoff input, then exit.",
+        "Any manual transition command or blanket .agent-cycle prohibition in the reference",
+        "contract below is superseded by these permissions.",
         "",
         "## Ticket",
         ticket_text.strip(),
@@ -393,8 +609,7 @@ def _implementer_prompt(
         "2. Run the focused tests and the repository quality gate.",
         "3. Commit the change with a clear message and push the task branch.",
         "4. Leave a clean working tree.",
-        "5. Write the implementer handoff JSON to exactly this path:",
-        f"   {handoff_path}",
+        "5. Write the implementer handoff JSON to exactly the permitted path above",
         "   with exactly these keys:",
         json.dumps(
             {
@@ -454,8 +669,11 @@ def _reviewer_prompt(
             "record-review. You are strictly read-only and must not run any transition.",
             "- Do NOT run scripts/agent_cycle.py or any begin-review, record-review, or stop.",
             "- Do NOT modify, create, delete, commit, push, or run any command that writes.",
-            "- Return only the single JSON object described below.",
-            "Any manual transition command in the reference contract below is superseded.",
+            "- Return only the single JSON object described below on stdout.",
+            "- The runner — not you — persists that output into ignored .agent-cycle state and",
+            "  records the review. You never write a coordination file.",
+            "Any manual transition or file-writing instruction in the reference contract below is",
+            "superseded.",
             "",
             f"Exact reviewed SHA: {reviewed_sha}",
             "",

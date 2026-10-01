@@ -68,8 +68,14 @@ the Pi implementer, validates the handoff and exact SHA from Git plus `agent_cyc
 technically read-only Pi reviewer on that SHA, and records the reviewer JSON through
 `record-review`. It allows one fix/review retry with a required new SHA, stops on abnormal exit,
 a dirty tree, or malformed/wrong-SHA output, and returns control to the human after `PASS`,
-`BLOCKED`, or the two-round limit. Provider, model, and tool names are configuration; deterministic
-tests replace Pi and never contact providers or the network.
+`BLOCKED`, or the two-round limit. Ownership is explicit: the implementer writes project files and
+only its role-owned handoff input, the reviewer returns one structured JSON object on stdout and
+never writes a coordination file, and the runner persists that result into ignored `.agent-cycle`
+state. The parser accepts exactly one supported review envelope and fails closed otherwise. The
+runner owns every child process tree and terminates descendants through a Windows Job Object or a
+saved POSIX process group on success, cancellation, or any post-spawn failure. Provider, model, and
+tool names are configuration; deterministic tests replace Pi and never contact providers or the
+network.
 
 ## Completion
 
