@@ -993,3 +993,116 @@ def test_load_ticket_text_fails_on_duplicate_exact_id(work_dir: Path) -> None:
 def test_load_ticket_text_rejects_unsafe_ids(work_dir: Path, ticket: str) -> None:
     with pytest.raises(CycleError):
         _load_ticket_text(work_dir, ticket)
+
+
+# --- PDFTR-35B: Windows process-safety regressions ------------------------------------------
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object semantics")
+def test_windows_resume_thread_failure_is_detected(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        **_group_popen_kwargs(),
+    )
+    try:
+        monkeypatch.setattr(pi_runner, "_resume_thread", lambda handle: 0xFFFFFFFF)
+        resumed, failed = pi_runner._resume_suspended_process(process.pid)
+        assert failed is True
+        assert resumed == 0
+    finally:
+        process.kill()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object semantics")
+def test_windows_resume_failure_fails_closed(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    monkeypatch.setattr(pi_runner, "_resume_suspended_process", lambda pid: (0, True))
+
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+    with pytest.raises(RunnerError, match="resume"):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    assert not self_file.exists()
+    assert not child_file.exists()
+
+
+def test_interrupt_during_tree_acquisition_terminates_child(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    captured: dict[str, int] = {}
+
+    def interrupting_tree(process: subprocess.Popen) -> None:
+        captured["pid"] = process.pid
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pi_runner, "_new_process_tree", interrupting_tree)
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+
+    with pytest.raises(KeyboardInterrupt):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    assert _wait_until_dead(captured["pid"])
+    if os.name == "nt":
+        assert not self_file.exists()
+        assert not child_file.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object semantics")
+def test_windows_interrupt_during_job_assignment_closes_job(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    captured: dict[str, int] = {}
+
+    original_create = pi_runner._create_job_object
+    original_assign = pi_runner._KERNEL32.AssignProcessToJobObject
+
+    def recording_create(process: subprocess.Popen) -> int | None:
+        captured["pid"] = process.pid
+        return original_create(process)
+
+    def assign_then_interrupt(job: object, handle: object) -> int:
+        assigned = original_assign(job, handle)
+        if assigned:
+            raise KeyboardInterrupt
+        return assigned
+
+    monkeypatch.setattr(pi_runner, "_create_job_object", recording_create)
+    monkeypatch.setattr(pi_runner._KERNEL32, "AssignProcessToJobObject", assign_then_interrupt)
+
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+    with pytest.raises(KeyboardInterrupt):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    assert _wait_until_dead(captured["pid"])
+    assert not self_file.exists()
+    assert not child_file.exists()

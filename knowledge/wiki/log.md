@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
 - ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
 - ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
 - ../../Tickets/PDFTR-34-human-readable-inline-style-diagnostics-summary.md
@@ -23,6 +24,11 @@ related:
 
 ## 2026-10-01
 
+- Finished the Windows process-safety guarantees: a `KeyboardInterrupt` at any point after `Popen`,
+  including during Job Object creation/assignment/resume, terminates and reaps the direct child and
+  all descendants, and the Job Object is closed on interrupted setup. The `ResumeThread` result is
+  checked so a suspended process is never treated as started; failure fails closed by terminating
+  the tree.
 - Closed the PDFTR-35A round-1 findings: the Windows child is now created suspended and joined to
   its Job Object before it can run (race-free containment), POSIX termination reaps the direct child
   while polling so zombie processes do not mask cleanup, the reviewer parser rejects duplicate JSON

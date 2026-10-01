@@ -211,6 +211,7 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
     _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = 1
     _TH32CS_SNAPTHREAD = 0x00000004
     _THREAD_SUSPEND_RESUME = 0x0002
+    _THREAD_RESUME_FAILED = 0xFFFFFFFF
     _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
     class _IoCounters(ctypes.Structure):
@@ -293,27 +294,33 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
     _KERNEL32.Thread32Next.argtypes = (wintypes.HANDLE, ctypes.POINTER(_ThreadEntry32))
     _KERNEL32.OpenThread.restype = wintypes.HANDLE
     _KERNEL32.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _KERNEL32.ResumeThread.restype = wintypes.DWORD
     _KERNEL32.ResumeThread.argtypes = (wintypes.HANDLE,)
 
     def _create_job_object(process: subprocess.Popen[str]) -> int | None:
         job = _KERNEL32.CreateJobObjectW(None, None)
         if not job or job == _INVALID_HANDLE_VALUE:
             return None
-        limit = _ExtendedLimitInformation()
-        limit.BasicLimitInformation.LimitFlags = _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        configured = _KERNEL32.SetInformationJobObject(
-            job,
-            _JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            ctypes.byref(limit),
-            ctypes.sizeof(limit),
-        )
-        if not configured:
+        try:
+            limit = _ExtendedLimitInformation()
+            limit.BasicLimitInformation.LimitFlags = _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            configured = _KERNEL32.SetInformationJobObject(
+                job,
+                _JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(limit),
+                ctypes.sizeof(limit),
+            )
+            if not configured:
+                _KERNEL32.CloseHandle(job)
+                return None
+            if not _KERNEL32.AssignProcessToJobObject(job, wintypes.HANDLE(process._handle)):
+                _KERNEL32.CloseHandle(job)
+                return None
+            return job
+        except BaseException:
+            # A KeyboardInterrupt during setup must not leak the job or its members.
             _KERNEL32.CloseHandle(job)
-            return None
-        if not _KERNEL32.AssignProcessToJobObject(job, wintypes.HANDLE(process._handle)):
-            _KERNEL32.CloseHandle(job)
-            return None
-        return job
+            raise
 
     def _job_active_processes(job: int) -> int:
         accounting = _BasicAccountingInformation()
@@ -329,12 +336,16 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
             return -1
         return int(accounting.ActiveProcesses)
 
-    def _resume_suspended_process(pid: int) -> int:
-        """Resume the primary thread(s) of a CREATE_SUSPENDED process; return threads resumed."""
+    def _resume_thread(handle: Any) -> int:
+        return int(_KERNEL32.ResumeThread(handle))
+
+    def _resume_suspended_process(pid: int) -> tuple[int, bool]:
+        """Resume the suspended thread(s) of a process; return (threads resumed, failed)."""
         snapshot = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, 0)
         if not snapshot or snapshot == _INVALID_HANDLE_VALUE:
-            return 0
+            return 0, True
         resumed = 0
+        failed = False
         try:
             entry = _ThreadEntry32()
             entry.dwSize = ctypes.sizeof(_ThreadEntry32)
@@ -343,27 +354,42 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
                 if entry.th32OwnerProcessID == pid:
                     thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
                     if thread:
-                        _KERNEL32.ResumeThread(thread)
+                        if _resume_thread(thread) == _THREAD_RESUME_FAILED:
+                            failed = True
+                        else:
+                            resumed += 1
                         _KERNEL32.CloseHandle(thread)
-                        resumed += 1
                 present = _KERNEL32.Thread32Next(snapshot, ctypes.byref(entry))
         finally:
             _KERNEL32.CloseHandle(snapshot)
-        return resumed
+        return resumed, failed
 
     class _WindowsProcessTree:
         def __init__(self, process: subprocess.Popen[str]) -> None:
             self._process = process
-            self._job = _create_job_object(process)
-            if self._job is None:
-                raise RunnerError(
-                    "could not establish a Windows Job Object for process containment; "
-                    "refusing to run an uncontrolled child"
-                )
-            if _resume_suspended_process(process.pid) == 0:
+            self._job: int | None = None
+            try:
+                self._job = _create_job_object(process)
+                if self._job is None:
+                    raise RunnerError(
+                        "could not establish a Windows Job Object for process containment; "
+                        "refusing to run an uncontrolled child"
+                    )
+                resumed, failed = _resume_suspended_process(process.pid)
+                if failed or resumed == 0:
+                    raise RunnerError(
+                        "could not resume the suspended Pi process; refusing to treat an "
+                        "uncontained child as started"
+                    )
+            except BaseException:
+                # Closing the job terminates a suspended or partially resumed child tree.
+                self._close_job()
+                raise
+
+        def _close_job(self) -> None:
+            if self._job is not None:
                 _KERNEL32.CloseHandle(self._job)
                 self._job = None
-                raise RunnerError("could not resume the suspended Pi process")
 
         def terminate(self, grace_seconds: float) -> bool:
             if self._job is None:
@@ -378,9 +404,7 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
             return self._wait_until_empty(grace_seconds)
 
         def close(self) -> None:
-            if self._job is not None:
-                _KERNEL32.CloseHandle(self._job)
-                self._job = None
+            self._close_job()
 
         def _wait_until_empty(self, timeout: float) -> bool:
             deadline = time.monotonic() + timeout
@@ -432,7 +456,9 @@ def _new_process_tree(process: subprocess.Popen[str]) -> Any:
 
 def _terminate_without_tree(process: subprocess.Popen[str], grace_seconds: float) -> None:
     """Best-effort termination when the tree guard could not be established after spawn."""
-    if os.name != "nt":
+    if os.name == "nt":
+        _taskkill(process.pid, force=True)
+    else:
         try:
             pgid = os.getpgid(process.pid)
         except (ProcessLookupError, OSError):
@@ -478,7 +504,6 @@ class SubprocessExecutor:
             shell=False,
             **_group_popen_kwargs(),
         )
-        tree: Any = None
         try:
             tree = _new_process_tree(process)
         except BaseException:

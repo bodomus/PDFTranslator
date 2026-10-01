@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
+  `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
+  the resume step — now always terminates and reaps the direct child and every descendant before
+  control returns, and the Job Object is closed on setup interruption so no member is leaked. The
+  `ResumeThread` return value is now checked: a failure fails closed by terminating the suspended
+  child tree and raising a startup error instead of treating an uncontained child as started.
 - Hardened `scripts/pi_ticket_cycle.py` against the PDFTR-35A safety findings. Implementer prompts
   now permit exactly the role-owned handoff input while protecting validator-owned coordination
   files and the contracts no longer tell a read-only reviewer to write one; cancellation and any
