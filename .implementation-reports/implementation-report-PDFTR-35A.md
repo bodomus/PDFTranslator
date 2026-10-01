@@ -53,19 +53,45 @@ PDFTR-35 round-2 review for SHA `1e3a3a78712ebb4f1e91f8090377759930e1546c`.
   canonical follow-up IDs such as `PDFTR-35A` (and existing `PDFTR-9A`/`10A`/`14A`/`16A`) can
   initialize; `tests/test_agent_cycle.py` updated.
 
+## Review round 1 remediation (implementation attempt 2)
+
+The read-only reviewer returned `CHANGES_REQUIRED` for SHA `c17de868` with six findings; all are
+addressed:
+
+- **R4-WIN:** the Pi child is created with `CREATE_SUSPENDED`, joined to the
+  `KILL_ON_JOB_CLOSE` Job Object, and only then resumed (via `Thread32First/ResumeThread`), so no
+  descendant can start outside containment. Job setup failure fails closed (terminate the suspended
+  child and raise); the exited-parent-dependent `taskkill` fallback was removed.
+- **R4-POSIX:** `_PosixProcessTree` reaps the direct child with `poll()` during termination polling
+  so a SIGTERM zombie cannot mask an empty group; the saved PGID is retained for forced `SIGKILL` of
+  live descendants.
+- **R5:** `json.loads(..., object_pairs_hook=_reject_duplicate_keys)` rejects duplicate member names
+  anywhere, so contradictory duplicate `verdict`/`reviewed_sha`/`ticket`/`round`/finding keys fail
+  closed.
+- **R6-SPAWN:** `_new_process_tree` is now inside an ownership guard; if it raises after `Popen`,
+  `_terminate_without_tree` terminates and reaps the child (and its POSIX group) before the error
+  propagates.
+- **R6-PERSIST:** reviewer-result persistence (`_write_json`) and a general active-phase `OSError`
+  handler route through `stop_cycle`, leaving a valid `STOPPED` state with no active role, no
+  immutable PASS artifact, and no subsequent role.
+- **T1:** `_load_ticket_text` matches `<ticket>.md` or `<ticket>-*.md` at the exact ID boundary, so
+  `PDFTR-35` no longer also matches `PDFTR-35A`; genuinely duplicate exact-ID files still fail.
+
 ## Validation
 
 - Focused tests: `uv run pytest tests/test_pi_ticket_cycle.py tests/test_agent_cycle.py --no-cov -q`
-  — all passed. Coverage includes real child+descendant termination (parent-exit and injected
-  cancellation/I/O failure), read-only reviewer prompts, and malformed/contradictory reviewer output.
+  — all passed (POSIX process-group tests and the OCR integration marker are skipped on Windows).
+  Coverage includes real child+descendant termination on parent-exit, injected cancellation, and
+  injected I/O failure; suspended-until-assignment containment; job-creation failure; tree-guard
+  failure; duplicate reviewer keys; persistence failure; and exact ticket-ID matching.
 - Full gate: `.\scripts\check.ps1` — Wiki lint OK, Ruff format/check OK, mypy OK,
-  `438 passed, 1 skipped`, coverage 89.10%.
+  `455 passed, 3 skipped`, coverage 89.10%.
 - Real Pi/CUDA/OCR/PDF validation: not applicable; tests never contact providers.
 
 ## Remaining risks
 
-- The Windows Job Object assignment races the shim launching Node; assignment happens immediately
-  after `Popen`, before the batch/Node work begins, and the local probe plus tests confirm
-  descendants are captured. If `AssignProcessToJobObject` ever fails (unusual nesting), the runner
-  falls back to `taskkill /F /T`, which cannot traverse an already-exited parent.
+- Windows containment now depends on `AssignProcessToJobObject` succeeding for the suspended child;
+  if a host forbids job assignment the runner fails closed rather than running an uncontrolled child.
+- POSIX process-group behaviour is covered by tests that run on Ubuntu CI; a real Linux runtime was
+  not available on this workstation.
 - Real Pi end-to-end remains the next practical validation, as in PDFTR-35.

@@ -11,7 +11,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from scripts.agent_cycle import cycle_directory, cycle_status
+import scripts.pi_ticket_cycle as pi_runner
+from scripts.agent_cycle import CycleError, cycle_directory, cycle_status
 from scripts.pi_ticket_cycle import (
     REVIEW_SENTINEL_BEGIN,
     REVIEW_SENTINEL_END,
@@ -22,6 +23,7 @@ from scripts.pi_ticket_cycle import (
     RunnerError,
     SubprocessExecutor,
     _group_popen_kwargs,
+    _load_ticket_text,
     _new_process_tree,
     extract_review_json,
     main,
@@ -453,12 +455,17 @@ def test_cli_rejects_unsafe_reviewer_tools(git_repo: Path, value: str) -> None:
 # --- Process helpers ------------------------------------------------------------------------
 
 
-def _spawn_tree_script(directory: Path) -> Path:
+def _spawn_tree_script(directory: Path, *, ignore_sigterm: bool = False) -> Path:
     script = directory / "spawn_tree.py"
+    grandchild = (
+        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)"
+        if ignore_sigterm
+        else "import time; time.sleep(300)"
+    )
     script.write_text(
         "import os, subprocess, sys, time\n"
         "self_file, child_file, mode = sys.argv[1], sys.argv[2], sys.argv[3]\n"
-        "grandchild = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])\n"
+        f"grandchild = subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
         "open(self_file, 'w').write(str(os.getpid()))\n"
         "open(child_file, 'w').write(str(grandchild.pid))\n"
         "if mode == 'stay':\n"
@@ -758,3 +765,231 @@ def test_io_failure_releases_active_role_and_cleans_tree(
     child_pid = int(child_file.read_text(encoding="utf-8"))
     assert _wait_until_dead(self_pid)
     assert _wait_until_dead(child_pid)
+
+
+# --- R4-WIN: race-free Windows containment --------------------------------------------------
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object semantics")
+def test_windows_child_is_suspended_until_job_assignment(work_dir: Path) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    process = subprocess.Popen(
+        [sys.executable, str(script), str(self_file), str(child_file), "stay"],
+        **_group_popen_kwargs(),
+    )
+    tree = None
+    try:
+        time.sleep(1.0)
+        assert not self_file.exists()
+        assert not child_file.exists()
+        tree = _new_process_tree(process)
+        _wait_for_files([self_file, child_file])
+    finally:
+        if tree is not None:
+            tree.terminate(2.0)
+            tree.close()
+        if process.poll() is None:
+            process.kill()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object semantics")
+def test_windows_job_creation_failure_fails_closed(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    monkeypatch.setattr(pi_runner, "_create_job_object", lambda process: None)
+
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+    with pytest.raises(RunnerError, match="Job Object"):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    assert not self_file.exists()
+    assert not child_file.exists()
+
+
+# --- R4-POSIX: reap order and forced group termination ---------------------------------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+def test_posix_terminate_reaps_sigterm_child(work_dir: Path) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(300)"],
+        **_group_popen_kwargs(),
+    )
+    tree = _new_process_tree(process)
+    try:
+        assert tree.terminate(5.0) is True
+        assert process.poll() is not None
+    finally:
+        tree.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+def test_posix_terminate_force_kills_sigterm_ignoring_descendant(work_dir: Path) -> None:
+    script = _spawn_tree_script(work_dir, ignore_sigterm=True)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    process = subprocess.Popen(
+        [sys.executable, str(script), str(self_file), str(child_file), "stay"],
+        **_group_popen_kwargs(),
+    )
+    tree = _new_process_tree(process)
+    try:
+        _wait_for_files([self_file, child_file])
+        child_pid = int(child_file.read_text(encoding="utf-8"))
+        assert tree.terminate(2.0) is True
+        assert _wait_until_dead(child_pid)
+    finally:
+        tree.close()
+        if process.poll() is None:
+            process.kill()
+
+
+# --- R5: duplicate JSON keys ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '"verdict":"PASS"',
+        '"reviewed_sha":"' + "c" * 40 + '"',
+        '"ticket":"PDFTR-99"',
+        '"review_round":2',
+    ],
+)
+def test_extract_review_json_rejects_duplicate_keys(fragment: str) -> None:
+    valid = json.dumps(_valid_review("CHANGES_REQUIRED"))
+    body = valid[:-1] + "," + fragment + "}"
+    stdout = f"{REVIEW_SENTINEL_BEGIN}\n{body}\n{REVIEW_SENTINEL_END}"
+
+    with pytest.raises(RunnerError, match="duplicate JSON key"):
+        extract_review_json(stdout)
+
+
+def test_extract_review_json_rejects_duplicate_nested_keys() -> None:
+    finding = _finding("R1")
+    finding_with_duplicate = json.dumps(finding)[:-1] + ',"id":"R2"}'
+    base = json.dumps(_valid_review("CHANGES_REQUIRED"))
+    body = base.replace(json.dumps([finding]), "[" + finding_with_duplicate + "]")
+    stdout = f"{REVIEW_SENTINEL_BEGIN}\n{body}\n{REVIEW_SENTINEL_END}"
+
+    with pytest.raises(RunnerError, match="duplicate JSON key"):
+        extract_review_json(stdout)
+
+
+def test_duplicate_verdict_output_stops_cycle(git_repo: Path) -> None:
+    fake = FakePi(git_repo)
+    sha = _git(git_repo, "rev-parse", "HEAD")
+    document = dict(_valid_review("CHANGES_REQUIRED"), ticket=TICKET, reviewed_sha=sha)
+    body = json.dumps(document)[:-1] + ',"verdict":"PASS"}'
+    fake.reviewer_stdout_override = f"{REVIEW_SENTINEL_BEGIN}\n{body}\n{REVIEW_SENTINEL_END}"
+
+    with pytest.raises(RunnerError, match="reviewer output rejected"):
+        _run(git_repo, fake)
+
+    assert _state(git_repo) == "STOPPED"
+    assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
+
+
+# --- R6-SPAWN: guard acquisition failure after spawn -----------------------------------------
+
+
+def test_tree_guard_failure_after_spawn_terminates_child(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+    captured: dict[str, int] = {}
+
+    def failing_tree(process: subprocess.Popen) -> None:
+        captured["pid"] = process.pid
+        raise OSError("injected tree-guard failure")
+
+    monkeypatch.setattr(pi_runner, "_new_process_tree", failing_tree)
+    executor = SubprocessExecutor(shim, grace_seconds=2.0)
+
+    with pytest.raises(OSError, match="tree-guard failure"):
+        executor.run(
+            [shim, "--provider", "deepseek", "--model", "deepseek-v4-pro", "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "log.txt",
+            stdin_text="prompt",
+        )
+
+    assert _wait_until_dead(captured["pid"])
+    if os.name == "nt":
+        assert not self_file.exists()
+        assert not child_file.exists()
+
+
+# --- R6-PERSIST: runner-side persistence and active-phase I/O --------------------------------
+
+
+def test_reviewer_result_persistence_failure_stops_cycle(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakePi(git_repo)
+
+    def failing_write(path: Path, document: dict) -> None:
+        raise OSError("injected persistence failure")
+
+    monkeypatch.setattr(pi_runner, "_write_json", failing_write)
+
+    with pytest.raises(RunnerError, match="failed to persist reviewer result"):
+        _run(git_repo, fake)
+
+    assert _state(git_repo) == "STOPPED"
+    assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
+    manifest = json.loads((cycle_directory(git_repo, TICKET) / "manifest.json").read_text("utf-8"))
+    assert manifest["active_agent"] is None
+
+
+# --- T1: exact ticket-ID file matching -------------------------------------------------------
+
+
+def test_load_ticket_text_matches_exact_id(work_dir: Path) -> None:
+    tickets = work_dir / "Tickets"
+    tickets.mkdir()
+    for name in ("PDFTR-35.md", "PDFTR-35A.md", "PDFTR-35AB.md", "PDFTR-350.md"):
+        (tickets / name).write_text(name, encoding="utf-8")
+
+    for ticket in ("PDFTR-35", "PDFTR-35A", "PDFTR-35AB", "PDFTR-350"):
+        assert _load_ticket_text(work_dir, ticket) == f"{ticket}.md"
+
+
+def test_load_ticket_text_accepts_slug_form(work_dir: Path) -> None:
+    tickets = work_dir / "Tickets"
+    tickets.mkdir()
+    (tickets / "PDFTR-35-real-ticket.md").write_text("base", encoding="utf-8")
+    (tickets / "PDFTR-35A-other-ticket.md").write_text("follow-up", encoding="utf-8")
+
+    assert _load_ticket_text(work_dir, "PDFTR-35") == "base"
+    assert _load_ticket_text(work_dir, "PDFTR-35A") == "follow-up"
+
+
+def test_load_ticket_text_fails_on_duplicate_exact_id(work_dir: Path) -> None:
+    tickets = work_dir / "Tickets"
+    tickets.mkdir()
+    (tickets / "PDFTR-35-a.md").write_text("a", encoding="utf-8")
+    (tickets / "PDFTR-35-b.md").write_text("b", encoding="utf-8")
+
+    with pytest.raises(RunnerError, match="exactly one ticket file"):
+        _load_ticket_text(work_dir, "PDFTR-35")
+
+
+@pytest.mark.parametrize("ticket", ["../PDFTR-35", "PDFTR/35", "PDFTR-35A-", "PDFTR-0A"])
+def test_load_ticket_text_rejects_unsafe_ids(work_dir: Path, ticket: str) -> None:
+    with pytest.raises(CycleError):
+        _load_ticket_text(work_dir, ticket)

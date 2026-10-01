@@ -23,6 +23,12 @@ related:
 
 ## 2026-10-01
 
+- Closed the PDFTR-35A round-1 findings: the Windows child is now created suspended and joined to
+  its Job Object before it can run (race-free containment), POSIX termination reaps the direct child
+  while polling so zombie processes do not mask cleanup, the reviewer parser rejects duplicate JSON
+  keys, tree-guard acquisition failures clean up the spawned process, runner-side persistence and
+  active-phase I/O failures stop through the validator, and ticket files are matched on the exact ID
+  boundary so `PDFTR-35` never selects `PDFTR-35A`.
 - Hardened the Pi two-agent runner after the PDFTR-35A safety findings: role ownership is
   consistent (implementer writes only its handoff input, read-only reviewer returns JSON on stdout,
   runner persists validated output), cancellation and post-spawn failures terminate the whole owned

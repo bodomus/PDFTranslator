@@ -87,13 +87,16 @@ its own handoff input; the reviewer returns one structured JSON object on stdout
 coordination file — the runner persists that output into ignored `.agent-cycle` state. Reviewer tool
 configuration must stay within the fixed read-only allowlist and is rejected before any cycle state
 changes; prompts are delivered on stdin so large multilingual prompts are not limited by Windows
-command lines; and the runner requires exactly one unambiguous reviewer result. It supports at most
+command lines; and the runner requires exactly one unambiguous reviewer result, rejecting malformed,
+truncated, array-wrapped, extra, reversed-delimiter, or duplicate-key output. It supports at most
 one fix/review retry, requires a new SHA, and stops on abnormal exit, a dirty tree, a missing
-executable, cancellation, malformed/ambiguous/wrong-SHA output, or any post-spawn I/O failure. A
-Job Object (Windows) or process group (POSIX) guarantees no Pi descendant survives the runner, on
-success or failure. It never creates a pull request or merges. Provider, model, and tool names are
-configuration; `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi,
-providers, or the network.
+executable, cancellation, malformed/ambiguous/wrong-SHA output, or any post-spawn I/O failure. The
+Windows child is created suspended and joined to its Job Object before it can run, and a Job Object
+(Windows) or process group (POSIX) guarantees no Pi descendant survives the runner, on success or
+failure. Ticket files match the exact ID boundary, so `PDFTR-35` never selects `PDFTR-35A`. It never
+creates a pull request or merges. Provider, model, and tool names are configuration;
+`agent_cycle.py` remains the workflow authority, and the tests never invoke Pi, providers, or the
+network.
 
 
 Source-backed paragraph typography can be inspected without translation or rendering. The

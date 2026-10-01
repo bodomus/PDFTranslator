@@ -58,6 +58,8 @@ REVIEWER_FALLBACK = (
 )
 CONTRACT_DIRECTORY = Path(".agents") / "skills" / "two-agent-ticket-workflow"
 
+_CREATE_SUSPENDED = getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
+
 
 class RunnerError(RuntimeError):
     """A fail-closed runner error; the cycle stops and control returns to the human."""
@@ -169,7 +171,9 @@ def _platform_command(executable: str, arguments: Sequence[str]) -> list[str]:
 
 def _group_popen_kwargs() -> dict[str, Any]:
     if os.name == "nt":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | _CREATE_SUSPENDED,
+        }
     return {"start_new_session": True}
 
 
@@ -205,6 +209,9 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
     _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
     _JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 9
     _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+    _TH32CS_SNAPTHREAD = 0x00000004
+    _THREAD_SUSPEND_RESUME = 0x0002
+    _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
     class _IoCounters(ctypes.Structure):
         _fields_ = [
@@ -251,6 +258,17 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
             ("TotalTerminatedProcesses", wintypes.DWORD),
         ]
 
+    class _ThreadEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", ctypes.c_long),
+            ("tpDeltaPri", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
     _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
     _KERNEL32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
     _KERNEL32.SetInformationJobObject.argtypes = (
@@ -269,10 +287,17 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
     )
     _KERNEL32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
     _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    _KERNEL32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    _KERNEL32.Thread32First.argtypes = (wintypes.HANDLE, ctypes.POINTER(_ThreadEntry32))
+    _KERNEL32.Thread32Next.argtypes = (wintypes.HANDLE, ctypes.POINTER(_ThreadEntry32))
+    _KERNEL32.OpenThread.restype = wintypes.HANDLE
+    _KERNEL32.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _KERNEL32.ResumeThread.argtypes = (wintypes.HANDLE,)
 
     def _create_job_object(process: subprocess.Popen[str]) -> int | None:
         job = _KERNEL32.CreateJobObjectW(None, None)
-        if not job:
+        if not job or job == _INVALID_HANDLE_VALUE:
             return None
         limit = _ExtendedLimitInformation()
         limit.BasicLimitInformation.LimitFlags = _JOBOBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -304,14 +329,44 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
             return -1
         return int(accounting.ActiveProcesses)
 
+    def _resume_suspended_process(pid: int) -> int:
+        """Resume the primary thread(s) of a CREATE_SUSPENDED process; return threads resumed."""
+        snapshot = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, 0)
+        if not snapshot or snapshot == _INVALID_HANDLE_VALUE:
+            return 0
+        resumed = 0
+        try:
+            entry = _ThreadEntry32()
+            entry.dwSize = ctypes.sizeof(_ThreadEntry32)
+            present = _KERNEL32.Thread32First(snapshot, ctypes.byref(entry))
+            while present:
+                if entry.th32OwnerProcessID == pid:
+                    thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
+                    if thread:
+                        _KERNEL32.ResumeThread(thread)
+                        _KERNEL32.CloseHandle(thread)
+                        resumed += 1
+                present = _KERNEL32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            _KERNEL32.CloseHandle(snapshot)
+        return resumed
+
     class _WindowsProcessTree:
         def __init__(self, process: subprocess.Popen[str]) -> None:
             self._process = process
             self._job = _create_job_object(process)
+            if self._job is None:
+                raise RunnerError(
+                    "could not establish a Windows Job Object for process containment; "
+                    "refusing to run an uncontrolled child"
+                )
+            if _resume_suspended_process(process.pid) == 0:
+                _KERNEL32.CloseHandle(self._job)
+                self._job = None
+                raise RunnerError("could not resume the suspended Pi process")
 
         def terminate(self, grace_seconds: float) -> bool:
             if self._job is None:
-                _taskkill(self._process.pid, force=True)
                 return self._process.poll() is not None
             if _job_active_processes(self._job) == 0:
                 return True
@@ -330,9 +385,11 @@ if os.name == "nt":  # pragma: no cover - Windows-only Job Object integration
         def _wait_until_empty(self, timeout: float) -> bool:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
+                self._process.poll()
                 if _job_active_processes(self._job) == 0:
                     return True
                 time.sleep(0.05)
+            self._process.poll()
             return _job_active_processes(self._job) == 0
 
 
@@ -359,9 +416,11 @@ class _PosixProcessTree:
     def _wait_until_empty(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            self._process.poll()
             if not _group_exists(self._pgid):
                 return True
             time.sleep(0.05)
+        self._process.poll()
         return not _group_exists(self._pgid)
 
 
@@ -369,6 +428,21 @@ def _new_process_tree(process: subprocess.Popen[str]) -> Any:
     if os.name == "nt":
         return _WindowsProcessTree(process)
     return _PosixProcessTree(process)
+
+
+def _terminate_without_tree(process: subprocess.Popen[str], grace_seconds: float) -> None:
+    """Best-effort termination when the tree guard could not be established after spawn."""
+    if os.name != "nt":
+        try:
+            pgid = os.getpgid(process.pid)
+        except (ProcessLookupError, OSError):
+            pgid = None
+        if pgid is not None:
+            _signal_group(pgid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+        process.wait(timeout=grace_seconds)
 
 
 @dataclass
@@ -404,7 +478,12 @@ class SubprocessExecutor:
             shell=False,
             **_group_popen_kwargs(),
         )
-        tree = _new_process_tree(process)
+        tree: Any = None
+        try:
+            tree = _new_process_tree(process)
+        except BaseException:
+            _terminate_without_tree(process, self.grace_seconds)
+            raise
         try:
             stdout, stderr = process.communicate(input=stdin_text)
         except BaseException as error:
@@ -480,9 +559,10 @@ def extract_review_json(stdout: str) -> dict[str, Any]:
     """Extract exactly one reviewer JSON object from exactly one supported envelope.
 
     Envelopes are, in priority order: a single ordered sentinel pair, else a single JSON fence,
-    else the whole trimmed stdout. The complete envelope body must parse as one JSON object with no
-    trailing content. Any extra object, duplicate/reversed/unmatched delimiter, array, malformed or
-    truncated body fails closed. `agent_cycle` remains the authority for validating the object.
+    else the whole trimmed stdout. The complete envelope body must parse as one JSON object with
+    unique member names and no trailing content. Any extra object, duplicate/reversed/unmatched
+    delimiter, array, duplicate key, malformed or truncated body fails closed. `agent_cycle`
+    remains the authority for validating the object.
     """
     body, outside = _single_envelope(stdout)
     if "{" in outside:
@@ -491,12 +571,21 @@ def extract_review_json(stdout: str) -> dict[str, Any]:
     if not body:
         raise RunnerError("reviewer result envelope is empty")
     try:
-        document = json.loads(body)
+        document = json.loads(body, object_pairs_hook=_reject_duplicate_keys)
     except json.JSONDecodeError as error:
         raise RunnerError(f"reviewer result is not valid JSON: {error}") from error
     if not isinstance(document, dict):
         raise RunnerError("reviewer result must be a single JSON object")
     return document
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RunnerError(f"reviewer result contains duplicate JSON key: {key!r}")
+        result[key] = value
+    return result
 
 
 def _single_envelope(stdout: str) -> tuple[str, str]:
@@ -524,11 +613,14 @@ def _single_envelope(stdout: str) -> tuple[str, str]:
 
 
 def _load_ticket_text(repo_root: Path, ticket: str) -> str:
+    ticket = validate_ticket_id(ticket)
     directory = repo_root / "Tickets"
-    matches = sorted(directory.glob(f"{ticket}*.md")) if directory.is_dir() else []
+    matches: list[Path] = []
+    if directory.is_dir():
+        matches = sorted(directory.glob(f"{ticket}.md")) + sorted(directory.glob(f"{ticket}-*.md"))
     if len(matches) != 1:
         raise RunnerError(
-            f"expected exactly one ticket file matching Tickets/{ticket}*.md, found {len(matches)}"
+            f"expected exactly one ticket file for {ticket} under Tickets/, found {len(matches)}"
         )
     return matches[0].read_text(encoding="utf-8")
 
@@ -872,7 +964,10 @@ def run_cycle(
             except RunnerError as error:
                 _abort(repo_root, ticket, f"reviewer output rejected: {error}")
             review_input = directory / f"reviewer-input-round-{review_round}.json"
-            _write_json(review_input, document)
+            try:
+                _write_json(review_input, document)
+            except OSError as error:
+                _abort(repo_root, ticket, f"failed to persist reviewer result: {error}")
             try:
                 manifest = record_review(repo_root, ticket, review_input)
             except CycleError as error:
@@ -887,6 +982,8 @@ def run_cycle(
         _abort(repo_root, ticket, f"cancelled: {error}")
     except CycleError as error:
         raise RunnerError(f"agent cycle rejected the operation: {error}") from error
+    except OSError as error:
+        _abort(repo_root, ticket, f"runner I/O failure: {error}")
 
 
 def _report(outcome: RunOutcome) -> None:
