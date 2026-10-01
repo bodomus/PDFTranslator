@@ -15,7 +15,7 @@ from typing import Any, NoReturn
 
 SCHEMA_VERSION = "1.0"
 MAX_REVIEW_ROUNDS = 2
-TICKET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-[1-9][0-9]*$")
+TICKET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-[1-9][0-9]*[A-Z]*$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 COORDINATION_DIRECTORY = ".agent-cycle"
 
@@ -150,7 +150,7 @@ def validate_ticket_id(ticket: str) -> str:
     """Return a safe canonical ticket ID or fail before path construction."""
     if not isinstance(ticket, str) or not TICKET_PATTERN.fullmatch(ticket):
         raise CycleError(
-            "invalid ticket ID; expected conservative form such as PDFTR-33 or ABC-123"
+            "invalid ticket ID; expected conservative form such as PDFTR-33, ABC-123, or PDFTR-35A"
         )
     return ticket
 
