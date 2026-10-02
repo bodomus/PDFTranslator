@@ -130,7 +130,7 @@ def _ready_for_review(repo: Path, attempt: int = 1) -> str:
     return sha
 
 
-@pytest.mark.parametrize("ticket", ("PDFTR-33", "ABC-123"))
+@pytest.mark.parametrize("ticket", ("PDFTR-33", "ABC-123", "PDFTR-35A"))
 def test_ticket_id_accepts_conservative_form(ticket: str) -> None:
     assert validate_ticket_id(ticket) == ticket
 

@@ -9,6 +9,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
+  `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
+  the resume step — now always terminates and reaps the direct child and every descendant before
+  control returns, and the Job Object is closed on setup interruption so no member is leaked. The
+  `ResumeThread` return value is now checked: a failure fails closed by terminating the suspended
+  child tree and raising a startup error instead of treating an uncontained child as started.
+- Hardened `scripts/pi_ticket_cycle.py` against the PDFTR-35A safety findings. Implementer prompts
+  now permit exactly the role-owned handoff input while protecting validator-owned coordination
+  files and the contracts no longer tell a read-only reviewer to write one; cancellation and any
+  post-spawn failure terminate and verify the whole owned process tree via a Windows Job Object or a
+  saved POSIX process group; the reviewer parser requires exactly one supported JSON envelope and
+  rejects malformed, truncated, array-wrapped, extra, reversed-delimiter, or duplicate-key results;
+  and operational failures reap children before the cycle records a stop. The Windows child is
+  created suspended and joined to the Job Object before it can run, POSIX termination reaps the
+  direct child while polling, tree-guard acquisition failures clean up the spawned process,
+  reviewer-result persistence and active-phase I/O failures stop through the validator, and ticket
+  files are matched on the exact ID boundary (`PDFTR-35` never selects `PDFTR-35A`).
+  `scripts/agent_cycle.py` also accepts suffixed follow-up ticket IDs such as `PDFTR-35A`.
 - Deferred repeated inline-style tokens unless both source and translated text contain exactly one
   occurrence, and made PyMuPDF heading-orphan checks count physical rendered lines instead of
   deriving logical lines from inline-inflated height.
@@ -32,6 +50,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added `scripts/pi_ticket_cycle.py`, a sequential Pi two-agent runner. One command imports
+  `scripts/agent_cycle.py` (the unchanged workflow authority), runs a Pi implementer, validates the
+  handoff and exact SHA deterministically, runs a technically read-only Pi reviewer, records the
+  reviewer JSON through the validator, supports one fix/review retry with a required new SHA, and
+  stops for human review after `PASS`, `BLOCKED`, or the two-round limit. Prompts are delivered on
+  stdin so large multilingual prompts are not subject to Windows command-line limits; reviewer tool
+  configuration is validated against a fixed read-only allowlist before any state change; the
+  reviewer result must be a single unambiguous JSON object; cancellation terminates the whole
+  owned process tree; and ordinary process failures stop the active phase cleanly. Provider, model,
+  and tool names are configuration, and deterministic tests never invoke real providers.
 - Added an inline-style summary to the human-readable HTML diagnostic report. The report table now
   exposes inline-style candidate, applied, deferred, and applied-character counts directly from
   `ReportSummary`, with explicit zero rows and no change to the embedded JSON, rendering behavior,

@@ -2,6 +2,13 @@
 
 The implementer owns all repository mutation for tickets using the agent cycle.
 
+> Automated runners. When an orchestrator (for example `scripts/pi_ticket_cycle.py`) drives the
+> cycle, the runner executes `begin-implementation` before launching this role and `handoff` after
+> it exits. In that mode the implementer must not run any `agent_cycle.py` transition. The
+> implementer's only coordination write is its designated handoff input file, whose exact path the
+> runner supplies; it must never modify `manifest.json`, `handoff.json`, review artifacts, or any
+> other coordination file under `.agent-cycle/`.
+
 ## Before work
 
 1. Read repository instructions, the ticket, and the normal pre-ticket workflow.

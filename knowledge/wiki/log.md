@@ -3,11 +3,14 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-09-28
+updated: 2026-10-01
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
+- ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
+- ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
 - ../../Tickets/PDFTR-34-human-readable-inline-style-diagnostics-summary.md
 - ../../Tickets/PDFTR-33-two-agent-ticket-handoff-contract-validator.md
 - ../../Tickets/PDFTR-32-safe-inline-style-runs.md
@@ -18,6 +21,31 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-01
+
+- Finished the Windows process-safety guarantees: a `KeyboardInterrupt` at any point after `Popen`,
+  including during Job Object creation/assignment/resume, terminates and reaps the direct child and
+  all descendants, and the Job Object is closed on interrupted setup. The `ResumeThread` result is
+  checked so a suspended process is never treated as started; failure fails closed by terminating
+  the tree.
+- Closed the PDFTR-35A round-1 findings: the Windows child is now created suspended and joined to
+  its Job Object before it can run (race-free containment), POSIX termination reaps the direct child
+  while polling so zombie processes do not mask cleanup, the reviewer parser rejects duplicate JSON
+  keys, tree-guard acquisition failures clean up the spawned process, runner-side persistence and
+  active-phase I/O failures stop through the validator, and ticket files are matched on the exact ID
+  boundary so `PDFTR-35` never selects `PDFTR-35A`.
+- Hardened the Pi two-agent runner after the PDFTR-35A safety findings: role ownership is
+  consistent (implementer writes only its handoff input, read-only reviewer returns JSON on stdout,
+  runner persists validated output), cancellation and post-spawn failures terminate the whole owned
+  process tree through a Windows Job Object or a saved POSIX process group, and the reviewer parser
+  requires exactly one supported envelope and fails closed on malformed or contradictory output.
+- Documented `scripts/pi_ticket_cycle.py`, the sequential Pi two-agent runner. The runner imports
+  `scripts/agent_cycle.py` as the unchanged workflow authority, sequences the Pi implementer and a
+  technically read-only Pi reviewer over an exact SHA, records reviewer JSON through the validator,
+  allows one fix/review retry with a required new SHA, and stops for human review. Provider, model,
+  and tool names remain configuration; the change does not touch the package, schemas, rendering,
+  translation, OCR, model, or cache boundaries.
 
 ## 2026-09-28
 
