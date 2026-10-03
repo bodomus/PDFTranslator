@@ -51,6 +51,8 @@ from pdftranslate.rendering.reflow import (
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
 from pdftranslate.rendering.reflow.pymupdf_layout import (
     PyMuPdfMeasurer,
+    _insert_list_marker,
+    build_rich_text,
     insert_reflow_segments,
     validate_saved_segments,
 )
@@ -1982,29 +1984,50 @@ def test_discover_reflow_page_accepts_confident_list_only_page(
 
 
 def _wide_gap_list_document(tmp_path: Path) -> tuple[Path, ExtractedDocument]:
-    source = tmp_path / "wide-gap-list.pdf"
+    return _list_gap_document(tmp_path, 130.0)
+
+
+def _list_gap_document(tmp_path: Path, content_x: float) -> tuple[Path, ExtractedDocument]:
+    source = tmp_path / f"gap-list-{int(content_x)}.pdf"
     document = pymupdf.open()
     page = document.new_page(width=300, height=200)
     page.insert_text((48, 60), "2)", fontsize=11)
-    page.insert_text((130, 60), "Install the package now.", fontsize=11)
+    page.insert_text((content_x, 60), "Install the package now.", fontsize=11)
     document.save(source)
     document.close()
 
     extracted = PdfExtractor().extract(source)
-    marker_paragraph, content_paragraph = extracted.paragraphs[0], extracted.paragraphs[1]
+    mapping = SourceBlockMapping(
+        source_block_id="gap-block",
+        page_number=1,
+        bbox=BoundingBox(x0=48.0, y0=60.0, x1=content_x + 120.0, y1=70.0),
+        original_order=0,
+        normalized_order=0,
+    )
+    marker_fragment = ParagraphFragment(
+        id="gap-marker",
+        text="2)",
+        bbox=BoundingBox(x0=48.0, y0=60.0, x1=58.0, y1=70.0),
+        mapping=mapping,
+        spans=(),
+        column=0,
+    )
+    content_fragment = ParagraphFragment(
+        id="gap-content",
+        text="Install the package now.",
+        bbox=BoundingBox(x0=content_x, y0=60.0, x1=content_x + 120.0, y1=70.0),
+        mapping=mapping,
+        spans=(),
+        column=0,
+    )
     list_paragraph = LogicalParagraph(
-        id="wide-gap-list-1",
+        id=f"gap-list-{int(content_x)}",
         text="2) Install the package now.",
         kind=ParagraphKind.LIST_ITEM,
         anchor_page_number=1,
-        bbox=BoundingBox(
-            x0=48.0,
-            y0=marker_paragraph.bbox.y0,
-            x1=content_paragraph.bbox.x1,
-            y1=content_paragraph.bbox.y1,
-        ),
-        fragments=(marker_paragraph.fragments[0], content_paragraph.fragments[0]),
-        spans=marker_paragraph.spans + content_paragraph.spans,
+        bbox=BoundingBox(x0=48.0, y0=60.0, x1=content_x + 120.0, y1=70.0),
+        fragments=(marker_fragment, content_fragment),
+        spans=(),
         ambiguous=False,
         translated_text=(
             "Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
@@ -2202,3 +2225,159 @@ def test_render_accepts_revision5_non_list_artifact(
         options=RenderOptions(max_reflow_pages=4),
     )
     assert result.reflowed_paragraphs >= 1
+
+
+def test_marker_fit_rejects_invalid_narrow_gap(tmp_path: Path, cyrillic_font_path: Path) -> None:
+    # gap = 59 - 48 = 11pt, narrower than the rendered "2) " run (~12.8pt).
+    source, translated = _list_gap_document(tmp_path, 59.0)
+    source_document = pymupdf.open(source)
+    try:
+        assert _discover(translated, source_document[0], cyrillic_font_path) is None
+    finally:
+        source_document.close()
+
+
+def test_marker_fit_accepts_valid_narrow_gap(tmp_path: Path, cyrillic_font_path: Path) -> None:
+    # gap = 62 - 48 = 14pt, wide enough for the rendered marker run.
+    source, translated = _list_gap_document(tmp_path, 62.0)
+    source_document = pymupdf.open(source)
+    try:
+        assert _discover(translated, source_document[0], cyrillic_font_path) is not None
+    finally:
+        source_document.close()
+
+
+def _render_marker_plan(
+    tmp_path: Path,
+    cyrillic_font_path: Path,
+    *,
+    marker_count: int = 1,
+    alignment: ReflowAlignment = ReflowAlignment.LEFT,
+) -> tuple[Path, LayoutPlan]:
+    text = "Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
+    paragraph = FlowParagraph(
+        occurrence_index=0,
+        paragraph_id="marker-plan-1",
+        source_page_number=1,
+        kind=ParagraphKind.LIST_ITEM.value,
+        disposition=ContentDisposition.FLOWABLE_BODY,
+        text=text,
+        source_rect=Rect(48, 40, 260, 60),
+        source_fragment_rects=(Rect(48, 40, 260, 60),),
+        style=ReflowStyle(
+            font_size=11,
+            line_height=1.2,
+            space_before=0.0,
+            space_after=0.0,
+            left_indent=82.0,
+            first_line_indent=0.0,
+            alignment=alignment,
+            list_marker="2)",
+            list_marker_offset=82.0,
+        ),
+    )
+    region = FlowRegion(
+        target_page_number=1,
+        rect=Rect(48, 40, 260, 240),
+        column_index=0,
+        order=0,
+        source_page_number=1,
+    )
+    with PyMuPdfMeasurer(300, 280, cyrillic_font_path) as measurer:
+        plan = plan_flow((paragraph,), (region,), measurer, content_kind=ReflowContentKind.BODY)
+
+    output = tmp_path / f"marker-plan-{marker_count}-{alignment.value}.pdf"
+    document = pymupdf.open()
+    document.new_page(width=300, height=280)
+    archive = pymupdf.Archive(str(cyrillic_font_path.parent))
+    for segment in plan.segments:
+        page = document[segment.target_page_number - 1]
+        style = ReflowStyle(
+            font_size=segment.font_size,
+            line_height=segment.line_height,
+            space_before=segment.space_before,
+            space_after=segment.space_after,
+            first_line_indent=segment.first_line_indent,
+            left_indent=segment.left_indent,
+            right_indent=segment.right_indent,
+            alignment=segment.alignment,
+            bold_requested=segment.bold_requested,
+            bold_applied=segment.bold_applied,
+            italic_requested=segment.italic_requested,
+            italic_applied=segment.italic_applied,
+            mixed_style=segment.mixed_style,
+            fallback_count=segment.fallback_count,
+        )
+        if segment.list_marker and segment.continuation_index == 0:
+            for _ in range(marker_count):
+                _insert_list_marker(page, segment, cyrillic_font_path, archive)
+        rich_text = build_rich_text(
+            segment.text,
+            cyrillic_font_path,
+            style,
+            segment.color,
+            first_line_indent=segment.first_line_indent,
+            inline_runs=segment.inline_runs,
+        )
+        page.insert_htmlbox(
+            pymupdf.Rect(
+                segment.target_rect.x0,
+                segment.target_rect.y0,
+                segment.target_rect.x1,
+                segment.target_rect.y1,
+            ),
+            rich_text.html,
+            css=rich_text.css,
+            archive=archive,
+            scale_low=1,
+        )
+    document.save(output)
+    document.close()
+    return output, plan
+
+
+def test_validate_saved_segments_detects_missing_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    output, plan = _render_marker_plan(tmp_path, cyrillic_font_path, marker_count=0)
+    with pytest.raises(OutputPdfError, match="structural list marker"):
+        validate_saved_segments(output, (plan,))
+
+
+def test_validate_saved_segments_detects_duplicate_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    output, plan = _render_marker_plan(tmp_path, cyrillic_font_path, marker_count=2)
+    with pytest.raises(OutputPdfError, match="structural list marker"):
+        validate_saved_segments(output, (plan,))
+
+
+def test_validate_saved_segments_accepts_single_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    output, plan = _render_marker_plan(tmp_path, cyrillic_font_path, marker_count=1)
+    validate_saved_segments(output, (plan,))
+
+
+def test_marker_x_preserved_across_semantic_alignments(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    for alignment in (
+        ReflowAlignment.LEFT,
+        ReflowAlignment.CENTER,
+        ReflowAlignment.RIGHT,
+    ):
+        output, plan = _render_marker_plan(
+            tmp_path, cyrillic_font_path, marker_count=1, alignment=alignment
+        )
+        validate_saved_segments(output, (plan,))
+        saved = pymupdf.open(output)
+        try:
+            marker_words = [
+                word for page in saved for word in page.get_text("words") if word[4] == "2)"
+            ]
+            assert len(marker_words) == 1
+            # The structural marker stays at source marker_x (48) regardless of alignment.
+            assert marker_words[0][0] == pytest.approx(48.0, abs=2.0)
+        finally:
+            saved.close()

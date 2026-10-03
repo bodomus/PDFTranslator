@@ -14,9 +14,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   duplicate, restyle, or renumber the structural marker; the source marker is reattached exactly
   once at render time. The marker and the semantic content are laid out as independent source-backed
   origins through the shared reflow path (marker at `marker_x`, content at `content_x`), with the
-  HTML-table workaround and translated-prefix stripping heuristic removed. Rendering now rejects
-  translated artifacts produced with an incompatible translation behavior revision before any
-  marker reattachment, requiring a rerun instead of duplicating the marker.
+  HTML-table workaround and translated-prefix stripping heuristic removed. The marker run is now
+  measured for fit during planning, left-anchored to source `marker_x` regardless of semantic
+  paragraph alignment, and verified as present exactly once by saved-PDF validation. Rendering also
+  rejects translated artifacts produced with an incompatible translation behavior revision before
+  any marker reattachment, requiring a rerun instead of duplicating the marker.
 - Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
   `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
   the resume step — now always terminates and reaps the direct child and every descendant before

@@ -17,6 +17,7 @@ from pdftranslate.rendering.reflow.models import (
     LayoutPlan,
     PlacementSegment,
     Rect,
+    ReflowAlignment,
     ReflowStyle,
 )
 from pdftranslate.rendering.reflow.planner import Measurement
@@ -223,7 +224,9 @@ def _insert_list_marker(
         first_line_indent=0.0,
         left_indent=0.0,
         right_indent=0.0,
-        alignment=segment.alignment,
+        # The structural marker is source-anchored to marker_x and must not inherit the
+        # semantic paragraph's CENTER / RIGHT alignment.
+        alignment=ReflowAlignment.LEFT,
     )
     marker_rich = build_rich_text(
         segment.list_marker,
@@ -322,9 +325,39 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
                     f"expected_tail={expected[-160:]!r}; local_tail={local[-160:]!r}; "
                     f"page_diagnostic={normalized_page[:160]!r}"
                 )
+            if segment.list_marker and segment.continuation_index == 0:
+                _validate_saved_marker(page, segment)
             _validate_saved_inline_styles(page, clip, segment)
     finally:
         document.close()
+
+
+def _validate_saved_marker(page: pymupdf.Page, segment: PlacementSegment) -> None:
+    """Verify the source-owned structural marker is present exactly once.
+
+    The marker run lives in the source-backed region left of the semantic content edge, so this
+    check is intentionally independent of the semantic text.
+    """
+    marker = segment.list_marker
+    offset = segment.list_marker_offset
+    padding = max(2.0, segment.font_size * 0.8)
+    marker_rect = pymupdf.Rect(
+        segment.target_rect.x0 - offset - padding,
+        segment.target_rect.y0 - padding,
+        segment.target_rect.x0,
+        segment.target_rect.y1 + padding,
+    )
+    expected = _normalize(marker)
+    matches = [
+        word
+        for word in page.get_text("words", clip=marker_rect)
+        if _normalize(str(word[4])) == expected
+    ]
+    if len(matches) != 1:
+        raise OutputPdfError(
+            f"saved PDF has {len(matches)} structural list marker(s) for occurrence "
+            f"{segment.occurrence_index}; expected exactly one"
+        )
 
 
 def _segment_clip(page: pymupdf.Page, segment: PlacementSegment) -> pymupdf.Rect:

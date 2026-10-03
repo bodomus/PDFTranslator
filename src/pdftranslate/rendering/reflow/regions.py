@@ -387,6 +387,17 @@ def _list_item_style(
     content_x = _source_content_x(paragraph, marker_x, region, font_path, font_size)
     if content_x <= marker_x:
         return None
+    # The marker run must fit inside the source-backed marker region [marker_x, content_x].
+    # Measure it with the same font/size assumptions insertion will use, so an invalid narrow
+    # gap fails closed here instead of during insertion.
+    if font_path is not None:
+        marker_run_width = float(
+            pymupdf.Font(fontfile=str(font_path)).text_length(  # type: ignore[no-untyped-call]
+                f"{marker.marker_text}{marker.separation}", fontsize=font_size
+            )
+        )
+        if marker_run_width > (content_x - marker_x) + 1e-6:
+            return None
     # The marker is a separate source-backed run at marker_x, and the semantic content begins
     # at the same source content edge on every line, so the first line has no hanging indent.
     return replace(
