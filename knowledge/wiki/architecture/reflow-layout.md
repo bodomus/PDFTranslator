@@ -150,10 +150,14 @@ Production PyMuPDF measurement obtains that minimum from emitted physical text-l
 font-size can change height and wrapping, but a taller span on one physical line no longer inflates
 the orphan guard's rendered-line count.
 
-PDFTR-36 adds source-owned list-marker fidelity to the same body flow. Confidently classified list
-items join an already body-reflow-eligible page, and their visible text is reconstructed from the
+PDFTR-36 adds source-owned list-marker fidelity to the same body flow. Marker detection is derived
+from retained source text for BODY, HEADING, and LIST_ITEM paragraphs, so every supported marker
+family reaches production even when reconstruction did not label the paragraph LIST_ITEM. List-only
+pages and isolated list items reflow when their marker/content geometry is stable, not only pages
+that already had at least two stable body paragraphs. Visible text is reconstructed from the
 retained source marker plus the translated semantic content, so a provider cannot delete, duplicate,
-translate, or restyle the marker. Source-derived hanging indentation places the marker on the first
-line and aligns continuation lines to the measured content start; when source continuation geometry
-is absent the selected renderer font measures the marker width. Ambiguous prefixes fail closed.
-Fixed-layout list items keep the same marker reconstruction without reflow.
+translate, or restyle the marker; a source-evidenced strip preserves legitimate content that begins
+with a marker-like prefix (such as ``A. Smith``). Source-derived hanging indentation places the
+marker on the first line and aligns continuation lines to the measured content start; when source
+continuation geometry is absent the selected renderer font measures the marker width. Ambiguous
+prefixes fail closed. Fixed-layout list items keep the same marker reconstruction without reflow.

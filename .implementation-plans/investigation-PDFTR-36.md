@@ -51,7 +51,11 @@ structural marker.
      marker + stripped translated content;
    - fixed-layout path: `renderer._paragraph_block()` rewrites `translated_text` the same way for
      list items that are not reflowed.
-   The same deterministic function is used in both places.
+   The same deterministic function is used in both places. Stripping is source-evidenced: exact
+   copies of the source marker are removed first, then leading translated marker prefixes are
+   removed only when the retained source content does not itself begin with a marker-like prefix.
+   The translated-prefix matcher accepts Cyrillic letter markers so a Latin `a)` translated to
+   Cyrillic `а)` is stripped, while marker-deleted content such as `A. Smith` is preserved.
 
 8. **How are hanging indents currently represented?**
    `ReflowStyle.left_indent` shifts every line right and `ReflowStyle.first_line_indent` shifts only

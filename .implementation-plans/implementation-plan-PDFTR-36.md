@@ -8,9 +8,10 @@ source-derived hanging indentation, for confidently classified list items.
 ## Approach
 
 Keep the current translation flow unchanged. Derive marker metadata deterministically from retained
-source paragraph text at render time, reconstruct the visible text from source marker + translated
-semantic content, and route confident list items through the existing body reflow when the page is
-already body-reflow-eligible. Otherwise preserve the marker in the existing fixed-layout path.
+source paragraph text at render time for BODY, HEADING, and LIST_ITEM paragraphs, reconstruct the
+visible text from source marker + translated semantic content, and route confident list items
+through the existing body reflow. List-only pages and isolated items reflow when their marker/content
+geometry is stable; otherwise the marker is preserved in the existing fixed-layout path.
 
 ## Changes
 
@@ -29,8 +30,12 @@ already body-reflow-eligible. Otherwise preserve the marker in the existing fixe
      resolved-to-reflow mapping with `heading=False`.
 
 3. `src/pdftranslate/rendering/reflow/regions.py`
-   - Include confidently detected `LIST_ITEM` paragraphs in body-flow selection and flow building.
-   - Reconstruct `FlowParagraph.text` from the source marker and stripped translated content.
+   - Detect markers from retained source text for BODY, HEADING, and LIST_ITEM paragraphs instead
+     of trusting `ParagraphKind.LIST_ITEM`.
+   - Reconstruct `FlowParagraph.text` from the source marker and stripped translated content, using
+     kind-appropriate reflow style adapters.
+   - Add `_stable_list_column()` so list-only pages and isolated items reflow without the BODY
+     width guard while keeping edge-stability and other layout safety checks.
    - Override `left_indent`/`first_line_indent` from retained source fragment geometry relative to
      the body flow region, producing a safe hanging indent where continuation geometry exists.
    - Fail closed (return `None`) when marker geometry is unsafe or content is empty.
@@ -42,9 +47,10 @@ already body-reflow-eligible. Otherwise preserve the marker in the existing fixe
    - Extend saved-segment validation clip left for hanging indents.
 
 5. `src/pdftranslate/rendering/renderer.py`
-   - Reconstruct fixed-layout list-item `translated_text` in `_paragraph_block()`.
+   - Reconstruct fixed-layout list-item `translated_text` in `_paragraph_block()` for BODY, HEADING,
+     and LIST_ITEM paragraphs.
    - Add `list_marker_candidates` / `list_markers_applied` / `list_markers_deferred` counters to
-     `RenderResult`.
+     `RenderResult` for the same paragraph kinds.
 
 6. Diagnostics
    - Add the same three counters to `ReportSummary` and the HTML report table.

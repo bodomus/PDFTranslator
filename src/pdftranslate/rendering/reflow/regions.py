@@ -59,31 +59,13 @@ def discover_reflow_page(
     for index, paragraph in enumerate(document.paragraphs):
         if paragraph.anchor_page_number != page_model.page_number:
             continue
-        if paragraph.kind is ParagraphKind.LIST_ITEM:
-            # Reconstruction can label short running titles and page numbers as body
-            # when a selected artifact has too few pages for repeated-element evidence.
-            # Margin geometry is therefore an anchored exclusion, never flow evidence.
-            if (
-                paragraph.bbox.y0 < page_model.height * 0.07
-                or paragraph.bbox.y1 > page_model.height * 0.92
-            ):
-                continue
-            if (
-                paragraph_policy(document, paragraph) is not RepeatedElementPolicy.TRANSLATE
-                or paragraph.translated_text is None
-                or not paragraph.translated_text.strip()
-                or any(
-                    fragment.mapping.page_number != page_model.page_number or fragment.column != 0
-                    for fragment in paragraph.fragments
-                )
-            ):
-                return None
-            reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text)
-            if reconstructed is None:
-                continue
-            list_candidates.append((index, paragraph, reconstructed))
-            continue
-        if paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.HEADING}:
+        marker = detect_list_marker(paragraph.text)
+        is_list = marker is not None and paragraph.kind in {
+            ParagraphKind.BODY,
+            ParagraphKind.HEADING,
+            ParagraphKind.LIST_ITEM,
+        }
+        if not is_list and paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.HEADING}:
             continue
         # Reconstruction can label short running titles and page numbers as body
         # when a selected artifact has too few pages for repeated-element evidence.
@@ -103,17 +85,36 @@ def discover_reflow_page(
             )
         ):
             return None
+        if is_list:
+            reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text)
+            if reconstructed is None:
+                continue
+            list_candidates.append((index, paragraph, reconstructed))
+            continue
         flow_candidates.append((index, paragraph))
     body = [item for item in flow_candidates if item[1].kind is ParagraphKind.BODY]
-    if len(body) < 2 or not _stable_single_column(body, page_model):
+    list_structural = [
+        (index, paragraph)
+        for index, paragraph, _ in list_candidates
+        if paragraph.kind in {ParagraphKind.BODY, ParagraphKind.LIST_ITEM}
+    ]
+    if body:
+        if len(body) < 2 or not _stable_single_column(body, page_model):
+            return None
+        if list_structural and not _stable_list_column(list_structural, page_model):
+            return None
+    elif not list_structural or not _stable_list_column(list_structural, page_model):
         return None
     if not _ambiguity_resolved_by_page_evidence(flow_candidates, body):
         return None
-    body_rects = [rect_from_bbox(item.bbox) for _, item in body]
+    if body:
+        x_rects = [rect_from_bbox(item.bbox) for _, item in body]
+    else:
+        x_rects = [rect_from_bbox(item.bbox) for _, item in list_structural]
     flow_rects = [rect_from_bbox(item.bbox) for _, item in flow_candidates]
     flow_rects.extend(rect_from_bbox(item.bbox) for _, item, _ in list_candidates)
-    x0 = min(item.x0 for item in body_rects)
-    x1 = max(item.x1 for item in body_rects)
+    x0 = min(item.x0 for item in x_rects)
+    x1 = max(item.x1 for item in x_rects)
     y0 = min(item.y0 for item in flow_rects)
     if y0 < page_model.height * 0.07:
         return None
@@ -270,6 +271,19 @@ def _stable_single_column(body: list[tuple[int, LogicalParagraph]], page: Extrac
     return x0_spread <= max(14.0, page.width * 0.04) and x1_spread <= max(24.0, page.width * 0.14)
 
 
+def _stable_list_column(items: list[tuple[int, LogicalParagraph]], page: ExtractedPage) -> bool:
+    rects = [item.bbox for _, item in items]
+    if len(rects) < 2:
+        # A single confident item has no sibling to contradict a single column. Its
+        # marker/content geometry is validated later against the flow region.
+        return True
+    x0_spread = max(item.x0 for item in rects) - min(item.x0 for item in rects)
+    x1_spread = max(item.x1 for item in rects) - min(item.x1 for item in rects)
+    # List items are intentionally narrower than a full body column, so the body width
+    # guard does not apply. Only the shared left/right edges evidence one list column.
+    return x0_spread <= max(14.0, page.width * 0.04) and x1_spread <= max(24.0, page.width * 0.14)
+
+
 def _resolved_occurrence(
     style_by_occurrence: dict[int, ResolvedParagraphStyle],
     occurrence_index: int,
@@ -302,14 +316,30 @@ def _list_flow_paragraph(
         return None
     source_size = paragraph_font_size(paragraph, default_font_size)
     font_size = max(min_font_size, source_size)
+    is_heading = paragraph.kind is ParagraphKind.HEADING
     if style_by_occurrence is not None:
         resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
         if resolved is None:
             return None
         try:
-            style, color = list_reflow_style(resolved)
+            if is_heading:
+                style, color = heading_reflow_style(resolved)
+            elif paragraph.kind is ParagraphKind.LIST_ITEM:
+                style, color = list_reflow_style(resolved)
+            else:
+                style, color = body_reflow_style(resolved)
         except ValueError:
             return None
+    elif is_heading:
+        font_size = max(font_size, default_font_size * 1.15)
+        style = ReflowStyle(
+            font_size=font_size,
+            line_height=line_height,
+            space_before=0.0,
+            space_after=font_size * 0.65,
+            heading=True,
+        )
+        color = paragraph_color(paragraph)
     else:
         style = ReflowStyle(
             font_size=font_size,
@@ -326,7 +356,9 @@ def _list_flow_paragraph(
         paragraph_id=paragraph.id,
         source_page_number=page_model.page_number,
         kind=paragraph.kind.value,
-        disposition=ContentDisposition.FLOWABLE_BODY,
+        disposition=(
+            ContentDisposition.FLOWABLE_HEADING if is_heading else ContentDisposition.FLOWABLE_BODY
+        ),
         text=reconstructed_text,
         source_rect=source_rect,
         source_fragment_rects=tuple(

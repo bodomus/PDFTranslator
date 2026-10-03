@@ -1616,7 +1616,7 @@ def _single_list_source_pdf(path: Path) -> Path:
     return path
 
 
-def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
+def test_renderer_reflows_isolated_list_item_with_hanging_indent(
     tmp_path: Path, cyrillic_font_path: Path
 ) -> None:
     source = _single_list_source_pdf(tmp_path / "single-list.pdf")
@@ -1625,7 +1625,8 @@ def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
         paragraph.model_copy(
             update={
                 "translated_text": (
-                    "2) 2) Установите пакет."
+                    "2) 2) Установите пакет и перезапустите приложение, "
+                    "чтобы проверить перенос строки текста в списке."
                     if paragraph.kind is ParagraphKind.LIST_ITEM
                     else paragraph.text
                 )
@@ -1647,6 +1648,72 @@ def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
         translated,
         output,
         font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+
+    assert result.reflowed_paragraphs == 1
+    assert result.list_marker_candidates == 1
+    assert result.list_markers_applied == 1
+    assert result.list_markers_deferred == 0
+
+    rendered = pymupdf.open(output)
+    try:
+        text = " ".join(str(page.get_text("text")) for page in rendered)
+        normalized = " ".join(text.split())
+        assert normalized.count("2)") == 1
+        assert "Установите пакет" in normalized
+        words = [word for page in rendered for word in page.get_text("words")]
+        marker_x = min(word[0] for word in words if word[4] == "2)")
+        other_x = [word[0] for word in words if word[4] != "2)"]
+        assert other_x
+        # Continuation lines align with the content edge, not the marker edge.
+        assert min(other_x) > marker_x + 4.0
+    finally:
+        rendered.close()
+
+
+def _margin_list_source_pdf(path: Path) -> Path:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=120)
+    # Inside the top margin exclusion band, so reflow is skipped and the fixed-layout
+    # path must still reconstruct the source marker.
+    page.insert_text((48, 14), "2) Install the package.", fontsize=11)
+    document.save(path)
+    document.close()
+    return path
+
+
+def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _margin_list_source_pdf(tmp_path / "margin-list.pdf")
+    extracted = PdfExtractor().extract(source)
+    translated_paragraphs = tuple(
+        paragraph.model_copy(
+            update={
+                "translated_text": (
+                    "2) 2) Установите пакет."
+                    if paragraph.kind is ParagraphKind.LIST_ITEM
+                    else paragraph.text
+                )
+            }
+        )
+        for paragraph in extracted.paragraphs
+    )
+    translated = extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": translated_paragraphs,
+            "translation": _translation_metadata(len(translated_paragraphs)),
+        }
+    )
+    output = tmp_path / "margin-list.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
         options=RenderOptions(allow_expand=True),
     )
 
@@ -1661,5 +1728,154 @@ def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
         normalized = " ".join(text.split())
         assert normalized.count("2)") == 1
         assert "Установите пакет" in normalized
+    finally:
+        rendered.close()
+
+
+def _list_family_source_pdf(path: Path, font_path: Path) -> Path:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=500)
+    items = (
+        "● Install the software package now.",
+        "○ Restart the application completely.",
+        "– Important configuration note.",
+        "— Extended configuration notice.",
+        "(a) First configuration option.",
+        "(A) Second configuration option.",
+    )
+    html = "".join(f"<p>{item}</p>" for item in items)
+    page.insert_htmlbox(
+        pymupdf.Rect(48, 40, 290, 320),
+        html,
+        css=f'@font-face {{ font-family: listfont; src: url("{font_path.name}"); }} '
+        "* { font-family: listfont; font-size: 11pt; margin: 0; padding: 0; }",
+        archive=pymupdf.Archive(str(font_path.parent)),
+    )
+    document.save(path)
+    document.close()
+    return path
+
+
+def _translated_family_source(source: Path) -> ExtractedDocument:
+    extracted = PdfExtractor().extract(source)
+    by_marker = {
+        "●": "Установите программный пакет сейчас.",
+        "○": "Полностью перезапустите приложение.",
+        "–": "Важное примечание по настройке.",
+        "—": "Расширенное примечание по настройке.",
+        "(a)": "Первый вариант настройки.",
+        "(A)": "Второй вариант настройки.",
+    }
+    paragraphs = []
+    for paragraph in extracted.paragraphs:
+        translated = next(
+            (text for marker, text in by_marker.items() if paragraph.text.startswith(marker)),
+            paragraph.text,
+        )
+        paragraphs.append(paragraph.model_copy(update={"translated_text": translated}))
+    return extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": tuple(paragraphs),
+            "translation": _translation_metadata(len(paragraphs)),
+        }
+    )
+
+
+def test_renderer_reflows_all_marker_families(tmp_path: Path, cyrillic_font_path: Path) -> None:
+    source = _list_family_source_pdf(tmp_path / "family-list.pdf", cyrillic_font_path)
+    translated = _translated_family_source(source)
+    output = tmp_path / "family-list.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+
+    assert result.list_marker_candidates == 6
+    assert result.list_markers_applied == 6
+    assert result.list_markers_deferred == 0
+
+    rendered = pymupdf.open(output)
+    try:
+        text = " ".join(str(page.get_text("text")) for page in rendered)
+        normalized = " ".join(text.split())
+        for marker in ("●", "○", "–", "—", "(a)", "(A)"):
+            assert normalized.count(marker) == 1, marker
+    finally:
+        rendered.close()
+
+
+def _list_only_source_pdf(path: Path) -> Path:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=200)
+    items = (
+        "2) Install the software package.",
+        "3) Restart the application service.",
+        "4) Verify the translated output file.",
+    )
+    y = 60.0
+    for item in items:
+        page.insert_text((48, y), item, fontsize=11)
+        y += 28.0
+    document.save(path)
+    document.close()
+    return path
+
+
+def _translated_list_only_source(source: Path) -> ExtractedDocument:
+    extracted = PdfExtractor().extract(source)
+    by_marker = {
+        "2)": "Установите программный пакет и перезапустите службу приложения полностью.",
+        "3)": "Перезапустите службу приложения и проверьте журнал ошибок на месте.",
+        "4)": "Проверьте переведённый выходной файл и сохраните результат работы.",
+    }
+    paragraphs = []
+    for paragraph in extracted.paragraphs:
+        translated = next(
+            (text for marker, text in by_marker.items() if paragraph.text.startswith(marker)),
+            paragraph.text,
+        )
+        paragraphs.append(paragraph.model_copy(update={"translated_text": translated}))
+    return extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": tuple(paragraphs),
+            "translation": _translation_metadata(len(paragraphs)),
+        }
+    )
+
+
+def test_renderer_reflows_list_only_page_with_hanging_indent(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _list_only_source_pdf(tmp_path / "list-only.pdf")
+    translated = _translated_list_only_source(source)
+    output = tmp_path / "list-only.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+
+    assert result.reflowed_paragraphs == 3
+    assert result.list_marker_candidates == 3
+    assert result.list_markers_applied == 3
+    assert result.list_markers_deferred == 0
+
+    rendered = pymupdf.open(output)
+    try:
+        words = [word for page in rendered for word in page.get_text("words")]
+        markers = sorted(word[0] for word in words if word[4] in {"2)", "3)", "4)"})
+        assert len(markers) == 3
+        content_x = [word[0] for word in words if word[4] not in {"2)", "3)", "4)"}]
+        assert content_x
+        assert min(content_x) > min(markers) + 4.0
     finally:
         rendered.close()

@@ -73,6 +73,30 @@ def test_reconstructs_marker_with_provider_deleted_marker() -> None:
     )
 
 
+def test_reconstructs_cyrillic_translated_letter_marker() -> None:
+    assert reconstruct_list_item_text("a) First option", "а) Первый вариант") == (
+        "a) Первый вариант"
+    )
+
+
+def test_reconstruct_strips_restyled_numbered_marker() -> None:
+    assert (
+        reconstruct_list_item_text("2) Restart the application.", "(2) Перезапустите приложение.")
+        == "2) Перезапустите приложение."
+    )
+    assert (
+        reconstruct_list_item_text("2) Restart the application.", "3) Перезапустите приложение.")
+        == "2) Перезапустите приложение."
+    )
+
+
+def test_reconstruct_preserves_semantic_content_starting_with_initial() -> None:
+    assert (
+        reconstruct_list_item_text("• A. Smith is responsible.", "A. Smith is responsible.")
+        == "• A. Smith is responsible."
+    )
+
+
 def test_reconstructs_marker_with_provider_translated_marker() -> None:
     assert (
         reconstruct_list_item_text("2) Restart the application.", "2. Перезапустите приложение.")

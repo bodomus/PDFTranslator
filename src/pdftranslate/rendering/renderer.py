@@ -547,7 +547,11 @@ def _validate_layout_collisions(
 def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
     first = paragraph.fragments[0]
     translated_text = paragraph.translated_text
-    if paragraph.kind is ParagraphKind.LIST_ITEM:
+    if paragraph.kind in {
+        ParagraphKind.BODY,
+        ParagraphKind.HEADING,
+        ParagraphKind.LIST_ITEM,
+    }:
         reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text or "")
         if reconstructed is not None:
             translated_text = reconstructed
@@ -767,7 +771,11 @@ def _list_marker_counters(translated: ExtractedDocument) -> tuple[int, int, int]
         return 0, 0, 0
     candidates = applied = deferred = 0
     for paragraph in translated.paragraphs:
-        if paragraph.kind is not ParagraphKind.LIST_ITEM:
+        if paragraph.kind not in {
+            ParagraphKind.BODY,
+            ParagraphKind.HEADING,
+            ParagraphKind.LIST_ITEM,
+        }:
             continue
         if _paragraph_policy(translated, paragraph) in {
             RepeatedElementPolicy.PRESERVE,
