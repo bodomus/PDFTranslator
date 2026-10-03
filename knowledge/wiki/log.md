@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-40.md
 - ../../Tickets/PDFTR-39.md
 - ../../Tickets/PDFTR-37.md
 - ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
@@ -25,6 +26,9 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-03
+
+- Documented constrained reviewer-only Git observability, fixed repository root and helper/filter
+  hardening for every Pi preset, without changing state/round/merge ownership.
 
 - Documented optional source-backed structural list metadata in the shared reflow model: independent
   marker/content measurement, first-occurrence ownership, shared insertion/saved-validation identity

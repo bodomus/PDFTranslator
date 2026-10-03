@@ -30,7 +30,9 @@ The current DeepSeek/Codex assignment is orchestration metadata; the contract it
 ## Role routing
 
 - Before implementing or handing off, read [IMPLEMENTER_CONTRACT.md](IMPLEMENTER_CONTRACT.md).
-- Before reviewing, read [REVIEWER_CONTRACT.md](REVIEWER_CONTRACT.md).
+- Before reviewing, read [REVIEWER_CONTRACT.md](REVIEWER_CONTRACT.md) and
+  [REVIEWER_GIT_SAFETY.md](REVIEWER_GIT_SAFETY.md). The reviewer-only `git_readonly` capability
+  provides bounded Git evidence without shell or repository mutation permissions.
 - Before producing or consuming JSON, read [HANDOFF_CONTRACT.md](HANDOFF_CONTRACT.md).
 
 ## Normal sequence

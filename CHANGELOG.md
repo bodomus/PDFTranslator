@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Reviewer-only constrained `git_readonly` capability for all Pi role presets (PDFTR-40):
+  independent exact-SHA/status/branch/diff/show/merge-base/history evidence without shell,
+  arbitrary Git argv or repository writes. Fixed root, helper/filter/pager/network hardening,
+  bounded output and fail-closed errors preserve validator ownership and two-round semantics.
+  CI installs Node 22 for deterministic provider-free inspector regressions.
+
 - Optional source-backed internal list-layout metadata with separate structural marker/content
   origins, shared measurement/insertion, first-occurrence-only pagination ownership and typed
   saved-output occurrence identity. Invalid evidence fails closed. Automatic list reconstruction,

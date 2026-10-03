@@ -44,7 +44,8 @@ REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
 _JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```", re.DOTALL)
 
 # The reviewer is technically read-only: only these tools may ever be granted.
-READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls"})
+READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls", "git_readonly"})
+REVIEWER_EXTENSION = Path(__file__).resolve().parent / "reviewer_git" / "extension.ts"
 
 IMPLEMENTER_FALLBACK = (
     "The implementer is the only repository writer. Implement the ticket, add tests, run the "
@@ -77,7 +78,9 @@ class RoleConfig:
 
 
 DEFAULT_IMPLEMENTER = RoleConfig("deepseek", "deepseek-v4-pro")
-DEFAULT_REVIEWER = RoleConfig("openai-codex", "gpt-6.1-sol", ("read", "grep", "find", "ls"))
+DEFAULT_REVIEWER = RoleConfig(
+    "openai-codex", "gpt-6.1-sol", ("read", "grep", "find", "ls", "git_readonly")
+)
 HEARTBEAT_SECONDS = 5 * 60
 
 
@@ -169,6 +172,8 @@ def validate_reviewer_config(config: RunnerConfig) -> None:
     tools = config.reviewer.tools
     if not tools:
         raise RunnerError("reviewer tools must be a non-empty read-only allowlist")
+    if "git_readonly" not in tools:
+        raise RunnerError("reviewer tools must include git_readonly for independent Git evidence")
     unknown = sorted(set(tools) - READ_ONLY_TOOLS)
     if unknown:
         raise RunnerError(
@@ -631,8 +636,10 @@ def _write_log(log_path: Path, command: Sequence[str], stdout: str, stderr: str)
     log_path.write_text(content, encoding="utf-8")
 
 
-def _pi_arguments(config: RoleConfig, executable: str) -> list[str]:
+def _pi_arguments(config: RoleConfig, executable: str, *, reviewer: bool = False) -> list[str]:
     arguments = [executable, "--provider", config.provider, "--model", config.model]
+    if reviewer:
+        arguments.extend(["--no-extensions", "--extension", str(REVIEWER_EXTENSION)])
     if config.tools:
         arguments.extend(["--tools", ",".join(config.tools)])
     arguments.append("-p")
@@ -826,6 +833,8 @@ def _reviewer_prompt(
     contract: str,
     reviewed_sha: str,
     review_round: int,
+    expected_base: str,
+    expected_branch: str,
 ) -> str:
     schema = {
         "schema_version": "1.0",
@@ -852,6 +861,15 @@ def _reviewer_prompt(
             "superseded.",
             "",
             f"Exact reviewed SHA: {reviewed_sha}",
+            f"Expected base SHA: {expected_base}",
+            f"Expected task branch: {expected_branch}",
+            "Use git_readonly independently: head, status, resolve_revision of the reviewed SHA,",
+            "current_branch, merge_base(base, head), diff(base, head), show(commit), bounded log.",
+            "Verify HEAD equals reviewed SHA, status is empty, branch matches, and merge-base",
+            "equals expected base. Inspect the exact endpoint diff (or merge-base diff as needed).",
+            "Git-read is constrained evidence, NOT shell access or another state machine.",
+            "If Git inspection fails or evidence is inconsistent, fail closed with BLOCKED.",
+            "Do not return BLOCKED solely because ordinary file tools cannot inspect Git.",
             "",
             "## Ticket and acceptance criteria",
             ticket_text.strip(),
@@ -1047,6 +1065,8 @@ def run_cycle(
                 contract=reviewer_contract,
                 reviewed_sha=reviewed_sha,
                 review_round=review_round,
+                expected_base=manifest["base_sha"],
+                expected_branch=manifest["branch"],
             )
             round_label = f" round {review_round}" if review_round > 1 else ""
             progress.message(
@@ -1055,7 +1075,7 @@ def run_cycle(
             )
             reviewer_result = _execute_child(
                 executor,
-                _pi_arguments(active_config.reviewer, active_config.executable),
+                _pi_arguments(active_config.reviewer, active_config.executable, reviewer=True),
                 repo_root=repo_root,
                 ticket=ticket,
                 log_path=directory / f"pi-reviewer-round-{review_round}.log",

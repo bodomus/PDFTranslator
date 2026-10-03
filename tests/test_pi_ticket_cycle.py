@@ -66,6 +66,28 @@ def _git(repo: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
+def _inspect_git(repo: Path, query: dict[str, object]) -> str:
+    inspector = (REPOSITORY_ROOT / "scripts/reviewer_git/inspector.mjs").as_uri()
+    script = (
+        f"import {{ GitReadonlyInspector }} from {json.dumps(inspector)};"
+        "try { const inspector = new GitReadonlyInspector(process.argv[1]);"
+        "process.stdout.write(await inspector.query(JSON.parse(process.argv[2]))); }"
+        "catch(error) { console.error(error.message); process.exitCode = 1; }"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script, str(repo), json.dumps(query)],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=40,
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr)
+    return result.stdout
+
+
 @pytest.fixture
 def git_repo() -> Iterator[Path]:
     root = REPOSITORY_ROOT / "temp" / "pi-cycle-tests" / str(uuid4())
@@ -217,6 +239,19 @@ class FakePi:
             if verdict == "CHANGES_REQUIRED"
             else []
         )
+        # Independently observe Git evidence through the same inspector as the real tool.
+        manifest = json.loads((cycle_directory(self.repo, TICKET) / "manifest.json").read_text())
+        head = _inspect_git(self.repo, {"operation": "head"})
+        base = manifest["base_sha"]
+        assert _inspect_git(self.repo, {"operation": "status"}) == ""
+        assert head == manifest["current_head_sha"]
+        assert (
+            _inspect_git(self.repo, {"operation": "merge_base", "base": base, "head": head}).strip()
+            == base
+        )
+        assert "attempt" in _inspect_git(
+            self.repo, {"operation": "diff", "base": base, "head": head}
+        )
         document: dict[str, object] = {
             "schema_version": "1.0",
             "ticket": TICKET,
@@ -272,6 +307,12 @@ def test_one_round_pass(git_repo: Path) -> None:
     review = json.loads((cycle_directory(git_repo, TICKET) / "review-1.json").read_text("utf-8"))
     assert review["verdict"] == "PASS"
     assert review["reviewed_sha"] == outcome.implementation_sha
+    prompt = fake.invocations[1][1]
+    manifest = json.loads((cycle_directory(git_repo, TICKET) / "manifest.json").read_text())
+    assert f"Expected base SHA: {manifest['base_sha']}" in prompt
+    assert f"Expected task branch: {TASK_BRANCH}" in prompt
+    assert "Use git_readonly independently" in prompt
+    assert "fail closed with BLOCKED" in prompt
 
 
 def test_changes_required_then_new_sha_then_round_two_pass(git_repo: Path) -> None:
@@ -313,7 +354,11 @@ def test_reviewer_invocation_is_read_only_and_configured(git_repo: Path) -> None
     reviewer_command = next(c for c in fake.commands if _provider(c) == "openai-codex")
     assert _model(reviewer_command) == "gpt-6.1-sol"
     tools = reviewer_command[reviewer_command.index("--tools") + 1].split(",")
-    assert tools == ["read", "grep", "find", "ls"]
+    assert tools == ["read", "grep", "find", "ls", "git_readonly"]
+    assert "--no-extensions" in reviewer_command
+    assert reviewer_command[reviewer_command.index("--extension") + 1] == str(
+        pi_runner.REVIEWER_EXTENSION
+    )
 
 
 def test_implementer_invocation_is_configured(git_repo: Path) -> None:
@@ -439,7 +484,18 @@ def test_prompts_permit_only_the_handoff_input(git_repo: Path) -> None:
 
 @pytest.mark.parametrize(
     "tools",
-    [(), ("read", "bash"), ("write",), ("read", "unknown"), ("",), ("read", "edit", "write")],
+    [
+        (),
+        ("read", "bash"),
+        ("write",),
+        ("read", "unknown"),
+        ("",),
+        ("read", "edit", "write"),
+        ("git_readonly", "bash"),
+        ("git_readonly", "powershell"),
+        ("git_readonly", "write"),
+        ("git_readonly", "python"),
+    ],
 )
 def test_unsafe_reviewer_tools_rejected_before_state(
     git_repo: Path, tools: tuple[str, ...]
@@ -912,7 +968,11 @@ def test_presets_launch_independent_roles_with_read_only_reviewer(
     assert _model(first) == expected_models[implementer]
     assert _model(second) == expected_models[reviewer]
     assert "--tools" not in first
-    assert second[second.index("--tools") + 1] == "read,grep,find,ls"
+    assert second[second.index("--tools") + 1] == "read,grep,find,ls,git_readonly"
+    assert "--no-extensions" in second
+    assert "--extension" in second
+    assert "--extension" not in first
+    assert "--no-extensions" not in first
     assert fake.invocations[0][1].startswith("You are the implementer")
     assert fake.invocations[1][1].startswith("You are the read-only reviewer")
     assert fake.invocations[0][1] != fake.invocations[1][1]
@@ -948,7 +1008,9 @@ def test_explicit_role_fields_override_preset_independently() -> None:
         )
     )
     assert config.implementer == RoleConfig("custom-provider", "gpt-6.1-sol")
-    assert config.reviewer == RoleConfig("deepseek", "custom-model", ("read", "grep", "find", "ls"))
+    assert config.reviewer == RoleConfig(
+        "deepseek", "custom-model", ("read", "grep", "find", "ls", "git_readonly")
+    )
     defaults = pi_runner._config_from_arguments(pi_runner._parser().parse_args([TICKET]))
     assert defaults == RunnerConfig()
 
