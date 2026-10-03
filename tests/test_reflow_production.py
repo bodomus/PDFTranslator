@@ -1482,3 +1482,184 @@ def _translation_metadata(total: int) -> TranslationMetadata:
             translated_segments=total,
         ),
     )
+
+
+def _list_source_pdf(path: Path) -> Path:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=500)
+    page.insert_text((40, 25), "Running title", fontsize=8)
+    page.insert_textbox(pymupdf.Rect(40, 55, 260, 80), "Chapter One", fontsize=14)
+    page.insert_textbox(
+        pymupdf.Rect(40, 100, 260, 150),
+        "Body paragraph one contains enough source words for reconstruction.",
+        fontsize=11,
+    )
+    page.insert_textbox(
+        pymupdf.Rect(42, 165, 258, 220),
+        "Body paragraph two contains enough source words for stable reconstruction width.",
+        fontsize=11,
+    )
+    page.insert_textbox(
+        pymupdf.Rect(48, 240, 260, 270),
+        "2) Install the package.",
+        fontsize=11,
+    )
+    document.save(path)
+    document.close()
+    return path
+
+
+def _translated_list_source(source: Path) -> ExtractedDocument:
+    extracted = PdfExtractor().extract(source)
+    translated_paragraphs = []
+    for paragraph in extracted.paragraphs:
+        if "Chapter" in paragraph.text:
+            translated = "Глава Chapter Α"
+        elif "Body paragraph" in paragraph.text:
+            translated = (
+                "Точный русский текст с Latin terminus и Ελληνικά без изменения. " * 25
+            ).strip()
+        elif paragraph.kind is ParagraphKind.LIST_ITEM:
+            translated = (
+                "2) 2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
+            )
+        else:
+            translated = paragraph.text
+        translated_paragraphs.append(paragraph.model_copy(update={"translated_text": translated}))
+    return extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": tuple(translated_paragraphs),
+            "translation": _translation_metadata(len(translated_paragraphs)),
+        }
+    )
+
+
+def test_renderer_reflows_list_item_with_one_source_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _list_source_pdf(tmp_path / "list-source.pdf")
+    translated = _translated_list_source(source)
+    output = tmp_path / "list-translated.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+
+    assert result.reflowed_paragraphs == 4
+    assert result.list_marker_candidates == 1
+    assert result.list_markers_applied == 1
+    assert result.list_markers_deferred == 0
+    assert result.unplaced_text_count == 0
+
+    rendered = pymupdf.open(output)
+    try:
+        text = " ".join(str(page.get_text("text")) for page in rendered)
+        normalized = " ".join(text.split())
+        assert normalized.count("2)") == 1
+        assert "Установите пакет" in normalized
+        assert "2) Установите пакет" in normalized
+    finally:
+        rendered.close()
+
+
+def test_discover_reflow_page_reconstructs_confident_list_item(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _list_source_pdf(tmp_path / "list-discovery.pdf")
+    translated = _translated_list_source(source)
+    page_model = translated.pages[0]
+    source_document = pymupdf.open(source)
+    page = source_document[0]
+    style_by_occurrence = {
+        style.occurrence_index: style
+        for style in reconstruct_styles(extract_typography_evidence(translated)).paragraphs
+    }
+
+    discovered = discover_reflow_page(
+        translated,
+        page_model,
+        page,
+        default_font_size=11,
+        min_font_size=6,
+        line_height=1.2,
+        style_by_occurrence=style_by_occurrence,
+        font_path=cyrillic_font_path,
+    )
+
+    assert discovered is not None
+    list_item = next(
+        item for item in discovered.paragraphs if item.kind == ParagraphKind.LIST_ITEM.value
+    )
+    assert list_item.text == (
+        "2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
+    )
+    assert list_item.style.left_indent > 0
+    assert list_item.style.first_line_indent < 0
+    source_document.close()
+
+
+def _single_list_source_pdf(path: Path) -> Path:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=120)
+    page.insert_textbox(
+        pymupdf.Rect(48, 40, 260, 70),
+        "2) Install the package.",
+        fontsize=11,
+    )
+    document.save(path)
+    document.close()
+    return path
+
+
+def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _single_list_source_pdf(tmp_path / "single-list.pdf")
+    extracted = PdfExtractor().extract(source)
+    translated_paragraphs = tuple(
+        paragraph.model_copy(
+            update={
+                "translated_text": (
+                    "2) 2) Установите пакет."
+                    if paragraph.kind is ParagraphKind.LIST_ITEM
+                    else paragraph.text
+                )
+            }
+        )
+        for paragraph in extracted.paragraphs
+    )
+    translated = extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": translated_paragraphs,
+            "translation": _translation_metadata(len(translated_paragraphs)),
+        }
+    )
+    output = tmp_path / "single-list.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(allow_expand=True),
+    )
+
+    assert result.reflowed_paragraphs == 0
+    assert result.list_marker_candidates == 1
+    assert result.list_markers_applied == 1
+    assert result.list_markers_deferred == 0
+
+    rendered = pymupdf.open(output)
+    try:
+        text = " ".join(str(page.get_text("text")) for page in rendered)
+        normalized = " ".join(text.split())
+        assert normalized.count("2)") == 1
+        assert "Установите пакет" in normalized
+    finally:
+        rendered.close()

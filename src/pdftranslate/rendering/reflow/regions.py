@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import pymupdf
 
@@ -11,14 +12,22 @@ from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
-from pdftranslate.rendering.inline_styles import map_inline_styles
+from pdftranslate.rendering.inline_styles import InlineStyleMapping, map_inline_styles
+from pdftranslate.rendering.list_markers import (
+    detect_list_marker,
+    reconstruct_list_item_text,
+)
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
     FlowParagraph,
     Rect,
     ReflowStyle,
 )
-from pdftranslate.rendering.reflow.typography import body_reflow_style, heading_reflow_style
+from pdftranslate.rendering.reflow.typography import (
+    body_reflow_style,
+    heading_reflow_style,
+    list_reflow_style,
+)
 from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.typography import ResolvedParagraphStyle
 
@@ -40,13 +49,39 @@ def discover_reflow_page(
     min_font_size: float,
     line_height: float,
     style_by_occurrence: dict[int, ResolvedParagraphStyle] | None = None,
+    font_path: Path | None = None,
 ) -> ReflowPage | None:
     """Return a page only when structured and PDF evidence proves a safe body region."""
     if document.schema_version != "1.3" or page_model.classification is not PageClassification.TEXT:
         return None
-    candidates: list[tuple[int, LogicalParagraph]] = []
+    flow_candidates: list[tuple[int, LogicalParagraph]] = []
+    list_candidates: list[tuple[int, LogicalParagraph, str]] = []
     for index, paragraph in enumerate(document.paragraphs):
         if paragraph.anchor_page_number != page_model.page_number:
+            continue
+        if paragraph.kind is ParagraphKind.LIST_ITEM:
+            # Reconstruction can label short running titles and page numbers as body
+            # when a selected artifact has too few pages for repeated-element evidence.
+            # Margin geometry is therefore an anchored exclusion, never flow evidence.
+            if (
+                paragraph.bbox.y0 < page_model.height * 0.07
+                or paragraph.bbox.y1 > page_model.height * 0.92
+            ):
+                continue
+            if (
+                paragraph_policy(document, paragraph) is not RepeatedElementPolicy.TRANSLATE
+                or paragraph.translated_text is None
+                or not paragraph.translated_text.strip()
+                or any(
+                    fragment.mapping.page_number != page_model.page_number or fragment.column != 0
+                    for fragment in paragraph.fragments
+                )
+            ):
+                return None
+            reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text)
+            if reconstructed is None:
+                continue
+            list_candidates.append((index, paragraph, reconstructed))
             continue
         if paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.HEADING}:
             continue
@@ -68,14 +103,15 @@ def discover_reflow_page(
             )
         ):
             return None
-        candidates.append((index, paragraph))
-    body = [item for item in candidates if item[1].kind is ParagraphKind.BODY]
+        flow_candidates.append((index, paragraph))
+    body = [item for item in flow_candidates if item[1].kind is ParagraphKind.BODY]
     if len(body) < 2 or not _stable_single_column(body, page_model):
         return None
-    if not _ambiguity_resolved_by_page_evidence(candidates, body):
+    if not _ambiguity_resolved_by_page_evidence(flow_candidates, body):
         return None
     body_rects = [rect_from_bbox(item.bbox) for _, item in body]
-    flow_rects = [rect_from_bbox(item.bbox) for _, item in candidates]
+    flow_rects = [rect_from_bbox(item.bbox) for _, item in flow_candidates]
+    flow_rects.extend(rect_from_bbox(item.bbox) for _, item, _ in list_candidates)
     x0 = min(item.x0 for item in body_rects)
     x1 = max(item.x1 for item in body_rects)
     y0 = min(item.y0 for item in flow_rects)
@@ -105,14 +141,38 @@ def discover_reflow_page(
     if y1 <= y0 or x1 <= x0:
         return None
     region = Rect(x0, y0, x1, y1)
-    selected = {index for index, _ in candidates}
+    selected = {index for index, _ in flow_candidates} | {index for index, _, _ in list_candidates}
     if intersects_unselected(document, page_model.page_number, selected, region):
         return None
     if _intersects_pdf_objects(page, region):
         return None
 
+    list_by_index = {
+        index: (paragraph, reconstructed) for index, paragraph, reconstructed in list_candidates
+    }
+    ordered = sorted(
+        (*flow_candidates, *((index, paragraph) for index, paragraph, _ in list_candidates)),
+        key=lambda item: item[0],
+    )
     flow: list[FlowParagraph] = []
-    for index, paragraph in sorted(candidates, key=lambda item: item[0]):
+    for index, paragraph in ordered:
+        if index in list_by_index:
+            list_item = _list_flow_paragraph(
+                page_model,
+                index,
+                paragraph,
+                list_by_index[index][1],
+                region,
+                default_font_size,
+                min_font_size,
+                line_height,
+                style_by_occurrence,
+                font_path,
+            )
+            if list_item is None:
+                return None
+            flow.append(list_item)
+            continue
         source_rect = rect_from_bbox(paragraph.bbox)
         if not region.contains(source_rect):
             return None
@@ -223,6 +283,105 @@ def _resolved_occurrence(
     ):
         return None
     return resolved
+
+
+def _list_flow_paragraph(
+    page_model: ExtractedPage,
+    index: int,
+    paragraph: LogicalParagraph,
+    reconstructed_text: str,
+    region: Rect,
+    default_font_size: float,
+    min_font_size: float,
+    line_height: float,
+    style_by_occurrence: dict[int, ResolvedParagraphStyle] | None,
+    font_path: Path | None,
+) -> FlowParagraph | None:
+    source_rect = rect_from_bbox(paragraph.bbox)
+    if not region.contains(source_rect):
+        return None
+    source_size = paragraph_font_size(paragraph, default_font_size)
+    font_size = max(min_font_size, source_size)
+    if style_by_occurrence is not None:
+        resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
+        if resolved is None:
+            return None
+        try:
+            style, color = list_reflow_style(resolved)
+        except ValueError:
+            return None
+    else:
+        style = ReflowStyle(
+            font_size=font_size,
+            line_height=line_height,
+            space_before=0.0,
+            space_after=font_size * 0.45,
+        )
+        color = paragraph_color(paragraph)
+    list_style = _list_item_style(style, paragraph, region, font_path, font_size)
+    if list_style is None:
+        return None
+    return FlowParagraph(
+        occurrence_index=index,
+        paragraph_id=paragraph.id,
+        source_page_number=page_model.page_number,
+        kind=paragraph.kind.value,
+        disposition=ContentDisposition.FLOWABLE_BODY,
+        text=reconstructed_text,
+        source_rect=source_rect,
+        source_fragment_rects=tuple(
+            rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
+        ),
+        style=list_style,
+        color=color,
+        inline_styles=InlineStyleMapping(),
+    )
+
+
+def _list_item_style(
+    style: ReflowStyle,
+    paragraph: LogicalParagraph,
+    region: Rect,
+    font_path: Path | None,
+    font_size: float,
+) -> ReflowStyle | None:
+    marker_x = min(fragment.bbox.x0 for fragment in paragraph.fragments)
+    if marker_x < region.x0 - 1e-6:
+        return None
+    content_x = _source_content_x(paragraph, marker_x, region, font_path, font_size)
+    return replace(
+        style,
+        left_indent=max(0.0, content_x - region.x0),
+        first_line_indent=marker_x - content_x,
+    )
+
+
+def _source_content_x(
+    paragraph: LogicalParagraph,
+    marker_x: float,
+    region: Rect,
+    font_path: Path | None,
+    font_size: float,
+) -> float:
+    if len(paragraph.fragments) >= 2:
+        content_x = float(
+            statistics.median(fragment.bbox.x0 for fragment in paragraph.fragments[1:])
+        )
+        if content_x > marker_x and content_x <= region.x1:
+            return content_x
+    if font_path is not None:
+        marker = detect_list_marker(paragraph.text)
+        if marker is not None:
+            font = pymupdf.Font(fontfile=str(font_path))  # type: ignore[no-untyped-call]
+            content_x = marker_x + float(
+                font.text_length(  # type: ignore[no-untyped-call]
+                    f"{marker.marker_text}{marker.separation}",
+                    fontsize=font_size,
+                )
+            )
+            if content_x > marker_x and content_x <= region.x1:
+                return content_x
+    return marker_x
 
 
 def _ambiguity_resolved_by_page_evidence(

@@ -393,6 +393,9 @@ def build_success_report(
             inline_style_applied_character_count=(
                 render.inline_style_applied_character_count if render else 0
             ),
+            list_marker_candidates=(render.list_marker_candidates if render else 0),
+            list_markers_applied=(render.list_markers_applied if render else 0),
+            list_markers_deferred=(render.list_markers_deferred if render else 0),
             overflow_blocks=render.overflow_blocks if render else 0,
             input_size=translated.source.file_size,
             output_size=output_path.stat().st_size,

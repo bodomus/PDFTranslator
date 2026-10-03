@@ -29,6 +29,10 @@ from pdftranslate.rendering.layout import (
     initial_font_size,
     safe_expanded_bbox,
 )
+from pdftranslate.rendering.list_markers import (
+    detect_list_marker,
+    reconstruct_list_item_text,
+)
 from pdftranslate.rendering.models import (
     BlockRenderResult,
     InlineStyleRenderDecision,
@@ -261,6 +265,9 @@ class PdfRenderer:
                 if temporary is not None and temporary.exists():
                     temporary.unlink()
 
+        list_marker_candidates, list_markers_applied, list_markers_deferred = _list_marker_counters(
+            translated
+        )
         return RenderResult(
             output_path=output,
             debug_output_path=debug_output,
@@ -311,6 +318,9 @@ class PdfRenderer:
             inline_style_applied_character_count=sum(
                 item.inline_style_applied_character_count for item in block_results
             ),
+            list_marker_candidates=list_marker_candidates,
+            list_markers_applied=list_markers_applied,
+            list_markers_deferred=list_markers_deferred,
         )
 
 
@@ -348,6 +358,7 @@ def _plan_reflow_document(
             min_font_size=options.min_font_size,
             line_height=options.line_height,
             style_by_occurrence=style_by_occurrence,
+            font_path=font_path,
         )
         body_plan: LayoutPlan | None = None
         if body is None:
@@ -535,10 +546,15 @@ def _validate_layout_collisions(
 
 def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
     first = paragraph.fragments[0]
+    translated_text = paragraph.translated_text
+    if paragraph.kind is ParagraphKind.LIST_ITEM:
+        reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text or "")
+        if reconstructed is not None:
+            translated_text = reconstructed
     return TextBlock(
         id=paragraph.id,
         text=paragraph.text,
-        translated_text=paragraph.translated_text,
+        translated_text=translated_text,
         bbox=paragraph.bbox,
         original_order=first.mapping.original_order,
         normalized_order=first.mapping.normalized_order,
@@ -744,6 +760,29 @@ def _paragraph_policy(
     if len(policies) > 1:
         return RepeatedElementPolicy.PRESERVE
     return next(iter(policies))
+
+
+def _list_marker_counters(translated: ExtractedDocument) -> tuple[int, int, int]:
+    if translated.schema_version != "1.3":
+        return 0, 0, 0
+    candidates = applied = deferred = 0
+    for paragraph in translated.paragraphs:
+        if paragraph.kind is not ParagraphKind.LIST_ITEM:
+            continue
+        if _paragraph_policy(translated, paragraph) in {
+            RepeatedElementPolicy.PRESERVE,
+            RepeatedElementPolicy.SKIP,
+            RepeatedElementPolicy.REMOVE,
+        }:
+            continue
+        if detect_list_marker(paragraph.text) is None:
+            continue
+        candidates += 1
+        if reconstruct_list_item_text(paragraph.text, paragraph.translated_text or "") is None:
+            deferred += 1
+        else:
+            applied += 1
+    return candidates, applied, deferred
 
 
 def _plan_page(

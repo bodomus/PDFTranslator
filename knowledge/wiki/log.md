@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-01
+updated: 2026-10-03
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-36-list-marker-fidelity.md
 - ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
 - ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
 - ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
@@ -21,6 +22,12 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-03
+
+- Added source-owned list-marker fidelity to the production body reflow. Confident bullet,
+  numbered, and letter markers are reconstructed from retained source text instead of translated
+  output, with measured source-derived hanging indentation and fail-closed ambiguity handling.
 
 ## 2026-10-01
 

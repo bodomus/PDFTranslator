@@ -50,6 +50,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Preserved source-owned list markers in translated reflow. Confident bullet, numbered, and letter
+  list items keep exactly one structural source marker and source-derived hanging indentation even
+  when a translation model deletes, duplicates, or restyles the marker. Ambiguous prefixes such as
+  years, decimals, negative temperatures, and initials fail closed. Rendering diagnostics now expose
+  `list_marker_candidates`, `list_markers_applied`, and `list_markers_deferred`.
 - Added `scripts/pi_ticket_cycle.py`, a sequential Pi two-agent runner. One command imports
   `scripts/agent_cycle.py` (the unchanged workflow authority), runs a Pi implementer, validates the
   handoff and exact SHA deterministically, runs a technically read-only Pi reviewer, records the

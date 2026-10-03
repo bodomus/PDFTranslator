@@ -209,6 +209,9 @@ class ReportSummary(DomainModel):
     inline_style_applied_count: int = Field(default=0, ge=0)
     inline_style_deferred_count: int = Field(default=0, ge=0)
     inline_style_applied_character_count: int = Field(default=0, ge=0)
+    list_marker_candidates: int = Field(default=0, ge=0)
+    list_markers_applied: int = Field(default=0, ge=0)
+    list_markers_deferred: int = Field(default=0, ge=0)
 
 
 class TranslationReport(DomainModel):

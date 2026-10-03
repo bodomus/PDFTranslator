@@ -61,16 +61,20 @@ class PyMuPdfMeasurer:
             return Measurement(True, 0.0, 0)
         page = self._document.new_page(width=self._page_width, height=self._page_height)
         try:
+            first_line_indent = style.first_line_indent if first_segment else 0.0
             rich_text = build_rich_text(
                 text,
                 self._font_path,
                 style,
                 (0.0, 0.0, 0.0),
-                first_line_indent=style.first_line_indent if first_segment else 0.0,
+                first_line_indent=first_line_indent,
                 inline_runs=inline_runs,
             )
+            measure_width = width
+            if first_segment and first_line_indent < 0:
+                measure_width = width - first_line_indent
             remaining, scale = page.insert_htmlbox(
-                pymupdf.Rect(0, 0, width, height),
+                pymupdf.Rect(0, 0, measure_width, height),
                 rich_text.html,
                 css=rich_text.css,
                 archive=self._archive,
@@ -180,8 +184,16 @@ def insert_reflow_segments(
                 first_line_indent=segment.first_line_indent,
                 inline_runs=segment.inline_runs,
             )
+            insert_rect = _pymupdf_rect(segment.target_rect)
+            if segment.first_line_indent < 0:
+                insert_rect = pymupdf.Rect(
+                    segment.target_rect.x0 + segment.first_line_indent,
+                    segment.target_rect.y0,
+                    segment.target_rect.x1,
+                    segment.target_rect.y1,
+                )
             remaining, scale = page.insert_htmlbox(
-                _pymupdf_rect(segment.target_rect),
+                insert_rect,
                 rich_text.html,
                 css=rich_text.css,
                 archive=archive,
@@ -222,12 +234,15 @@ def build_rich_text(
     chunks.append(_escaped_html(text[cursor:]))
 
     red, green, blue = (round(component * 255) for component in color)
+    indent_css = f"text-indent: {first_line_indent:.6f}pt;"
+    if first_line_indent < 0:
+        indent_css = f"margin-left: {-first_line_indent:.6f}pt; {indent_css}"
     css = (
         f'@font-face {{ font-family: "{_FONT_NAME}"; src: url("{font_path.name}"); }} '
         "* { margin: 0; padding: 0; } "
         f'p {{ font-family: "{_FONT_NAME}"; font-size: {style.font_size:.6f}pt; '
         f"line-height: {style.line_height:.6f}; text-align: {style.alignment.value}; "
-        f"text-indent: {first_line_indent:.6f}pt; color: rgb({red}, {green}, {blue}); }}"
+        f"{indent_css} color: rgb({red}, {green}, {blue}); }}"
     )
     if run_css:
         css = f"{css} {' '.join(run_css)}"
@@ -268,7 +283,11 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
 
 def _segment_clip(page: pymupdf.Page, segment: PlacementSegment) -> pymupdf.Rect:
     padding = max(2.0, segment.font_size * 0.8)
-    return _padded_rect(_pymupdf_rect(segment.target_rect), page.rect, padding)
+    rect = _pymupdf_rect(segment.target_rect)
+    hang = max(0.0, -segment.first_line_indent)
+    if hang:
+        rect = pymupdf.Rect(rect.x0 - hang, rect.y0, rect.x1, rect.y1)
+    return _padded_rect(rect, page.rect, padding)
 
 
 def _padded_rect(rect: pymupdf.Rect, page_rect: pymupdf.Rect, padding: float) -> pymupdf.Rect:

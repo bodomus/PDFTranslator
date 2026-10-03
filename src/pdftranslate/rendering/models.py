@@ -163,6 +163,9 @@ class RenderResult:
     inline_style_applied_count: int = 0
     inline_style_deferred_count: int = 0
     inline_style_applied_character_count: int = 0
+    list_marker_candidates: int = 0
+    list_markers_applied: int = 0
+    list_markers_deferred: int = 0
 
     @property
     def expected_units(self) -> int:

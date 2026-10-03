@@ -64,6 +64,9 @@ td,th{{border:1px solid #ccd3db;padding:.4rem .65rem;text-align:left}}
 <tr><th>Inline styles applied</th><td>{report.summary.inline_style_applied_count}</td></tr>
 <tr><th>Inline styles deferred</th><td>{report.summary.inline_style_deferred_count}</td></tr>
 <tr><th>Inline styled characters</th><td>{inline_styled_characters}</td></tr>
+<tr><th>List marker candidates</th><td>{report.summary.list_marker_candidates}</td></tr>
+<tr><th>List markers applied</th><td>{report.summary.list_markers_applied}</td></tr>
+<tr><th>List markers deferred</th><td>{report.summary.list_markers_deferred}</td></tr>
 </table>
 <h2>Machine-readable details</h2><pre>{payload}</pre></body></html>
 """
