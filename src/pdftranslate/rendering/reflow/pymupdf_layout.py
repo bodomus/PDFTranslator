@@ -175,6 +175,8 @@ def insert_reflow_segments(
                 italic_applied=segment.italic_applied,
                 mixed_style=segment.mixed_style,
                 fallback_count=segment.fallback_count,
+                list_marker=segment.list_marker,
+                list_marker_offset=segment.list_marker_offset,
             )
             rich_text = build_rich_text(
                 segment.text,
@@ -217,11 +219,21 @@ def build_rich_text(
 ) -> RichTextLayout:
     """Build the single deterministic representation used for measuring and inserting."""
     validate_inline_style_runs(text, inline_runs)
+    marker = ""
+    body_text = text
+    if (
+        style.list_marker
+        and style.list_marker_offset > 0
+        and not inline_runs
+        and text.startswith(style.list_marker)
+    ):
+        marker = style.list_marker
+        body_text = text[len(style.list_marker) :].lstrip()
     chunks: list[str] = []
     cursor = 0
     run_css: list[str] = []
     for index, run in enumerate(inline_runs):
-        chunks.append(_escaped_html(text[cursor : run.text_start]))
+        chunks.append(_escaped_html(body_text[cursor : run.text_start]))
         chunks.append(f'<span class="r{index}">{_escaped_html(run.text)}</span>')
         properties: list[str] = []
         if run.font_size_points is not None:
@@ -231,9 +243,28 @@ def build_rich_text(
             properties.append(f"color: rgb({red}, {green}, {blue})")
         run_css.append(f".r{index} {{ {'; '.join(properties)}; }}")
         cursor = run.text_end
-    chunks.append(_escaped_html(text[cursor:]))
+    chunks.append(_escaped_html(body_text[cursor:]))
 
     red, green, blue = (round(component * 255) for component in color)
+    if marker:
+        # MuPDF's HTML engine honors fixed-width table cells but not inline-block
+        # width, so a table keeps the marker glyph at the source marker edge while
+        # the semantic content begins at the source content edge on every line.
+        css = (
+            f'@font-face {{ font-family: "{_FONT_NAME}"; src: url("{font_path.name}"); }} '
+            "* { margin: 0; padding: 0; } "
+            "table { border-collapse: collapse; } "
+            f'td {{ border: none; padding: 0; font-family: "{_FONT_NAME}"; '
+            f"font-size: {style.font_size:.6f}pt; line-height: {style.line_height:.6f}; "
+            f"text-align: {style.alignment.value}; color: rgb({red}, {green}, {blue}); }}"
+        )
+        if run_css:
+            css = f"{css} {' '.join(run_css)}"
+        html = (
+            f'<table><tr><td style="width:{style.list_marker_offset:.6f}pt">'
+            f"{_escaped_html(marker)}</td><td>{''.join(chunks)}</td></tr></table>"
+        )
+        return RichTextLayout(html=html, css=css)
     indent_css = f"text-indent: {first_line_indent:.6f}pt;"
     if first_line_indent < 0:
         indent_css = f"margin-left: {-first_line_indent:.6f}pt; {indent_css}"

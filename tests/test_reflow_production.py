@@ -45,7 +45,7 @@ from pdftranslate.rendering.reflow import (
     plan_flow,
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
-from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
+from pdftranslate.rendering.reflow.pymupdf_layout import build_rich_text, validate_saved_segments
 from pdftranslate.rendering.reflow.typography import (
     body_reflow_style,
     footnote_reflow_style,
@@ -1879,3 +1879,202 @@ def test_renderer_reflows_list_only_page_with_hanging_indent(
         assert min(content_x) > min(markers) + 4.0
     finally:
         rendered.close()
+
+
+def _discover(translated: ExtractedDocument, page: pymupdf.Page, font_path: Path) -> object:
+    return discover_reflow_page(
+        translated,
+        translated.pages[0],
+        page,
+        default_font_size=11,
+        min_font_size=6,
+        line_height=1.2,
+        style_by_occurrence=None,
+        font_path=font_path,
+    )
+
+
+def test_discover_reflow_page_rejects_isolated_ambiguous_list_item(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _single_list_source_pdf(tmp_path / "single-ambiguous.pdf")
+    extracted = PdfExtractor().extract(source)
+    translated_paragraphs = tuple(
+        paragraph.model_copy(
+            update={
+                "translated_text": "Установите пакет и перезапустите приложение.",
+                "ambiguous": True,
+            }
+        )
+        if paragraph.kind is ParagraphKind.LIST_ITEM
+        else paragraph.model_copy(update={"translated_text": paragraph.text})
+        for paragraph in extracted.paragraphs
+    )
+    translated = extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": translated_paragraphs,
+            "translation": _translation_metadata(len(translated_paragraphs)),
+        }
+    )
+    source_document = pymupdf.open(source)
+    try:
+        assert _discover(translated, source_document[0], cyrillic_font_path) is None
+    finally:
+        source_document.close()
+
+
+def test_discover_reflow_page_rejects_ambiguous_item_on_list_only_page(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _list_only_source_pdf(tmp_path / "list-only-ambiguous.pdf")
+    translated = _translated_list_only_source(source)
+    translated = translated.model_copy(
+        update={
+            "paragraphs": tuple(
+                paragraph.model_copy(update={"ambiguous": True})
+                if paragraph.text.startswith("3)")
+                else paragraph
+                for paragraph in translated.paragraphs
+            )
+        }
+    )
+    source_document = pymupdf.open(source)
+    try:
+        assert _discover(translated, source_document[0], cyrillic_font_path) is None
+    finally:
+        source_document.close()
+
+
+def test_discover_reflow_page_accepts_confident_list_only_page(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _list_only_source_pdf(tmp_path / "list-only-confident.pdf")
+    translated = _translated_list_only_source(source)
+    source_document = pymupdf.open(source)
+    try:
+        discovered = _discover(translated, source_document[0], cyrillic_font_path)
+        assert discovered is not None
+        list_items = [
+            item for item in discovered.paragraphs if item.kind == ParagraphKind.LIST_ITEM.value
+        ]
+        assert len(list_items) == 3
+    finally:
+        source_document.close()
+
+
+def _wide_gap_list_document(tmp_path: Path) -> tuple[Path, ExtractedDocument]:
+    source = tmp_path / "wide-gap-list.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=200)
+    page.insert_text((48, 60), "2)", fontsize=11)
+    page.insert_text((130, 60), "Install the package now.", fontsize=11)
+    document.save(source)
+    document.close()
+
+    extracted = PdfExtractor().extract(source)
+    marker_paragraph, content_paragraph = extracted.paragraphs[0], extracted.paragraphs[1]
+    list_paragraph = LogicalParagraph(
+        id="wide-gap-list-1",
+        text="2) Install the package now.",
+        kind=ParagraphKind.LIST_ITEM,
+        anchor_page_number=1,
+        bbox=BoundingBox(
+            x0=48.0,
+            y0=marker_paragraph.bbox.y0,
+            x1=content_paragraph.bbox.x1,
+            y1=content_paragraph.bbox.y1,
+        ),
+        fragments=(marker_paragraph.fragments[0], content_paragraph.fragments[0]),
+        spans=marker_paragraph.spans + content_paragraph.spans,
+        ambiguous=False,
+        translated_text=(
+            "Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
+        ),
+    )
+    translated = extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": (list_paragraph,),
+            "translation": _translation_metadata(1),
+        }
+    )
+    return source, translated
+
+
+def test_discover_reflow_page_represents_source_marker_offset(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source, translated = _wide_gap_list_document(tmp_path)
+    source_document = pymupdf.open(source)
+    try:
+        discovered = _discover(translated, source_document[0], cyrillic_font_path)
+        assert discovered is not None
+        list_items = [
+            item for item in discovered.paragraphs if item.kind == ParagraphKind.LIST_ITEM.value
+        ]
+        assert len(list_items) == 1
+        style = list_items[0].style
+        assert style.list_marker == "2)"
+        assert style.list_marker_offset == pytest.approx(82.0, abs=1.0)
+        assert style.first_line_indent == pytest.approx(-82.0, abs=1.0)
+        assert style.left_indent == pytest.approx(82.0, abs=1.0)
+    finally:
+        source_document.close()
+
+
+def test_renderer_anchors_first_line_content_to_source_edge(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    del tmp_path
+    style = ReflowStyle(
+        font_size=11,
+        line_height=1.2,
+        space_before=0.0,
+        space_after=0.0,
+        first_line_indent=-82.0,
+        left_indent=82.0,
+        list_marker="2)",
+        list_marker_offset=82.0,
+    )
+    text = "2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
+    rich = build_rich_text(
+        text,
+        cyrillic_font_path,
+        style,
+        (0.0, 0.0, 0.0),
+        first_line_indent=-82.0,
+    )
+    assert "width:82.000000pt" in rich.html
+    assert ">2)</td>" in rich.html
+
+    document = pymupdf.open()
+    try:
+        page = document.new_page(width=300, height=200)
+        archive = pymupdf.Archive(str(cyrillic_font_path.parent))
+        # Mirror insert_reflow_segments: the hanging first-line indent shifts the insert box
+        # left so the marker starts at 48 while content flows from the 130pt source edge.
+        page.insert_htmlbox(
+            pymupdf.Rect(130.0 - 82.0, 40.0, 300.0, 180.0),
+            rich.html,
+            css=rich.css,
+            archive=archive,
+            scale_low=1,
+            overlay=False,
+        )
+        words = page.get_text("words")
+        marker_words = [word for word in words if word[4] == "2)"]
+        content_words = [word for word in words if word[4] != "2)"]
+        assert len(marker_words) == 1
+        assert content_words
+        assert marker_words[0][0] == pytest.approx(48.0, abs=2.0)
+        # Every rendered line (first and continuations) starts its content at the same
+        # source content edge; the marker glyph stays at the source marker edge.
+        lines: dict[int, list[float]] = {}
+        for word in content_words:
+            lines.setdefault(round(word[1]), []).append(word[0])
+        assert lines
+        for x0s in lines.values():
+            assert min(x0s) == pytest.approx(130.0, abs=2.0)
+    finally:
+        document.close()

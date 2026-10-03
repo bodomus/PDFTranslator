@@ -105,7 +105,11 @@ def discover_reflow_page(
             return None
     elif not list_structural or not _stable_list_column(list_structural, page_model):
         return None
-    if not _ambiguity_resolved_by_page_evidence(flow_candidates, body):
+    ambiguity_candidates = [
+        *flow_candidates,
+        *((index, paragraph) for index, paragraph, _ in list_candidates),
+    ]
+    if not _ambiguity_resolved_by_page_evidence(ambiguity_candidates, body):
         return None
     if body:
         x_rects = [rect_from_bbox(item.bbox) for _, item in body]
@@ -377,14 +381,27 @@ def _list_item_style(
     font_path: Path | None,
     font_size: float,
 ) -> ReflowStyle | None:
+    marker = detect_list_marker(paragraph.text)
+    if marker is None:
+        return None
     marker_x = min(fragment.bbox.x0 for fragment in paragraph.fragments)
     if marker_x < region.x0 - 1e-6:
         return None
     content_x = _source_content_x(paragraph, marker_x, region, font_path, font_size)
+    # The explicit marker block is only needed when the content edge is derived from
+    # source fragment geometry rather than the renderer-font fallback. The fallback already
+    # measures the marker-plus-separation advance in the renderer font, so the first line
+    # aligns with continuation lines without a block; adding one there would drop the
+    # rendered separation space and break saved-PDF text matching.
+    marker_block_offset = (
+        content_x - marker_x if len(paragraph.fragments) >= 2 and content_x > marker_x else 0.0
+    )
     return replace(
         style,
         left_indent=max(0.0, content_x - region.x0),
         first_line_indent=marker_x - content_x,
+        list_marker=marker.marker_text if marker_block_offset > 0 else "",
+        list_marker_offset=marker_block_offset,
     )
 
 

@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Made translated list-marker reconstruction family-aware so a provider restyled bullet is stripped
+  without deleting semantic content such as ``A. Smith``, restored fail-closed ambiguity validation
+  for selected list candidates, and anchored the first rendered line's semantic content to the
+  source-backed content edge so it aligns with continuation lines even when the source marker-to-
+  content gap is wider than the renderer font's marker-plus-space advance.
 - Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
   `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
   the resume step — now always terminates and reaps the direct child and every descendant before

@@ -69,11 +69,11 @@ def detect_list_marker(source_text: str) -> ListMarker | None:
 def reconstruct_list_item_text(source_text: str, translated_text: str) -> str | None:
     """Reconstruct marker + translated content, or ``None`` when there is no content.
 
-    Leading translated marker-like prefixes are removed deterministically, so a provider may
-    translate, delete, duplicate, or restyle the marker without affecting the final structure.
-    The retained source content is used as evidence: when that content already begins with a
-    marker-like prefix, translated marker prefixes are preserved instead of being stripped, so
-    legitimate semantic content such as ``A. Smith`` is never removed.
+    The source paragraph owns the structural marker; the translation provider owns only the
+    semantic content. Leading translated marker prefixes are removed deterministically so a
+    provider may translate, delete, duplicate, or restyle the marker without affecting the final
+    structure. Prefixes of a different marker family are preserved as semantic content, so a
+    legitimate initial such as ``A. Smith`` is never removed.
     """
     marker = detect_list_marker(source_text)
     if marker is None:
@@ -81,7 +81,7 @@ def reconstruct_list_item_text(source_text: str, translated_text: str) -> str | 
     content = _strip_translated_markers(
         translated_text,
         source_marker=marker.marker_text,
-        source_content=marker.content_text,
+        source_family=marker.family,
     )
     if not content:
         return None
@@ -113,17 +113,12 @@ def _separation(text: str) -> str:
 
 
 def _strip_translated_markers(
-    translated_text: str, *, source_marker: str, source_content: str
+    translated_text: str, *, source_marker: str, source_family: str
 ) -> str:
     text = translated_text.lstrip()
     text = _strip_exact_source_markers(text, source_marker)
-    # When the retained source content itself starts with a prefix this stripper would
-    # remove, a leading translated marker is indistinguishable from legitimate content.
-    # Strip only what matches the source marker exactly and preserve the rest.
-    if _translated_marker_prefix(source_content) is not None:
-        return text
     for _ in range(_MAX_MARKER_STRIPS):
-        prefix = _translated_marker_prefix(text)
+        prefix = _translated_marker_prefix(text, family=source_family)
         if prefix is None:
             break
         text = prefix[2].lstrip()
@@ -141,11 +136,12 @@ def _strip_exact_source_markers(text: str, source_marker: str) -> str:
     return text
 
 
-def _translated_marker_prefix(text: str) -> tuple[str, str, str] | None:
+def _translated_marker_prefix(text: str, *, family: str) -> tuple[str, str, str] | None:
     """Return ``(marker_text, separation, rest)`` for a leading translated marker prefix.
 
-    This is the source detector extended to accept Cyrillic letter markers, used only to strip
-    translated marker representations from provider output.
+    Bullet and dash glyphs are always structural. A numbered or letter prefix is stripped only
+    when it belongs to the source marker's own family, so a provider-restyled marker is removed
+    without deleting a semantic initial such as ``A. Smith``.
     """
     if not text:
         return None
@@ -154,7 +150,13 @@ def _translated_marker_prefix(text: str) -> tuple[str, str, str] | None:
         if not separation:
             return None
         return text[0], separation, text[1 + len(separation) :]
+    if family == "bullet":
+        return None
     match = _TRANSLATED_MARKER.match(text)
     if match is None:
         return None
-    return match.group(1), match.group(2), text[match.end() :]
+    marker = match.group(1)
+    core = marker.lstrip("(").rstrip(")")
+    if ("letter" if core[0].isalpha() else "numbered") != family:
+        return None
+    return marker, match.group(2), text[match.end() :]

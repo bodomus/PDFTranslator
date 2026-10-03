@@ -127,3 +127,20 @@ def test_reconstruct_returns_none_for_ambiguous_source() -> None:
 
 def test_reconstruct_returns_none_when_no_content_remains() -> None:
     assert reconstruct_list_item_text("2) Restart the application.", "2)") is None
+
+
+def test_reconstruct_strips_translated_bullet_restyle() -> None:
+    assert (
+        reconstruct_list_item_text("• Install the package.", "- Установите пакет.")
+        == "• Установите пакет."
+    )
+
+
+def test_reconstruct_strips_translated_bullet_before_semantic_initial() -> None:
+    result = reconstruct_list_item_text("• A. Smith is responsible.", "- A. Smith is responsible.")
+    assert result == "• A. Smith is responsible."
+    assert result.count("•") == 1
+
+
+def test_reconstruct_preserves_semantic_prefix_absent_from_source() -> None:
+    assert reconstruct_list_item_text("1. First option", "A. First option") == "1. A. First option"
