@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 import scripts.pi_ticket_cycle as pi_runner
+from coverage import Coverage
 from scripts.agent_cycle import CycleError, cycle_directory, cycle_status
 from scripts.pi_ticket_cycle import (
     REVIEW_SENTINEL_BEGIN,
@@ -37,6 +38,20 @@ CONTRACT_SOURCE = REPOSITORY_ROOT / ".agents" / "skills" / "two-agent-ticket-wor
 BASE_BRANCH = "master"
 TASK_BRANCH = "pi/PDFTR-35-test"
 TICKET = "PDFTR-35"
+
+
+def _disable_child_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These service children test process ownership, not package code. pytest-cov 6
+    # otherwise auto-starts coverage in their config-less cwd with branch=False.
+    for name in tuple(os.environ):
+        if name.startswith(("COV_CORE_", "COVERAGE_PROCESS_")):
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def service_child_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Measurement in the already-running pytest process is unaffected.
+    _disable_child_coverage(monkeypatch)
 
 
 def _git(repo: Path, *arguments: str) -> str:
@@ -138,6 +153,7 @@ class FakePi:
         self.run_raises: Exception | None = None
         self.reviewer_stdout_override: str | None = None
         self.reviewer_payload_overrides: dict[int, dict[str, object]] = {}
+        self.heartbeat_elapsed: float | None = None
 
     @property
     def commands(self) -> list[tuple[str, ...]]:
@@ -153,6 +169,7 @@ class FakePi:
         cwd: Path,
         log_path: Path,
         stdin_text: str,
+        heartbeat: Callable[[float], None] | None = None,
     ) -> CommandResult:
         captured = tuple(str(part) for part in command)
         self.invocations.append((captured, stdin_text))
@@ -160,12 +177,13 @@ class FakePi:
         log_path.write_text("fake pi log\n", encoding="utf-8")
         if self.run_raises is not None:
             raise self.run_raises
-        role = _provider(captured)
-        if role == "deepseek":
+        if heartbeat is not None and self.heartbeat_elapsed is not None:
+            heartbeat(self.heartbeat_elapsed)
+        if stdin_text.startswith("You are the implementer"):
             return self._implementer()
-        if role == "openai-codex":
+        if stdin_text.startswith("You are the read-only reviewer"):
             return self._reviewer()
-        raise AssertionError(f"unexpected provider: {role}")
+        raise AssertionError("unexpected workflow role")
 
     def _implementer(self) -> CommandResult:
         self.implementer_runs += 1
@@ -453,6 +471,54 @@ def test_cli_rejects_unsafe_reviewer_tools(git_repo: Path, value: str) -> None:
 
 
 # --- Process helpers ------------------------------------------------------------------------
+
+
+def test_service_children_do_not_inherit_coverage(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not any(name.startswith(("COV_CORE_", "COVERAGE_PROCESS_")) for name in os.environ)
+    parent_coverage = Coverage.current()
+    parent_branch = parent_coverage.get_option("run:branch") if parent_coverage else None
+    # Recreate the pytest-cov 6 startup environment: no explicit branch CLI flag
+    # and automatic config lookup from a child cwd without pyproject.toml.
+    startup = {
+        "COV_CORE_SOURCE": "pdftranslate",
+        "COV_CORE_CONFIG": os.pathsep,
+        "COV_CORE_DATAFILE": str(work_dir / ".coverage"),
+        "COV_CORE_CONTEXT": "service-child",
+        "COVERAGE_PROCESS_START": str(REPOSITORY_ROOT / "pyproject.toml"),
+        "COVERAGE_PROCESS_CONFIG": "bootstrap-config",
+    }
+    for name, value in startup.items():
+        monkeypatch.setenv(name, value)
+    _disable_child_coverage(monkeypatch)
+    probe = (
+        "import coverage, json, os; "
+        "print(json.dumps({'active': coverage.Coverage.current() is not None, "
+        "'startup': [k for k in os.environ "
+        "if k.startswith(('COV_CORE_', 'COVERAGE_PROCESS_'))]}))"
+    )
+    script = work_dir / "coverage_probe.py"
+    script.write_text(
+        "import json, subprocess, sys\n"
+        f"child = json.loads(subprocess.check_output([sys.executable, '-c', {probe!r}]))\n"
+        f"exec({probe!r})\n"
+        "print(json.dumps(child))\n",
+        encoding="utf-8",
+    )
+    shim = _make_tree_shim(work_dir, script, work_dir / "self.pid", work_dir / "child.pid")
+    result = SubprocessExecutor(shim).run(
+        [shim], cwd=work_dir, log_path=work_dir / "probe.log", stdin_text=""
+    )
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [
+        {"active": False, "startup": []},
+        {"active": False, "startup": []},
+    ]
+    assert not list(work_dir.glob(".coverage*"))
+    assert Coverage.current() is parent_coverage
+    if parent_coverage:
+        assert parent_coverage.get_option("run:branch") == parent_branch
 
 
 def _spawn_tree_script(directory: Path, *, ignore_sigterm: bool = False) -> Path:
@@ -815,6 +881,257 @@ def test_windows_job_creation_failure_fails_closed(
 
     assert not self_file.exists()
     assert not child_file.exists()
+
+
+# --- PDFTR-37: role presets and observable lifecycle -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("preset", "implementer", "reviewer"),
+    [
+        ("deepseek-codex", "deepseek", "openai-codex"),
+        ("codex-deepseek", "openai-codex", "deepseek"),
+        ("codex-codex", "openai-codex", "openai-codex"),
+        ("deepseek-deepseek", "deepseek", "deepseek"),
+    ],
+)
+def test_presets_launch_independent_roles_with_read_only_reviewer(
+    git_repo: Path, preset: str, implementer: str, reviewer: str
+) -> None:
+    config = pi_runner._config_from_arguments(
+        pi_runner._parser().parse_args([TICKET, "--preset", preset])
+    )
+    fake = FakePi(git_repo)
+    outcome = run_cycle(git_repo, TICKET, executor=fake, config=config)
+    assert outcome.passed
+    assert len(fake.invocations) == 2
+    first, second = fake.commands
+    assert _provider(first) == implementer
+    assert _provider(second) == reviewer
+    expected_models = {"deepseek": "deepseek-v4-pro", "openai-codex": "gpt-6.1-sol"}
+    assert _model(first) == expected_models[implementer]
+    assert _model(second) == expected_models[reviewer]
+    assert "--tools" not in first
+    assert second[second.index("--tools") + 1] == "read,grep,find,ls"
+    assert fake.invocations[0][1].startswith("You are the implementer")
+    assert fake.invocations[1][1].startswith("You are the read-only reviewer")
+    assert fake.invocations[0][1] != fake.invocations[1][1]
+    assert "--continue" not in first + second
+
+
+@pytest.mark.parametrize("preset", tuple(pi_runner.ROLE_PRESETS))
+def test_preset_does_not_bypass_reviewer_tool_validation(git_repo: Path, preset: str) -> None:
+    config = pi_runner._config_from_arguments(
+        pi_runner._parser().parse_args(
+            [TICKET, "--preset", preset, "--reviewer-tools", "read,bash"]
+        )
+    )
+    fake = FakePi(git_repo)
+    with pytest.raises(RunnerError, match="reviewer tools"):
+        run_cycle(git_repo, TICKET, executor=fake, config=config)
+    assert fake.invocations == []
+    assert not cycle_directory(git_repo, TICKET).exists()
+
+
+def test_explicit_role_fields_override_preset_independently() -> None:
+    config = pi_runner._config_from_arguments(
+        pi_runner._parser().parse_args(
+            [
+                TICKET,
+                "--preset",
+                "codex-deepseek",
+                "--implementer-provider",
+                "custom-provider",
+                "--reviewer-model",
+                "custom-model",
+            ]
+        )
+    )
+    assert config.implementer == RoleConfig("custom-provider", "gpt-6.1-sol")
+    assert config.reviewer == RoleConfig("deepseek", "custom-model", ("read", "grep", "find", "ls"))
+    defaults = pi_runner._config_from_arguments(pi_runner._parser().parse_args([TICKET]))
+    assert defaults == RunnerConfig()
+
+
+def test_unknown_preset_rejected_before_initialization(
+    git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        main([TICKET, "--preset", "unknown", "--repo-root", str(git_repo)])
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+    assert not cycle_directory(git_repo, TICKET).exists()
+
+
+def test_lifecycle_is_ordered_and_excludes_child_output(
+    git_repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakePi(git_repo)
+    original_implementer = fake._implementer
+    original_reviewer = fake._reviewer
+
+    def implementer_output() -> CommandResult:
+        result = original_implementer()
+        return CommandResult(result.returncode, "PRIVATE_PROMPT_AND_TRANSCRIPT", "PRIVATE_TOKEN")
+
+    def reviewer_output() -> CommandResult:
+        result = original_reviewer()
+        return CommandResult(
+            result.returncode, "PRIVATE_REASONING\n" + result.stdout, "PRIVATE_TOKEN"
+        )
+
+    monkeypatch.setattr(fake, "_implementer", implementer_output)
+    monkeypatch.setattr(fake, "_reviewer", reviewer_output)
+    _run(git_repo, fake)
+    output = capsys.readouterr().out
+    events = [
+        "cycle initialized",
+        "implementer started: deepseek / deepseek-v4-pro",
+        "implementer finished: exit 0",
+        "validating implementer handoff...",
+        "handoff accepted: " + _git(git_repo, "rev-parse", "HEAD"),
+        "reviewer started: openai-codex / gpt-6.1-sol",
+        "reviewer finished: exit 0",
+        "validating review round 1...",
+        "review round 1: PASS",
+        "cycle PASSED",
+    ]
+    positions = [output.index(f"[{TICKET}] {event}") for event in events]
+    assert positions == sorted(positions)
+    assert "PRIVATE_" not in output
+    assert REVIEW_SENTINEL_BEGIN not in output
+    assert "running..." not in output
+
+
+def test_second_round_lifecycle_and_terminal_stop(
+    git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePi(git_repo)
+    fake.verdicts = ["CHANGES_REQUIRED", "CHANGES_REQUIRED"]
+    fake.findings = [[_finding("R1")], [_finding("R2")]]
+    outcome = _run(git_repo, fake)
+    output = capsys.readouterr().out
+    assert outcome.state == "STOPPED"
+    assert "review round 1: CHANGES_REQUIRED" in output
+    assert "implementer round 2 started: deepseek / deepseek-v4-pro" in output
+    assert "reviewer round 2 started: openai-codex / gpt-6.1-sol" in output
+    assert "review round 2: CHANGES_REQUIRED" in output
+    assert output.rstrip().endswith(f"[{TICKET}] cycle STOPPED")
+    assert fake.reviewer_runs == 2
+
+
+def test_abnormal_exit_lifecycle_stops_without_reviewer(
+    git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePi(git_repo)
+    fake.implementer_exit = 7
+    with pytest.raises(RunnerError, match="implementer exited"):
+        _run(git_repo, fake)
+    output = capsys.readouterr().out
+    assert "implementer finished: exit 7" in output
+    assert "cycle STOPPED" in output
+    assert "reviewer started" not in output
+
+
+def test_lifecycle_heartbeat_contains_only_role_and_elapsed(
+    git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePi(git_repo)
+    fake.heartbeat_elapsed = 300
+    _run(git_repo, fake)
+    output = capsys.readouterr().out
+    assert f"[{TICKET}] implementer running... 5m" in output
+    assert f"[{TICKET}] reviewer running... 5m" in output
+
+
+def test_communicate_heartbeat_retries_without_resending_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Child:
+        def __init__(self) -> None:
+            self.inputs: list[str | None] = []
+
+        def communicate(
+            self, input: str | None = None, timeout: float | None = None
+        ) -> tuple[str, str]:
+            self.inputs.append(input)
+            assert timeout == 300
+            if len(self.inputs) <= 2:
+                raise subprocess.TimeoutExpired("private child command", timeout, output="PRIVATE")
+            return "complete output", "complete diagnostics"
+
+        def poll(self) -> None:
+            return None
+
+    child = Child()
+    times = iter((100.0, 400.0, 700.0))
+    monkeypatch.setattr(pi_runner.time, "monotonic", lambda: next(times))
+    elapsed: list[float] = []
+    result = SubprocessExecutor()._communicate(child, "private prompt", elapsed.append)
+    assert child.inputs == ["private prompt", None, None]
+    assert elapsed == [300.0, 600.0]
+    assert result == ("complete output", "complete diagnostics")
+
+
+def test_short_child_completes_without_heartbeat() -> None:
+    class Child:
+        def communicate(
+            self, input: str | None = None, timeout: float | None = None
+        ) -> tuple[str, str]:
+            assert input == "prompt"
+            assert timeout == 300
+            return "private stdout", "private stderr"
+
+    elapsed: list[float] = []
+    assert SubprocessExecutor()._communicate(Child(), "prompt", elapsed.append) == (
+        "private stdout",
+        "private stderr",
+    )
+    assert elapsed == []
+
+
+def test_rejected_handoff_lifecycle_never_starts_reviewer(
+    git_repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakePi(git_repo)
+    monkeypatch.setattr(fake, "_write_handoff", lambda _attempt: None)
+    with pytest.raises(RunnerError, match="did not produce"):
+        _run(git_repo, fake)
+    output = capsys.readouterr().out
+    assert "validating implementer handoff..." in output
+    assert "handoff rejected" in output
+    assert "cycle STOPPED" in output
+    assert fake.reviewer_runs == 0
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, OSError])
+def test_heartbeat_failure_cleans_owned_process_tree(
+    work_dir: Path, error_type: type[BaseException]
+) -> None:
+    script = _spawn_tree_script(work_dir)
+    self_file = work_dir / "self.pid"
+    child_file = work_dir / "child.pid"
+    shim = _make_tree_shim(work_dir, script, self_file, child_file)
+
+    def fail_heartbeat(_elapsed: float) -> None:
+        deadline = time.monotonic() + 10
+        while not (self_file.exists() and child_file.exists()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert self_file.exists() and child_file.exists()
+        raise error_type("heartbeat interrupted")
+
+    executor = SubprocessExecutor(shim, grace_seconds=2.0, heartbeat_seconds=0.01)
+    expected = RunnerCancelled if error_type is KeyboardInterrupt else OSError
+    with pytest.raises(expected):
+        executor.run(
+            [shim, "-p"],
+            cwd=work_dir,
+            log_path=work_dir / "heartbeat.log",
+            stdin_text="private prompt",
+            heartbeat=fail_heartbeat,
+        )
+    assert _wait_until_dead(int(self_file.read_text(encoding="utf-8")))
+    assert _wait_until_dead(int(child_file.read_text(encoding="utf-8")))
 
 
 # --- R4-POSIX: reap order and forced group termination ---------------------------------------

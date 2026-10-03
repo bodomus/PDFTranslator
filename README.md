@@ -98,6 +98,36 @@ creates a pull request or merges. Provider, model, and tool names are configurat
 `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi, providers, or the
 network.
 
+The runner prints flushed lifecycle messages for phase starts/exits, handoff validation, review
+verdicts, and the validator's terminal state. A running child produces a heartbeat every five
+minutes. Prompts, reasoning, and child stdout/stderr stay out of lifecycle output; existing
+`.agent-cycle/<TICKET>/pi-*-round-*.log` files remain the detailed diagnostic source.
+
+Use a preset to change the provider/model assigned to each role:
+
+| Preset | Implementer | Reviewer |
+| --- | --- | --- |
+| `deepseek-codex` (default) | `deepseek / deepseek-v4-pro` | `openai-codex / gpt-6.1-sol` |
+| `codex-deepseek` | `openai-codex / gpt-6.1-sol` | `deepseek / deepseek-v4-pro` |
+| `codex-codex` | `openai-codex / gpt-6.1-sol` | `openai-codex / gpt-6.1-sol` |
+| `deepseek-deepseek` | `deepseek / deepseek-v4-pro` | `deepseek / deepseek-v4-pro` |
+
+```powershell
+uv run python scripts/pi_ticket_cycle.py PDFTR-38 --preset codex-codex
+uv run python scripts/pi_ticket_cycle.py PDFTR-38 --preset codex-deepseek --reviewer-model custom-model
+```
+
+Each explicit `--implementer-provider`, `--implementer-model`, `--reviewer-provider`, or
+`--reviewer-model` overrides that preset field; unspecified fields use the preset or existing
+defaults. Unknown presets fail before cycle initialization. Reviewers retain the independent
+`read,grep,find,ls` allowlist regardless of model identity. Same-model roles still use separate
+Pi child processes and separate role prompts/contexts.
+
+`agent_cycle.py status` reports a dirty tree during `IMPLEMENTING` with active `implementer` as
+`dirty (expected during implementation)`; JSON includes `working_tree_dirty_expected`.
+Status does not mutate the manifest or hide HEAD/branch errors. Initialization, handoff, review
+start, review ownership, and terminal cleanliness checks remain strict.
+
 
 Source-backed paragraph typography can be inspected without translation or rendering. The
 standalone developer command reports occurrence identity, role, dominant source style,

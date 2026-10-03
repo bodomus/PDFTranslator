@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `agent_cycle.py status` treats a dirty working tree during active implementation as expected
+  information, while retaining HEAD binding and all workflow cleanliness gates.
+- Added Pi runner lifecycle messages and a five-minute child heartbeat without streaming prompts,
+  reasoning, or child output. Communication retries retain existing process-tree cleanup.
+- Added `--preset` choices `deepseek-codex`, `codex-deepseek`, `codex-codex`, and
+  `deepseek-deepseek`, with explicit role CLI overrides taking precedence. Reviewer tools remain
+  read-only for every preset, including independent same-model child invocations.
+
 - Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
   `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
   the resume step — now always terminates and reaps the direct child and every descendant before

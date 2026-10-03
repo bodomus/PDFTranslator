@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-01
+updated: 2026-10-03
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-37.md
 - ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
 - ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
 - ../../Tickets/PDFTR-35-pi-sequential-two-agent-runner-mvp.md
@@ -21,6 +22,16 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-03
+
+- Documented test-local isolation of process-tree service children from inherited coverage
+  startup, avoiding statement-only parallel data without changing parent branch policy or
+  production process semantics; added a real child/grandchild diagnostic.
+- Documented Pi lifecycle output, timed communication heartbeat, explicit runtime role/model
+  presets, independent same-model contexts, and expected dirty status during active implementation.
+  Validator ownership, two-round semantics, reviewer restrictions, and process cleanup remain
+  unchanged.
 
 ## 2026-10-01
 

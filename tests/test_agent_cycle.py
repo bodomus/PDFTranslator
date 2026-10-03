@@ -18,6 +18,7 @@ from scripts.agent_cycle import (
     main,
     record_handoff,
     record_review,
+    stop_cycle,
     validate_ticket_id,
 )
 
@@ -427,3 +428,64 @@ def test_cli_returns_nonzero_for_invalid_ticket(
 
     assert result == 2
     assert "invalid ticket ID" in capsys.readouterr().err
+
+
+def test_active_implementation_dirty_status_is_informational(
+    git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    initialize_cycle(git_repo, TICKET)
+    begin_implementation(git_repo, TICKET)
+    manifest_path = cycle_directory(git_repo, TICKET) / "manifest.json"
+    before = manifest_path.read_bytes()
+    (git_repo / "tracked.txt").write_text("implementation in progress\n", encoding="utf-8")
+    status = cycle_status(git_repo, TICKET)
+    assert status["working_tree_dirty_expected"] is True
+    assert status["working_tree_clean"] is False
+    assert status["errors"] == []
+    assert main(["status", TICKET], repo_root=git_repo) == 0
+    assert "dirty (expected during implementation)" in capsys.readouterr().out
+    assert manifest_path.read_bytes() == before
+    with pytest.raises(CycleError, match="clean working tree"):
+        record_handoff(git_repo, TICKET, _implementer_input(git_repo, 1))
+
+
+@pytest.mark.parametrize("state", ["NEW", "READY_FOR_REVIEW", "REVIEWING", "PASSED", "STOPPED"])
+def test_dirty_status_stays_strict_outside_active_implementation(
+    git_repo: Path, state: str
+) -> None:
+    initialize_cycle(git_repo, TICKET)
+    if state in {"READY_FOR_REVIEW", "REVIEWING", "PASSED"}:
+        sha = _ready_for_review(git_repo)
+        if state in {"REVIEWING", "PASSED"}:
+            begin_review(git_repo, TICKET, sha)
+        if state == "PASSED":
+            record_review(
+                git_repo, TICKET, _review_input(git_repo, review_round=1, sha=sha, verdict="PASS")
+            )
+    elif state == "STOPPED":
+        stop_cycle(git_repo, TICKET, "manual stop")
+    (git_repo / "tracked.txt").write_text("unexpected edit\n", encoding="utf-8")
+    status = cycle_status(git_repo, TICKET)
+    assert status["state"] == state
+    assert status["working_tree_dirty_expected"] is False
+    assert "working-tree cleanliness differs from manifest" in status["errors"]
+    assert main(["status", TICKET], repo_root=git_repo) == 1
+    if state == "READY_FOR_REVIEW":
+        with pytest.raises(CycleError, match="clean working tree"):
+            begin_review(git_repo, TICKET, sha)
+
+
+def test_dirty_initialization_remains_rejected(git_repo: Path) -> None:
+    (git_repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(CycleError, match="clean working tree"):
+        initialize_cycle(git_repo, TICKET)
+
+
+def test_active_dirty_status_keeps_head_binding_errors(git_repo: Path) -> None:
+    initialize_cycle(git_repo, TICKET)
+    begin_implementation(git_repo, TICKET)
+    _commit_attempt(git_repo, 1)
+    (git_repo / "tracked.txt").write_text("editing after commit\n", encoding="utf-8")
+    status = cycle_status(git_repo, TICKET)
+    assert status["working_tree_dirty_expected"] is True
+    assert status["errors"] == ["Git HEAD differs from manifest current_head_sha"]

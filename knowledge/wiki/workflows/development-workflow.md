@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-01
+updated: 2026-10-03
 tags:
 - development
 - tickets
@@ -14,6 +14,7 @@ sources:
 - ../../../scripts/check.ps1
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
+- ../../../tests/test_pi_ticket_cycle.py
 - ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
 related:
 - ../index.md
@@ -76,6 +77,27 @@ runner owns every child process tree and terminates descendants through a Window
 saved POSIX process group on success, cancellation, or any post-spawn failure. Provider, model, and
 tool names are configuration; deterministic tests replace Pi and never contact providers or the
 network.
+
+The runner reports lifecycle boundaries and authoritative handoff/review results with flushed
+plain console output. `SubprocessExecutor` retries timed communication and emits an elapsed-time
+heartbeat every five minutes; it sends stdin once and retains the same process-tree owner and
+cleanup paths. Detailed child output stays in existing diagnostic logs.
+
+Runtime role presets (`deepseek-codex`, `codex-deepseek`, `codex-codex`, `deepseek-deepseek`)
+select provider/model pairs. Explicit CLI fields override the corresponding preset fields.
+Reviewer tools remain limited to `read,grep,find,ls`, and every role uses a separate process and
+context even when provider/model are identical. Presets do not alter the validator state machine.
+
+`cycle_status` labels dirty-tree evidence as expected only during IMPLEMENTING with active
+implementer. This read-only status projection leaves the manifest untouched, preserves other
+binding errors, and does not relax initialization, handoff, review, or terminal validation gates.
+
+Process-tree service fixtures in `tests/test_pi_ticket_cycle.py` clear inherited automatic
+coverage startup variables in their test environment. Their temporary child cwd has no coverage
+config; pytest-cov 6 would otherwise create statement-only data alongside the parent's branch
+data. The module's real child/grandchild diagnostic verifies isolation and unchanged parent
+measurement. This test-only exception preserves branch coverage policy and coverage for real
+package subprocesses in other test modules.
 
 ## Completion
 
