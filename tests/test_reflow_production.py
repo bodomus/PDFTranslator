@@ -28,7 +28,11 @@ from pdftranslate.reconstruction import (
     SourceBlockMapping,
 )
 from pdftranslate.rendering import PdfRenderer, RenderOptions, RenderStrategy
-from pdftranslate.rendering.errors import OutputPdfError, RenderCompletenessError
+from pdftranslate.rendering.errors import (
+    OutputPdfError,
+    RenderCompletenessError,
+    RenderingInputError,
+)
 from pdftranslate.rendering.reflow import (
     ContentDisposition,
     FlowParagraph,
@@ -45,12 +49,17 @@ from pdftranslate.rendering.reflow import (
     plan_flow,
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
-from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
+from pdftranslate.rendering.reflow.pymupdf_layout import (
+    PyMuPdfMeasurer,
+    insert_reflow_segments,
+    validate_saved_segments,
+)
 from pdftranslate.rendering.reflow.typography import (
     body_reflow_style,
     footnote_reflow_style,
     heading_reflow_style,
 )
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
 from pdftranslate.typography import (
     MixedStyleEvidence,
     RgbColor,
@@ -1470,6 +1479,7 @@ def _translation_metadata(total: int) -> TranslationMetadata:
         effective_device="cpu",
         batch_size=1,
         max_input_tokens=64,
+        behavior_revision=TRANSLATION_BEHAVIOR_REVISION,
         started_at=now,
         updated_at=now,
         completed_at=now,
@@ -1562,7 +1572,13 @@ def test_renderer_reflows_list_item_with_one_source_marker(
         normalized = " ".join(text.split())
         assert normalized.count("2)") == 1
         assert "Установите пакет" in normalized
-        assert "2) Установите пакет" in normalized
+        words = [word for page in rendered for word in page.get_text("words")]
+        marker_words = [word for word in words if word[4] == "2)"]
+        content_start = next(word for word in words if word[4] == "Установите")
+        assert len(marker_words) == 1
+        # The marker sits to the left of, and on the same line as, the source content edge.
+        assert marker_words[0][0] < content_start[0]
+        assert abs(marker_words[0][1] - content_start[1]) < 3.0
     finally:
         rendered.close()
 
@@ -1596,10 +1612,12 @@ def test_discover_reflow_page_reconstructs_confident_list_item(
         item for item in discovered.paragraphs if item.kind == ParagraphKind.LIST_ITEM.value
     )
     assert list_item.text == (
-        "2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
+        "Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
     )
     assert list_item.style.left_indent > 0
-    assert list_item.style.first_line_indent < 0
+    assert list_item.style.first_line_indent == 0
+    assert list_item.style.list_marker == "2)"
+    assert list_item.style.list_marker_offset > 0
     source_document.close()
 
 
@@ -2015,9 +2033,11 @@ def test_discover_reflow_page_represents_source_marker_offset(
         ]
         assert len(list_items) == 1
         style = list_items[0].style
-        # The source-backed marker-to-content gap is represented through the shared hanging
-        # indent: the marker hangs left to marker_x while the content edge anchors continuation.
-        assert style.first_line_indent == pytest.approx(-82.0, abs=1.0)
+        # The marker is a separate source-backed run at marker_x, and the semantic content
+        # begins at the source content edge (content_x) on every line.
+        assert style.list_marker == "2)"
+        assert style.list_marker_offset == pytest.approx(82.0, abs=1.0)
+        assert style.first_line_indent == 0.0
         assert style.left_indent == pytest.approx(82.0, abs=1.0)
     finally:
         source_document.close()
@@ -2079,3 +2099,106 @@ def test_renderer_anchors_first_line_content_to_source_edge(
         assert all(abs(x0 - first_edge) < 1.0 for x0 in content_xs)
     finally:
         rendered.close()
+
+
+def test_wide_gap_list_geometry_measurement_and_saved_pdf(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    # Source-backed wide gap: marker_x = 48, content_x = 130 (gap = 82 > font advance).
+    text = "Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
+    paragraph = FlowParagraph(
+        occurrence_index=0,
+        paragraph_id="wide-gap-1",
+        source_page_number=1,
+        kind=ParagraphKind.LIST_ITEM.value,
+        disposition=ContentDisposition.FLOWABLE_BODY,
+        text=text,
+        source_rect=Rect(48, 40, 260, 60),
+        source_fragment_rects=(Rect(48, 40, 260, 60),),
+        style=ReflowStyle(
+            font_size=11,
+            line_height=1.2,
+            space_before=0.0,
+            space_after=0.0,
+            left_indent=82.0,
+            first_line_indent=0.0,
+            list_marker="2)",
+            list_marker_offset=82.0,
+        ),
+    )
+    region = FlowRegion(
+        target_page_number=1,
+        rect=Rect(48, 40, 260, 240),
+        column_index=0,
+        order=0,
+        source_page_number=1,
+    )
+    with PyMuPdfMeasurer(300, 280, cyrillic_font_path) as measurer:
+        plan = plan_flow((paragraph,), (region,), measurer, content_kind=ReflowContentKind.BODY)
+    # The planner measures the semantic content from content_x, not marker_x.
+    first = plan.segments[0]
+    assert first.target_rect.x0 == pytest.approx(130.0, abs=1.0)
+
+    output = tmp_path / "wide-gap.pdf"
+    document = pymupdf.open()
+    document.new_page(width=300, height=280)
+    insert_reflow_segments(document, (plan,), cyrillic_font_path)
+    document.save(output)
+    document.close()
+    validate_saved_segments(output, (plan,))
+
+    saved = pymupdf.open(output)
+    try:
+        words = [word for page in saved for word in page.get_text("words")]
+        marker_words = [word for word in words if word[4] == "2)"]
+        content_words = [word for word in words if word[4] != "2)"]
+        assert len(marker_words) == 1
+        assert marker_words[0][0] == pytest.approx(48.0, abs=2.0)
+        lines: dict[int, list[float]] = {}
+        for word in content_words:
+            lines.setdefault(round(word[1]), []).append(word[0])
+        assert len(lines) >= 2
+        for x0s in lines.values():
+            assert min(x0s) == pytest.approx(130.0, abs=2.0)
+    finally:
+        saved.close()
+
+
+def test_render_rejects_revision5_list_artifact(tmp_path: Path, cyrillic_font_path: Path) -> None:
+    source = _list_source_pdf(tmp_path / "list-r5.pdf")
+    translated = _translated_list_source(source)
+    assert translated.translation is not None
+    translated = translated.model_copy(
+        update={"translation": translated.translation.model_copy(update={"behavior_revision": 5})}
+    )
+    output = tmp_path / "list-r5.ru.pdf"
+
+    with pytest.raises(RenderingInputError, match="rerun translation"):
+        PdfRenderer().render(
+            source,
+            translated,
+            output,
+            font_path=cyrillic_font_path,
+            options=RenderOptions(max_reflow_pages=4),
+        )
+
+
+def test_render_accepts_revision5_non_list_artifact(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    source = _source_pdf(tmp_path / "body-r5.pdf")
+    translated = _translated_source(source)
+    assert translated.translation is not None
+    translated = translated.model_copy(
+        update={"translation": translated.translation.model_copy(update={"behavior_revision": 5})}
+    )
+    output = tmp_path / "body-r5.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+    assert result.reflowed_paragraphs >= 1

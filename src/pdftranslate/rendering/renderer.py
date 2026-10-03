@@ -57,6 +57,7 @@ from pdftranslate.rendering.reflow.pymupdf_layout import (
 )
 from pdftranslate.rendering.reflow.regions import discover_reflow_page
 from pdftranslate.repeated import RepeatedElementPolicy
+from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION
 from pdftranslate.typography import (
     ResolvedParagraphStyle,
     extract_typography_evidence,
@@ -646,12 +647,36 @@ def _validate_output_paths(
             raise OutputPdfError(f"output path is not a file: {candidate}")
 
 
+def _has_supported_list_item(translated: ExtractedDocument) -> bool:
+    """Return true when a paragraph requires structural marker reattachment."""
+    return any(
+        paragraph.kind
+        in {
+            ParagraphKind.BODY,
+            ParagraphKind.HEADING,
+            ParagraphKind.LIST_ITEM,
+        }
+        and detect_list_marker(paragraph.text) is not None
+        and bool(paragraph.translated_text and paragraph.translated_text.strip())
+        for paragraph in translated.paragraphs
+    )
+
+
 def _validate_document(source: Path, translated: ExtractedDocument, force_mismatch: bool) -> None:
     metadata = translated.translation
     if translated.schema_version not in {"1.1", "1.3"} or metadata is None:
         raise RenderingInputError("rendering requires translated document schema 1.1 or 1.3")
     if metadata.status != "completed":
         raise RenderingInputError("rendering requires a completed translation")
+    if (
+        translated.schema_version == "1.3"
+        and metadata.behavior_revision < TRANSLATION_BEHAVIOR_REVISION
+        and _has_supported_list_item(translated)
+    ):
+        raise RenderingInputError(
+            "translated artifact was produced with an incompatible translation behavior "
+            "revision; rerun translation before rendering list-marker-aware output"
+        )
     if translated.schema_version == "1.3":
         missing = tuple(
             paragraph.id

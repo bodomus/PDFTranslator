@@ -88,6 +88,8 @@ class ReflowStyle:
     italic_applied: bool = False
     mixed_style: bool = False
     fallback_count: int = 0
+    list_marker: str = ""
+    list_marker_offset: float = 0.0
 
     def __post_init__(self) -> None:
         if (
@@ -98,6 +100,7 @@ class ReflowStyle:
             or self.left_indent < 0
             or self.right_indent < 0
             or self.fallback_count < 0
+            or self.list_marker_offset < 0
         ):
             raise ValueError("reflow style measurements must be positive")
 
@@ -170,6 +173,8 @@ class PlacementSegment:
     italic_applied: bool = False
     mixed_style: bool = False
     fallback_count: int = 0
+    list_marker: str = ""
+    list_marker_offset: float = 0.0
 
     def __post_init__(self) -> None:
         if self.text_end - self.text_start != len(self.text):

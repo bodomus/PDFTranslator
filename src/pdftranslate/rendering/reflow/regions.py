@@ -11,7 +11,7 @@ import pymupdf
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox
-from pdftranslate.list_markers import detect_list_marker, reattach_list_marker
+from pdftranslate.list_markers import detect_list_marker
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
 from pdftranslate.rendering.inline_styles import InlineStyleMapping, map_inline_styles
 from pdftranslate.rendering.reflow.models import (
@@ -360,7 +360,7 @@ def _list_flow_paragraph(
         disposition=(
             ContentDisposition.FLOWABLE_HEADING if is_heading else ContentDisposition.FLOWABLE_BODY
         ),
-        text=reattach_list_marker(paragraph.text, reconstructed_text) or reconstructed_text,
+        text=reconstructed_text,
         source_rect=source_rect,
         source_fragment_rects=tuple(
             rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
@@ -387,12 +387,14 @@ def _list_item_style(
     content_x = _source_content_x(paragraph, marker_x, region, font_path, font_size)
     if content_x <= marker_x:
         return None
-    # The marker is embedded in the text; a hanging first-line indent places it at the source
-    # marker edge while the source-backed content edge anchors every continuation line.
+    # The marker is a separate source-backed run at marker_x, and the semantic content begins
+    # at the same source content edge on every line, so the first line has no hanging indent.
     return replace(
         style,
         left_indent=max(0.0, content_x - region.x0),
-        first_line_indent=marker_x - content_x,
+        first_line_indent=0.0,
+        list_marker=marker.marker_text,
+        list_marker_offset=content_x - marker_x,
     )
 
 

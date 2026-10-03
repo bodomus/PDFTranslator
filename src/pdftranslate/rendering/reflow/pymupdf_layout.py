@@ -176,6 +176,8 @@ def insert_reflow_segments(
                 mixed_style=segment.mixed_style,
                 fallback_count=segment.fallback_count,
             )
+            if segment.list_marker and segment.continuation_index == 0:
+                _insert_list_marker(page, segment, font_path, archive)
             rich_text = build_rich_text(
                 segment.text,
                 font_path,
@@ -204,6 +206,50 @@ def insert_reflow_segments(
                     "reflow layout changed during insertion for occurrence "
                     f"{segment.occurrence_index}, continuation {segment.continuation_index}"
                 )
+
+
+def _insert_list_marker(
+    page: pymupdf.Page,
+    segment: PlacementSegment,
+    font_path: Path,
+    archive: pymupdf.Archive,
+) -> None:
+    """Render a source-owned list marker as a separate run on the first line."""
+    marker_style = ReflowStyle(
+        font_size=segment.font_size,
+        line_height=segment.line_height,
+        space_before=0.0,
+        space_after=0.0,
+        first_line_indent=0.0,
+        left_indent=0.0,
+        right_indent=0.0,
+        alignment=segment.alignment,
+    )
+    marker_rich = build_rich_text(
+        segment.list_marker,
+        font_path,
+        marker_style,
+        segment.color,
+        first_line_indent=0.0,
+    )
+    marker_rect = pymupdf.Rect(
+        segment.target_rect.x0 - segment.list_marker_offset,
+        segment.target_rect.y0,
+        segment.target_rect.x0,
+        segment.target_rect.y1,
+    )
+    remaining, scale = page.insert_htmlbox(
+        marker_rect,
+        marker_rich.html,
+        css=marker_rich.css,
+        archive=archive,
+        scale_low=1,
+        overlay=False,
+    )
+    if remaining < -0.1 or abs(scale - 1.0) > 1e-6:
+        raise OutputPdfError(
+            f"list marker layout changed during insertion for occurrence {segment.occurrence_index}"
+        )
 
 
 def build_rich_text(
