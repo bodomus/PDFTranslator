@@ -46,3 +46,26 @@ Updated README, CHANGELOG, reviewer contract/skill/new Git-safety reference, aff
 - Large diffs fail at the output cap; no automatic file publication or hidden truncation.
 - Capability enforcement is not an OS sandbox against compromised trusted binaries/extensions or concurrent external writers; existing file-read tools are not a filesystem sandbox.
 - Remote CI and final exact-SHA review/merge decisions remain outside the implementer phase.
+
+## P1 correction after manual review of c7dbc6d
+
+- Reproduced the foreign Git-directory escape with both absolute and relative `.git/commondir`
+  paths; ordinary Git returned the foreign HEAD even with explicit git-dir/work-tree. Five
+  regression cases failed before the fix and passed after it.
+- Added a filesystem-only constructor check rejecting every `commondir` entry before any Git
+  subprocess. Linked-worktree/common-directory layouts, including empty/self redirects, remain
+  explicitly unsupported. Normal repositories and prior gitfile/symlink/path guards are preserved.
+- Regression coverage exercises every inspection operation against both foreign redirects and
+  proves zero additional child-process calls at rejection. No shell/argv capability, adapter,
+  runner, presets, implementer permissions, validator, process-safety or state-machine changes.
+- All Git-readonly security tests: 79 passed. Full `scripts/check.ps1` (including `uv run pytest`):
+  597 passed, 3 skipped, branch coverage 89.46%; Ruff formatting/lint and mypy (97 files) passed;
+  Wiki lint passed with zero errors/warnings. Temporary test/coverage/cache output stayed local.
+- CRG update completed; its constructor test-gap warning is disproved by the real-Git and
+  process-boundary regressions. Existing graph context was source-verified; no architecture changed.
+- Updated the README, CHANGELOG, Git safety policy, affected Wiki/log, investigation and plan.
+  No automated reviewer launched and no `.agent-cycle` coordination/state files changed.
+- YouTrack lookup returned `Issue not found: PDFTR-40`; remote fields/attachments could not be
+  updated. This repository report and completion review record the correction instead.
+- Commit/push provides a new exact SHA for independent review. New-push CI and review verdict are
+  subsequent evidence, not claimed here; final merge remains human-owned.

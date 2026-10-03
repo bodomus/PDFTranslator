@@ -12,6 +12,7 @@ from tests import test_pi_ticket_cycle as cycle_tests
 from tests.test_pi_ticket_cycle import REPOSITORY_ROOT, TASK_BRANCH, _git, _inspect_git
 
 git_repo = cycle_tests.git_repo
+work_dir = cycle_tests.work_dir
 
 
 def test_read_operations_and_no_mutation(git_repo: Path) -> None:
@@ -213,6 +214,62 @@ def test_gitfile_redirect_rejected(git_repo: Path) -> None:
     (root / ".git").write_text(f"gitdir: {git_repo / '.git'}", encoding="utf-8")
     with pytest.raises(RuntimeError, match="physical .git"):
         _inspect_git(root, {"operation": "head"})
+
+
+@pytest.mark.parametrize("relative_redirect", [False, True])
+def test_commondir_foreign_repository_escape_rejected(
+    git_repo: Path, work_dir: Path, relative_redirect: bool
+) -> None:
+    original_head = _inspect_git(git_repo, {"operation": "head"})
+    _git(work_dir, "init", "-b", TASK_BRANCH)
+    _git(work_dir, "config", "user.name", "Foreign Repository Fixture")
+    _git(work_dir, "config", "user.email", "foreign@example.invalid")
+    (work_dir / "foreign.txt").write_text("foreign evidence\n", encoding="utf-8")
+    _git(work_dir, "add", "foreign.txt")
+    _git(work_dir, "commit", "-m", "foreign commit")
+    foreign_head = _git(work_dir, "rev-parse", "HEAD")
+    assert foreign_head != original_head
+
+    target = work_dir / ".git"
+    redirect = (
+        Path(os.path.relpath(target, git_repo / ".git")).as_posix()
+        if relative_redirect
+        else target.as_posix()
+    )
+    (git_repo / ".git/commondir").write_text(redirect + "\n", encoding="utf-8")
+    # Positive control: explicit --git-dir / --work-tree alone follow the foreign store.
+    assert (
+        _git(
+            git_repo,
+            f"--git-dir={git_repo / '.git'}",
+            f"--work-tree={git_repo}",
+            "rev-parse",
+            "HEAD",
+        )
+        == foreign_head
+    )
+    queries = [
+        {"operation": "head"},
+        {"operation": "status"},
+        {"operation": "current_branch"},
+        {"operation": "resolve_revision", "revision": foreign_head},
+        {"operation": "show", "commit": foreign_head},
+        {"operation": "diff", "base": original_head, "head": foreign_head},
+        {"operation": "merge_base", "base": original_head, "head": foreign_head},
+        {"operation": "log", "base": original_head, "head": foreign_head, "limit": 1},
+        {"operation": "working_diff", "staged": False},
+        {"operation": "working_diff", "staged": True},
+    ]
+    for query in queries:
+        with pytest.raises(RuntimeError, match="common-directory redirects.*unsupported"):
+            _inspect_git(git_repo, query)
+
+
+@pytest.mark.parametrize("redirect", [".\n", ""])
+def test_commondir_layout_is_explicitly_unsupported(git_repo: Path, redirect: str) -> None:
+    (git_repo / ".git/commondir").write_text(redirect, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="common-directory redirects.*linked worktrees"):
+        _inspect_git(git_repo, {"operation": "head"})
 
 
 def test_output_limit_fails_closed(git_repo: Path) -> None:

@@ -37,3 +37,19 @@ Focused inspector and runner tests, requested runner/validator tests, full pytes
   Fixed the test-only stripping regex and added explicit LF/CRLF variants; production adapter
   does not strip imports and loaded correctly under installed Pi.
 - Installed Pi `--no-extensions --extension ./scripts/reviewer_git/extension.ts --offline --help` loaded without errors, confirming adapter imports/API against the actual runtime without a provider call.
+
+## P1 common-directory follow-up
+
+The final manual review of c7dbc6d reproduced a physical `.git` directory whose `commondir`
+points at a foreign repository. Fixed `--git-dir`/`--work-tree` do not override Git's common
+directory resolution. Absolute and relative redirect regression positive controls reproduced
+the foreign HEAD, and all five focused regression cases failed before the fix.
+
+The smallest fix is a filesystem-only constructor guard rejecting every `commondir` entry.
+Linked-worktree/common-directory support is intentionally unsupported, including self/empty
+redirect files; normal repositories have no such entry. `lstat` checks the entry itself, including
+dangling symlinks, without following or reading a foreign store. Existing gitfile/symlink,
+alternates, executable, argv, environment, helper and process bounds remain unchanged. The
+process-boundary regression must prove rejection before even internal Git config queries.
+Scope is the inspector, security tests and supporting documentation; no adapter, runner,
+validator, preset, permissions, state-machine or cycle coordination changes are required.

@@ -31,7 +31,11 @@ metadata, file statistics and patch; `log` gives fixed SHA/parents/subject recor
 
 Root comes exclusively from the runner-bound cwd at session start. Git receives explicit fixed
 `--git-dir` and `--work-tree`. Redirecting gitfiles, symlinked Git directories, alternate object
-stores and partial clones are unsupported and fail closed. Submodules are not traversed.
+stores and partial clones are unsupported and fail closed. Any `.git/commondir` entry is rejected
+before a Git subprocess, even if empty or self-referential: linked-worktree/common-directory
+layouts are intentionally unsupported. The guard checks the entry itself without following it
+or reading the redirected store. Ordinary repositories without `commondir` remain supported.
+Submodules are not traversed.
 
 ## Hardening and bounds
 

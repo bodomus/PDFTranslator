@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { isAbsolute, basename } from "node:path";
+import { writeFileSync, unlinkSync } from "node:fs";
 
 const calls = [];
 childProcess.execFile = (binary, args, options, callback) => {
@@ -36,4 +37,14 @@ const controller = new AbortController();
 controller.abort();
 await inspector.query({operation: "status"}, controller.signal);
 assert.equal(calls.at(-1).options.signal, controller.signal);
+// Layout rejection must precede even the internal config-inspection subprocess.
+const commondir = `${inspector.gitDir}/commondir`;
+writeFileSync(commondir, "../foreign.git\n");
+try {
+  const previousCalls = calls.length;
+  assert.throws(() => new GitReadonlyInspector(process.argv[2]), /common-directory redirects.*unsupported/);
+  assert.equal(calls.length, previousCalls, "commondir rejection reached a subprocess");
+} finally {
+  unlinkSync(commondir);
+}
 console.log("process policy PASS");

@@ -27,6 +27,9 @@ related:
 
 ## 2026-10-03
 
+- Documented pre-subprocess rejection of `.git/commondir` entries after the PDFTR-40 P1 review,
+  preserving the fixed Git-directory boundary and explicit unsupported linked-worktree policy.
+
 - Documented constrained reviewer-only Git observability, fixed repository root and helper/filter
   hardening for every Pi preset, without changing state/round/merge ownership.
 

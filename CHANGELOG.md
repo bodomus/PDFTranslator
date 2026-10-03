@@ -22,6 +22,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Reviewer Git inspection rejects `.git/commondir` entries before any Git subprocess, preventing
+  foreign common-directory redirects (PDFTR-40 P1). Linked-worktree/common-directory layouts
+  remain unsupported; normal repositories and existing safety guards are unchanged.
+
 - `agent_cycle.py status` treats a dirty working tree during active implementation as expected
   information, while retaining HEAD binding and all workflow cleanliness gates.
 - Added Pi runner lifecycle messages and a five-minute child heartbeat without streaming prompts,

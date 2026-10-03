@@ -94,7 +94,9 @@ The reviewer-only Git-read adapter loads explicitly with other extension discove
 Its fixed-operation inspector verifies HEAD/status/SHA/branch/diff/show/merge-base/history using
 runner-bound cwd, full commit IDs or HEAD, bounded output/time and no shell. It disables executable
 Git helper/filter/pager paths, optional index locks and network/submodule traversal. Unsupported
-layouts or failed/inconsistent evidence fail closed. Reviewers independently verify Git evidence;
+layouts or failed/inconsistent evidence fail closed. Any `.git/commondir` entry is rejected before
+a Git subprocess; linked-worktree/common-directory layouts remain unsupported, while ordinary
+repositories without redirects remain supported. Reviewers independently verify Git evidence;
 `agent_cycle.py` remains the sole state/binding authority. See the source-linked reviewer safety
 contract for limits and supported operations. Node 22 tests use local repositories, no providers.
 

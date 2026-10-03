@@ -133,6 +133,8 @@ state and base relationships; `agent_cycle.py` still owns exact-SHA binding and 
 See [reviewer Git safety](.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md) for
 operations and unsupported layouts. Inspector tests require Node 22, Pi's existing runtime;
 CI installs it explicitly. Implementer permissions and human merge ownership are unchanged.
+Linked-worktree/common-directory layouts, including any `.git/commondir` entry, are rejected
+before inspection; ordinary repositories with a physical `.git` and no redirect remain supported.
 
 `agent_cycle.py status` reports a dirty tree during `IMPLEMENTING` with active `implementer` as
 `dirty (expected during implementation)`; JSON includes `working_tree_dirty_expected`.

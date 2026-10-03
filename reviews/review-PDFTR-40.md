@@ -15,3 +15,18 @@ Windows/Ubuntu CI and exact-SHA review are subsequent evidence. No automatic mer
 belongs to the human. Initial Ubuntu CI passed; a Windows CRLF-only test-harness failure was fixed
 and covered with LF/CRLF variants before the final push. Unsupported repository layouts and disabled-filter limits are documented in
 REVIEWER_GIT_SAFETY.md and the implementation report.
+
+## P1 correction for the next exact-SHA review
+
+The manual review of c7dbc6d found that `.git/commondir` could redirect inspection to a foreign
+repository. The inspector now rejects any such entry before a Git subprocess; linked-worktree
+and common-directory layouts are explicitly unsupported. Existing guards, operation interface,
+permissions, runner, validator and state machine are unchanged.
+
+Real Git positive controls reproduce absolute/relative foreign HEAD routing. Every inspection
+operation rejects these fixtures; a process-boundary test proves rejection without spawning Git.
+Empty/self redirect fixtures also fail closed, and normal-repository/security regressions pass.
+Security suite: 79 passed. Full PowerShell gate: 597 passed, 3 skipped, 89.46% branch coverage;
+Ruff, mypy and Wiki lint passed. The completion documentation is updated; YouTrack could not find
+the issue for remote field/attachment updates. No reviewer was launched or cycle state changed.
+This records implementation validation, not the next independent review verdict.

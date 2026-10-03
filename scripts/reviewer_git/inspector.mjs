@@ -44,6 +44,11 @@ export class GitReadonlyInspector {
     if (!lstatSync(this.gitDir).isDirectory() || realpathSync(this.gitDir) !== this.gitDir) {
       throw new Error("Git inspection requires an in-root physical .git directory (no gitfiles/symlinks)");
     }
+    // A physical .git can still redirect refs/objects via commondir. This layout
+    // (including linked worktrees) is unsupported; reject the entry without following it.
+    if (lstatSync(join(this.gitDir, "commondir"), { throwIfNoEntry: false })) {
+      throw new Error("Git common-directory redirects and linked worktrees are unsupported");
+    }
     // Alternate object stores escape the root; partial clones may invoke implicit transport.
     if (existsSync(join(this.gitDir, "objects", "info", "alternates")) ||
         existsSync(join(this.gitDir, "objects", "info", "http-alternates")) ||
