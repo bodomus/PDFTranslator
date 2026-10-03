@@ -196,10 +196,6 @@ def plan_flow(
                     italic_applied=paragraph.style.italic_applied,
                     mixed_style=paragraph.style.mixed_style,
                     fallback_count=paragraph.style.fallback_count,
-                    list_marker=paragraph.style.list_marker if first_segment else "",
-                    list_marker_offset=(
-                        paragraph.style.list_marker_offset if first_segment else 0.0
-                    ),
                     state=PlacementState.COMPLETE if completes else PlacementState.CONTINUED,
                     inline_runs=segment_runs,
                 )

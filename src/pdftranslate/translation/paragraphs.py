@@ -24,7 +24,8 @@ from pdftranslate.glossary import (
     prepare_glossary_text,
     validate_glossary_output,
 )
-from pdftranslate.reconstruction import LogicalParagraph
+from pdftranslate.list_markers import detect_list_marker
+from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
 from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION, TranslationCache
 from pdftranslate.translation.errors import (
@@ -64,6 +65,23 @@ class _Work:
     foreign_language: PreparedForeignLanguageText | None = None
     targets: list[tuple[int, str]] = field(default_factory=list)
     translated: list[str] = field(default_factory=list)
+
+
+def _translation_source(paragraph: LogicalParagraph) -> str:
+    """Return the translatable semantic text, separating a source-owned list marker.
+
+    The source PDF owns the structural marker, so a confidently detected list item sends only
+    its semantic content to the translation provider. The marker is reattached at render time.
+    """
+    if paragraph.kind in {
+        ParagraphKind.BODY,
+        ParagraphKind.HEADING,
+        ParagraphKind.LIST_ITEM,
+    }:
+        marker = detect_list_marker(paragraph.text)
+        if marker is not None:
+            return marker.content_text
+    return paragraph.text
 
 
 def translate_paragraphs(
@@ -213,9 +231,12 @@ def translate_paragraphs(
         for index, paragraph in enumerate(document.paragraphs):
             if paragraphs[index].translated_text is not None:
                 continue
+            translation_source = _translation_source(paragraph)
             policy = _paragraph_policy(document, paragraph)
             if policy is not RepeatedElementPolicy.TRANSLATE:
-                translated_text = paragraph.text if policy is RepeatedElementPolicy.PRESERVE else ""
+                translated_text = (
+                    translation_source if policy is RepeatedElementPolicy.PRESERVE else ""
+                )
                 paragraphs[index] = paragraph.model_copy(
                     update={"translated_text": translated_text}
                 )
@@ -224,16 +245,18 @@ def translate_paragraphs(
                 notify(index, "skipped", 0)
                 save()
                 continue
-            if should_skip_translation(paragraph.text):
-                paragraphs[index] = paragraph.model_copy(update={"translated_text": paragraph.text})
+            if should_skip_translation(translation_source):
+                paragraphs[index] = paragraph.model_copy(
+                    update={"translated_text": translation_source}
+                )
                 completed += 1
                 skipped += 1
                 notify(index, "skipped", 0)
                 save()
                 continue
-            normalized = normalize_source_text(paragraph.text)
+            normalized = normalize_source_text(translation_source)
             prepared = (
-                prepare_glossary_text(paragraph.text, options.glossary)
+                prepare_glossary_text(translation_source, options.glossary)
                 if options.glossary is not None
                 else None
             )
@@ -244,15 +267,17 @@ def translate_paragraphs(
                 )
             )
             foreign_language = prepare_foreign_language_text(
-                prepared.value if prepared is not None else paragraph.text,
+                prepared.value if prepared is not None else translation_source,
                 allow_whole_unit=allow_whole_unit,
-                whole_unit_text=paragraph.text,
+                whole_unit_text=translation_source,
             )
             if (
                 foreign_language.decision.classification
                 is ForeignLanguageClassification.PRESERVE_FOREIGN_UNIT
             ):
-                paragraphs[index] = paragraph.model_copy(update={"translated_text": paragraph.text})
+                paragraphs[index] = paragraph.model_copy(
+                    update={"translated_text": translation_source}
+                )
                 foreign_language_evidence[index] = _foreign_evidence(
                     index,
                     paragraph,

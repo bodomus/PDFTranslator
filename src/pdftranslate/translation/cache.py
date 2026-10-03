@@ -9,9 +9,10 @@ from pathlib import Path
 from pdftranslate.translation.errors import TranslationCacheError
 from pdftranslate.translation.text import normalize_source_text
 
-# Revision 5 adds explicit PDFTR-21 foreign-unit preservation and keeps inline foreign spans
-# outside model inference. Older cached translations must not bypass the new preprocessing.
-TRANSLATION_BEHAVIOR_REVISION = 5
+# Revision 6 sends list items to the provider as semantic-only content (the source-owned
+# structural marker is separated before translation), so older cached translations that
+# contained the marker must not be reused.
+TRANSLATION_BEHAVIOR_REVISION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS translations (

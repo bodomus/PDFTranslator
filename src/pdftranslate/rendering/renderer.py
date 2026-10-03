@@ -14,6 +14,7 @@ import pymupdf
 
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.text_block import BoundingBox, TextBlock
+from pdftranslate.list_markers import detect_list_marker, reattach_list_marker
 from pdftranslate.pdf import PdfExtractor
 from pdftranslate.pdf.pymupdf_backend import source_identity
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
@@ -28,10 +29,6 @@ from pdftranslate.rendering.layout import (
     font_size_candidates,
     initial_font_size,
     safe_expanded_bbox,
-)
-from pdftranslate.rendering.list_markers import (
-    detect_list_marker,
-    reconstruct_list_item_text,
 )
 from pdftranslate.rendering.models import (
     BlockRenderResult,
@@ -552,9 +549,9 @@ def _paragraph_block(paragraph: LogicalParagraph) -> TextBlock:
         ParagraphKind.HEADING,
         ParagraphKind.LIST_ITEM,
     }:
-        reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text or "")
-        if reconstructed is not None:
-            translated_text = reconstructed
+        reattached = reattach_list_marker(paragraph.text, paragraph.translated_text or "")
+        if reattached is not None:
+            translated_text = reattached
     return TextBlock(
         id=paragraph.id,
         text=paragraph.text,
@@ -786,10 +783,11 @@ def _list_marker_counters(translated: ExtractedDocument) -> tuple[int, int, int]
         if detect_list_marker(paragraph.text) is None:
             continue
         candidates += 1
-        if reconstruct_list_item_text(paragraph.text, paragraph.translated_text or "") is None:
-            deferred += 1
-        else:
+        translated_text = paragraph.translated_text
+        if translated_text and translated_text.strip():
             applied += 1
+        else:
+            deferred += 1
     return candidates, applied, deferred
 
 

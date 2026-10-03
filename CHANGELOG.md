@@ -9,11 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Made translated list-marker reconstruction family-aware so a provider restyled bullet is stripped
-  without deleting semantic content such as ``A. Smith``, restored fail-closed ambiguity validation
-  for selected list candidates, and anchored the first rendered line's semantic content to the
-  source-backed content edge so it aligns with continuation lines even when the source marker-to-
-  content gap is wider than the renderer font's marker-plus-space advance.
+- Separated source-owned list markers from translatable content before translation. Supported list
+  items now send semantic-only text to the provider, so a provider can no longer translate, delete,
+  duplicate, restyle, or renumber the structural marker; the source marker is reattached exactly
+  once at render time. Removed the HTML-table marker layout and the translated-prefix stripping
+  heuristic, so the marker and content share the normal reflow measurement and insertion path.
 - Completed the Windows process-safety guarantees in `scripts/pi_ticket_cycle.py`. A
   `KeyboardInterrupt` after `Popen` — including during Windows Job Object creation, assignment, or
   the resume step — now always terminates and reaps the direct child and every descendant before

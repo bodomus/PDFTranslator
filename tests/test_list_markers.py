@@ -1,13 +1,13 @@
-"""Focused tests for source-owned list-marker detection and reconstruction."""
+"""Focused tests for source-owned list-marker detection and reattachment."""
 
 from __future__ import annotations
 
 import pytest
 
-from pdftranslate.rendering.list_markers import (
+from pdftranslate.list_markers import (
     ListMarker,
     detect_list_marker,
-    reconstruct_list_item_text,
+    reattach_list_marker,
 )
 
 
@@ -66,81 +66,43 @@ def test_requires_separation_after_bullet_and_dash() -> None:
     assert detect_list_marker("*Install") is None
 
 
-def test_reconstructs_marker_with_provider_deleted_marker() -> None:
+def test_detects_semantic_content_after_marker() -> None:
+    marker = detect_list_marker("a) A. Smith is responsible.")
+    assert marker is not None
+    assert marker.marker_text == "a)"
+    assert marker.content_text == "A. Smith is responsible."
+
+
+def test_reattaches_source_marker_to_semantic_text() -> None:
     assert (
-        reconstruct_list_item_text("2) Restart the application.", "Перезапустите приложение.")
+        reattach_list_marker("2) Restart the application.", "Перезапустите приложение.")
         == "2) Перезапустите приложение."
     )
 
 
-def test_reconstructs_cyrillic_translated_letter_marker() -> None:
-    assert reconstruct_list_item_text("a) First option", "а) Первый вариант") == (
-        "a) Первый вариант"
+def test_reattach_preserves_semantic_initial() -> None:
+    # The semantic "A." is translated content, never structural.
+    assert reattach_list_marker("a) A. Smith is responsible.", "A. Smith отвечает.") == (
+        "a) A. Smith отвечает."
     )
 
 
-def test_reconstruct_strips_restyled_numbered_marker() -> None:
-    assert (
-        reconstruct_list_item_text("2) Restart the application.", "(2) Перезапустите приложение.")
-        == "2) Перезапустите приложение."
-    )
-    assert (
-        reconstruct_list_item_text("2) Restart the application.", "3) Перезапустите приложение.")
-        == "2) Перезапустите приложение."
+def test_reattach_preserves_numeric_semantic_prefix() -> None:
+    assert reattach_list_marker("• 1.5 mm tolerance is required.", "1.5 мм допуска.") == (
+        "• 1.5 мм допуска."
     )
 
 
-def test_reconstruct_preserves_semantic_content_starting_with_initial() -> None:
-    assert (
-        reconstruct_list_item_text("• A. Smith is responsible.", "A. Smith is responsible.")
-        == "• A. Smith is responsible."
+def test_reattach_preserves_source_separation() -> None:
+    assert reattach_list_marker("•  Install the package.", "Установите пакет.") == (
+        "•  Установите пакет."
     )
 
 
-def test_reconstructs_marker_with_provider_translated_marker() -> None:
-    assert (
-        reconstruct_list_item_text("2) Restart the application.", "2. Перезапустите приложение.")
-        == "2) Перезапустите приложение."
-    )
+def test_reattach_returns_none_for_ambiguous_source() -> None:
+    assert reattach_list_marker("2026. Annual report", "Годовой отчёт.") is None
 
 
-def test_reconstructs_marker_with_provider_duplicated_marker() -> None:
-    assert (
-        reconstruct_list_item_text(
-            "2) Restart the application.",
-            "2) 2) Перезапустите приложение.",
-        )
-        == "2) Перезапустите приложение."
-    )
-
-
-def test_reconstructs_bullet_and_preserves_separation() -> None:
-    assert (
-        reconstruct_list_item_text("•  Install the package.", "Установите пакет.")
-        == "•  Установите пакет."
-    )
-
-
-def test_reconstruct_returns_none_for_ambiguous_source() -> None:
-    assert reconstruct_list_item_text("2026. Annual report", "Годовой отчёт.") is None
-
-
-def test_reconstruct_returns_none_when_no_content_remains() -> None:
-    assert reconstruct_list_item_text("2) Restart the application.", "2)") is None
-
-
-def test_reconstruct_strips_translated_bullet_restyle() -> None:
-    assert (
-        reconstruct_list_item_text("• Install the package.", "- Установите пакет.")
-        == "• Установите пакет."
-    )
-
-
-def test_reconstruct_strips_translated_bullet_before_semantic_initial() -> None:
-    result = reconstruct_list_item_text("• A. Smith is responsible.", "- A. Smith is responsible.")
-    assert result == "• A. Smith is responsible."
-    assert result.count("•") == 1
-
-
-def test_reconstruct_preserves_semantic_prefix_absent_from_source() -> None:
-    assert reconstruct_list_item_text("1. First option", "A. First option") == "1. A. First option"
+def test_reattach_returns_none_when_no_content_remains() -> None:
+    assert reattach_list_marker("2) Restart the application.", "") is None
+    assert reattach_list_marker("2) Restart the application.", "   ") is None

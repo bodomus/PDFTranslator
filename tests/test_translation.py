@@ -191,6 +191,38 @@ def _paragraph_document(*paragraph_texts: str, paragraph_id: str = "p1-b1") -> E
     )
 
 
+def test_list_item_provider_receives_semantic_only(tmp_path: Path) -> None:
+    source = _paragraph_document(
+        "• Install the package.",
+        "1) Restart the application.",
+        "a. A. Smith is responsible.",
+        "• 1.5 versions were released.",
+    )
+    translator = FakeTranslator()
+
+    with TranslationCache(tmp_path / "cache.sqlite3") as cache:
+        result = translate_document(
+            source,
+            translator=translator,
+            cache=cache,
+            options=TranslationOptions(),
+        )
+
+    inputs = [text for batch in translator.batches for text in batch]
+    assert "Install the package." in inputs
+    assert "Restart the application." in inputs
+    assert "A. Smith is responsible." in inputs
+    assert "1.5 versions were released." in inputs
+    # The source-owned structural marker never reaches the provider.
+    assert all(not text.startswith(("•", "1)", "a.")) for text in inputs)
+
+    assert result.schema_version == "1.3"
+    assert result.paragraphs[0].translated_text == "RU Install the package."
+    assert result.paragraphs[1].translated_text == "RU Restart the application."
+    assert result.paragraphs[2].translated_text == "RU A. Smith is responsible."
+    assert result.paragraphs[3].translated_text == "RU 1.5 versions were released."
+
+
 def test_pipeline_preserves_originals_protected_tokens_and_duplicates(tmp_path: Path) -> None:
     protected = (
         "Visit https://example.com, email a@example.com, use C:\\docs\\a.txt, "

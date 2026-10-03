@@ -45,7 +45,7 @@ from pdftranslate.rendering.reflow import (
     plan_flow,
 )
 from pdftranslate.rendering.reflow.models import LayoutPlan, PlacementSegment, PlacementState
-from pdftranslate.rendering.reflow.pymupdf_layout import build_rich_text, validate_saved_segments
+from pdftranslate.rendering.reflow.pymupdf_layout import validate_saved_segments
 from pdftranslate.rendering.reflow.typography import (
     body_reflow_style,
     footnote_reflow_style,
@@ -1521,7 +1521,7 @@ def _translated_list_source(source: Path) -> ExtractedDocument:
             ).strip()
         elif paragraph.kind is ParagraphKind.LIST_ITEM:
             translated = (
-                "2) 2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
+                "Установите пакет и перезапустите приложение, чтобы проверить перенос строки."
             )
         else:
             translated = paragraph.text
@@ -1625,7 +1625,7 @@ def test_renderer_reflows_isolated_list_item_with_hanging_indent(
         paragraph.model_copy(
             update={
                 "translated_text": (
-                    "2) 2) Установите пакет и перезапустите приложение, "
+                    "Установите пакет и перезапустите приложение, "
                     "чтобы проверить перенос строки текста в списке."
                     if paragraph.kind is ParagraphKind.LIST_ITEM
                     else paragraph.text
@@ -1692,7 +1692,7 @@ def test_renderer_fixed_layout_list_item_keeps_one_source_marker(
         paragraph.model_copy(
             update={
                 "translated_text": (
-                    "2) 2) Установите пакет."
+                    "Установите пакет."
                     if paragraph.kind is ParagraphKind.LIST_ITEM
                     else paragraph.text
                 )
@@ -2015,8 +2015,8 @@ def test_discover_reflow_page_represents_source_marker_offset(
         ]
         assert len(list_items) == 1
         style = list_items[0].style
-        assert style.list_marker == "2)"
-        assert style.list_marker_offset == pytest.approx(82.0, abs=1.0)
+        # The source-backed marker-to-content gap is represented through the shared hanging
+        # indent: the marker hangs left to marker_x while the content edge anchors continuation.
         assert style.first_line_indent == pytest.approx(-82.0, abs=1.0)
         assert style.left_indent == pytest.approx(82.0, abs=1.0)
     finally:
@@ -2026,55 +2026,56 @@ def test_discover_reflow_page_represents_source_marker_offset(
 def test_renderer_anchors_first_line_content_to_source_edge(
     tmp_path: Path, cyrillic_font_path: Path
 ) -> None:
-    del tmp_path
-    style = ReflowStyle(
-        font_size=11,
-        line_height=1.2,
-        space_before=0.0,
-        space_after=0.0,
-        first_line_indent=-82.0,
-        left_indent=82.0,
-        list_marker="2)",
-        list_marker_offset=82.0,
-    )
-    text = "2) Установите пакет и перезапустите приложение, чтобы проверить перенос строки текста."
-    rich = build_rich_text(
-        text,
-        cyrillic_font_path,
-        style,
-        (0.0, 0.0, 0.0),
-        first_line_indent=-82.0,
-    )
-    assert "width:82.000000pt" in rich.html
-    assert ">2)</td>" in rich.html
-
-    document = pymupdf.open()
-    try:
-        page = document.new_page(width=300, height=200)
-        archive = pymupdf.Archive(str(cyrillic_font_path.parent))
-        # Mirror insert_reflow_segments: the hanging first-line indent shifts the insert box
-        # left so the marker starts at 48 while content flows from the 130pt source edge.
-        page.insert_htmlbox(
-            pymupdf.Rect(130.0 - 82.0, 40.0, 300.0, 180.0),
-            rich.html,
-            css=rich.css,
-            archive=archive,
-            scale_low=1,
-            overlay=False,
+    source = _single_list_source_pdf(tmp_path / "single-list-edge.pdf")
+    extracted = PdfExtractor().extract(source)
+    translated_paragraphs = tuple(
+        paragraph.model_copy(
+            update={
+                "translated_text": (
+                    "Установите пакет и перезапустите приложение, чтобы проверить перенос "
+                    "строки текста в списке на нескольких строках."
+                    if paragraph.kind is ParagraphKind.LIST_ITEM
+                    else paragraph.text
+                )
+            }
         )
-        words = page.get_text("words")
+        for paragraph in extracted.paragraphs
+    )
+    translated = extracted.model_copy(
+        update={
+            "schema_version": "1.3",
+            "paragraphs": translated_paragraphs,
+            "translation": _translation_metadata(len(translated_paragraphs)),
+        }
+    )
+    output = tmp_path / "single-list-edge.ru.pdf"
+
+    result = PdfRenderer().render(
+        source,
+        translated,
+        output,
+        font_path=cyrillic_font_path,
+        options=RenderOptions(max_reflow_pages=4),
+    )
+    assert result.reflowed_paragraphs == 1
+
+    rendered = pymupdf.open(output)
+    try:
+        words = [word for page in rendered for word in page.get_text("words")]
         marker_words = [word for word in words if word[4] == "2)"]
         content_words = [word for word in words if word[4] != "2)"]
         assert len(marker_words) == 1
         assert content_words
-        assert marker_words[0][0] == pytest.approx(48.0, abs=2.0)
+        marker_x = marker_words[0][0]
         # Every rendered line (first and continuations) starts its content at the same
-        # source content edge; the marker glyph stays at the source marker edge.
+        # source-backed content edge, and the marker stays to the left of that edge.
         lines: dict[int, list[float]] = {}
         for word in content_words:
             lines.setdefault(round(word[1]), []).append(word[0])
-        assert lines
-        for x0s in lines.values():
-            assert min(x0s) == pytest.approx(130.0, abs=2.0)
+        assert len(lines) >= 2
+        content_xs = [min(x0s) for x0s in lines.values()]
+        first_edge = content_xs[0]
+        assert marker_x < first_edge
+        assert all(abs(x0 - first_edge) < 1.0 for x0 in content_xs)
     finally:
-        document.close()
+        rendered.close()

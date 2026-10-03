@@ -11,12 +11,9 @@ import pymupdf
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox
+from pdftranslate.list_markers import detect_list_marker, reattach_list_marker
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
 from pdftranslate.rendering.inline_styles import InlineStyleMapping, map_inline_styles
-from pdftranslate.rendering.list_markers import (
-    detect_list_marker,
-    reconstruct_list_item_text,
-)
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
     FlowParagraph,
@@ -86,10 +83,10 @@ def discover_reflow_page(
         ):
             return None
         if is_list:
-            reconstructed = reconstruct_list_item_text(paragraph.text, paragraph.translated_text)
-            if reconstructed is None:
+            translated_text = paragraph.translated_text
+            if not translated_text or not translated_text.strip():
                 continue
-            list_candidates.append((index, paragraph, reconstructed))
+            list_candidates.append((index, paragraph, translated_text))
             continue
         flow_candidates.append((index, paragraph))
     body = [item for item in flow_candidates if item[1].kind is ParagraphKind.BODY]
@@ -363,7 +360,7 @@ def _list_flow_paragraph(
         disposition=(
             ContentDisposition.FLOWABLE_HEADING if is_heading else ContentDisposition.FLOWABLE_BODY
         ),
-        text=reconstructed_text,
+        text=reattach_list_marker(paragraph.text, reconstructed_text) or reconstructed_text,
         source_rect=source_rect,
         source_fragment_rects=tuple(
             rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
@@ -388,20 +385,14 @@ def _list_item_style(
     if marker_x < region.x0 - 1e-6:
         return None
     content_x = _source_content_x(paragraph, marker_x, region, font_path, font_size)
-    # The explicit marker block is only needed when the content edge is derived from
-    # source fragment geometry rather than the renderer-font fallback. The fallback already
-    # measures the marker-plus-separation advance in the renderer font, so the first line
-    # aligns with continuation lines without a block; adding one there would drop the
-    # rendered separation space and break saved-PDF text matching.
-    marker_block_offset = (
-        content_x - marker_x if len(paragraph.fragments) >= 2 and content_x > marker_x else 0.0
-    )
+    if content_x <= marker_x:
+        return None
+    # The marker is embedded in the text; a hanging first-line indent places it at the source
+    # marker edge while the source-backed content edge anchors every continuation line.
     return replace(
         style,
         left_indent=max(0.0, content_x - region.x0),
         first_line_indent=marker_x - content_x,
-        list_marker=marker.marker_text if marker_block_offset > 0 else "",
-        list_marker_offset=marker_block_offset,
     )
 
 
