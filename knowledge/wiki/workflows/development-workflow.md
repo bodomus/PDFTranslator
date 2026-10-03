@@ -15,6 +15,8 @@ sources:
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
 - ../../../tests/test_pi_ticket_cycle.py
+- ../../../scripts/reviewer_git/inspector.mjs
+- ../../../.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md
 - ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
 related:
 - ../index.md
@@ -85,8 +87,18 @@ cleanup paths. Detailed child output stays in existing diagnostic logs.
 
 Runtime role presets (`deepseek-codex`, `codex-deepseek`, `codex-codex`, `deepseek-deepseek`)
 select provider/model pairs. Explicit CLI fields override the corresponding preset fields.
-Reviewer tools remain limited to `read,grep,find,ls`, and every role uses a separate process and
+Reviewer tools remain limited to `read,grep,find,ls,git_readonly`, and every role uses a separate process and
 context even when provider/model are identical. Presets do not alter the validator state machine.
+
+The reviewer-only Git-read adapter loads explicitly with other extension discovery disabled.
+Its fixed-operation inspector verifies HEAD/status/SHA/branch/diff/show/merge-base/history using
+runner-bound cwd, full commit IDs or HEAD, bounded output/time and no shell. It disables executable
+Git helper/filter/pager paths, optional index locks and network/submodule traversal. Unsupported
+layouts or failed/inconsistent evidence fail closed. Any `.git/commondir` entry is rejected before
+a Git subprocess; linked-worktree/common-directory layouts remain unsupported, while ordinary
+repositories without redirects remain supported. Reviewers independently verify Git evidence;
+`agent_cycle.py` remains the sole state/binding authority. See the source-linked reviewer safety
+contract for limits and supported operations. Node 22 tests use local repositories, no providers.
 
 `cycle_status` labels dirty-tree evidence as expected only during IMPLEMENTING with active
 implementer. This read-only status projection leaves the manifest untouched, preserves other

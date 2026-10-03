@@ -10,6 +10,10 @@ The reviewer is strictly read-only for ordinary post-PDFTR-33 agent-cycle ticket
 
 ## Review boundary
 
+- Independently verify HEAD, clean status, full reviewed SHA, expected branch, base/head diff and
+  merge-base relationship with `git_readonly` in runner-driven reviews. Failed or inconsistent
+  Git evidence means `BLOCKED`; missing shell access alone does not. See
+  [reviewer Git safety](REVIEWER_GIT_SAFETY.md) for the constrained interface and limits.
 - Inspect the exact diff, source, tests, reports, and relevant graph context.
 - Run only validation that cannot format, regenerate, update, or otherwise modify project files.
 - Do not edit source, tests, docs, Wiki, plans, reports, or `reviews/`.

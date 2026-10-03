@@ -81,7 +81,7 @@ uv run python scripts/pi_ticket_cycle.py PDFTR-36
 
 It imports `scripts/agent_cycle.py`, initializes or reuses a `NEW` cycle, runs a Pi implementer
 (default `deepseek / deepseek-v4-pro`), validates the handoff and exact SHA deterministically,
-starts a read-only Pi reviewer (default `openai-codex / gpt-6.1-sol` with `read,grep,find,ls`), and
+starts a read-only Pi reviewer (default `openai-codex / gpt-6.1-sol` with `read,grep,find,ls,git_readonly`), and
 records the reviewer JSON through the validator. The implementer may write project files and only
 its own handoff input; the reviewer returns one structured JSON object on stdout and never writes a
 coordination file — the runner persists that output into ignored `.agent-cycle` state. Reviewer tool
@@ -120,8 +120,21 @@ uv run python scripts/pi_ticket_cycle.py PDFTR-38 --preset codex-deepseek --revi
 Each explicit `--implementer-provider`, `--implementer-model`, `--reviewer-provider`, or
 `--reviewer-model` overrides that preset field; unspecified fields use the preset or existing
 defaults. Unknown presets fail before cycle initialization. Reviewers retain the independent
-`read,grep,find,ls` allowlist regardless of model identity. Same-model roles still use separate
+`read,grep,find,ls,git_readonly` allowlist regardless of model identity. Same-model roles still use separate
 Pi child processes and separate role prompts/contexts.
+
+Reviewer-only `git_readonly` exposes explicit status, HEAD/SHA resolution, branch, endpoint diff,
+working/index diff, commit show, merge-base and bounded history operations. It is not shell access
+or arbitrary Git argv and cannot mutate the repository. The runner fixes the repository root and
+loads only its trusted reviewer extension; helpers, filters, pagers and network transports are
+neutralized. Only HEAD/full commit IDs are accepted; each subprocess is capped at 30 seconds and
+4 MiB (errors fail closed rather than truncate evidence). Reviewers independently verify Git
+state and base relationships; `agent_cycle.py` still owns exact-SHA binding and all state.
+See [reviewer Git safety](.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md) for
+operations and unsupported layouts. Inspector tests require Node 22, Pi's existing runtime;
+CI installs it explicitly. Implementer permissions and human merge ownership are unchanged.
+Linked-worktree/common-directory layouts, including any `.git/commondir` entry, are rejected
+before inspection; ordinary repositories with a physical `.git` and no redirect remain supported.
 
 `agent_cycle.py status` reports a dirty tree during `IMPLEMENTING` with active `implementer` as
 `dirty (expected during implementation)`; JSON includes `working_tree_dirty_expected`.
