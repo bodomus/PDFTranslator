@@ -17,7 +17,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -78,6 +78,43 @@ class RoleConfig:
 
 DEFAULT_IMPLEMENTER = RoleConfig("deepseek", "deepseek-v4-pro")
 DEFAULT_REVIEWER = RoleConfig("openai-codex", "gpt-6.1-sol", ("read", "grep", "find", "ls"))
+HEARTBEAT_SECONDS = 5 * 60
+
+
+@dataclass(frozen=True)
+class RolePreset:
+    implementer: RoleConfig
+    reviewer: RoleConfig
+
+
+_CODEX_IMPLEMENTER = RoleConfig(DEFAULT_REVIEWER.provider, DEFAULT_REVIEWER.model)
+_DEEPSEEK_REVIEWER = RoleConfig(
+    DEFAULT_IMPLEMENTER.provider, DEFAULT_IMPLEMENTER.model, DEFAULT_REVIEWER.tools
+)
+ROLE_PRESETS = {
+    "deepseek-codex": RolePreset(DEFAULT_IMPLEMENTER, DEFAULT_REVIEWER),
+    "codex-deepseek": RolePreset(_CODEX_IMPLEMENTER, _DEEPSEEK_REVIEWER),
+    "codex-codex": RolePreset(_CODEX_IMPLEMENTER, DEFAULT_REVIEWER),
+    "deepseek-deepseek": RolePreset(DEFAULT_IMPLEMENTER, _DEEPSEEK_REVIEWER),
+}
+
+
+def _console_message(message: str) -> None:
+    print(message, flush=True)
+
+
+@dataclass(frozen=True)
+class ProgressReporter:
+    """Lifecycle only; never receives prompts or captured child output."""
+
+    ticket: str
+    emit: Callable[[str], None] = _console_message
+
+    def message(self, message: str) -> None:
+        self.emit(f"[{self.ticket}] {message}")
+
+    def heartbeat(self, role: str, elapsed: float) -> None:
+        self.message(f"{role} running... {int(elapsed // 60)}m")
 
 
 @dataclass(frozen=True)
@@ -123,6 +160,7 @@ class PiExecutor(Protocol):
         cwd: Path,
         log_path: Path,
         stdin_text: str,
+        heartbeat: Callable[[float], None] | None = None,
     ) -> CommandResult: ...
 
 
@@ -477,6 +515,7 @@ class SubprocessExecutor:
 
     executable: str = "pi"
     grace_seconds: float = 10.0
+    heartbeat_seconds: float = HEARTBEAT_SECONDS
 
     def ensure_available(self) -> None:
         resolve_executable(self.executable)
@@ -488,6 +527,7 @@ class SubprocessExecutor:
         cwd: Path,
         log_path: Path,
         stdin_text: str,
+        heartbeat: Callable[[float], None] | None = None,
     ) -> CommandResult:
         resolved = resolve_executable(command[0])
         actual = _platform_command(resolved, list(command[1:]))
@@ -510,7 +550,7 @@ class SubprocessExecutor:
             _terminate_without_tree(process, self.grace_seconds)
             raise
         try:
-            stdout, stderr = process.communicate(input=stdin_text)
+            stdout, stderr = self._communicate(process, stdin_text, heartbeat)
         except BaseException as error:
             cleanup_error = self._cleanup(tree, process, "failure")
             if cleanup_error is not None:
@@ -526,6 +566,25 @@ class SubprocessExecutor:
             return CommandResult(process.returncode, stdout, stderr)
         finally:
             tree.close()
+
+    def _communicate(
+        self,
+        process: subprocess.Popen[str],
+        stdin_text: str,
+        heartbeat: Callable[[float], None] | None,
+    ) -> tuple[str, str]:
+        if heartbeat is None:
+            return process.communicate(input=stdin_text)
+        started = time.monotonic()
+        pending_input: str | None = stdin_text
+        while True:
+            try:
+                return process.communicate(input=pending_input, timeout=self.heartbeat_seconds)
+            except subprocess.TimeoutExpired:
+                # communicate retains partial output and input progress across timeout retries.
+                pending_input = None
+                if process.poll() is None:
+                    heartbeat(time.monotonic() - started)
 
     def _cleanup(
         self, tree: Any, process: subprocess.Popen[str], context: str
@@ -836,9 +895,12 @@ def _execute_child(
     ticket: str,
     log_path: Path,
     stdin_text: str,
+    heartbeat: Callable[[float], None],
 ) -> CommandResult:
     try:
-        return executor.run(command, cwd=repo_root, log_path=log_path, stdin_text=stdin_text)
+        return executor.run(
+            command, cwd=repo_root, log_path=log_path, stdin_text=stdin_text, heartbeat=heartbeat
+        )
     except RunnerCancelled:
         raise
     except Exception as error:  # noqa: BLE001 - normalize any operational failure into a clean stop
@@ -892,10 +954,12 @@ def run_cycle(
     executor: PiExecutor,
     config: RunnerConfig | None = None,
     ticket_text: str | None = None,
+    reporter: ProgressReporter | None = None,
 ) -> RunOutcome:
     """Drive the sequential Pi cycle for one ticket; return the terminal outcome."""
     active_config = config or RunnerConfig()
     ticket = validate_ticket_id(ticket)
+    progress = reporter or ProgressReporter(ticket)
     validate_reviewer_config(active_config)
     repo_root = repo_root.resolve()
     executor.ensure_available()
@@ -909,6 +973,7 @@ def run_cycle(
     directory = cycle_directory(repo_root, ticket)
     if not directory.is_dir():
         initialize_cycle(repo_root, ticket, active_config.base_branch)
+        progress.message("cycle initialized")
     status = cycle_status(repo_root, ticket)
     if status["errors"]:
         raise RunnerError("cycle preflight failed: " + "; ".join(status["errors"]))
@@ -916,6 +981,7 @@ def run_cycle(
         raise RunnerError(
             f"runner expects a NEW cycle but found {status['state']}; recover manually"
         )
+    progress.message("cycle ready: NEW")
 
     try:
         while True:
@@ -939,6 +1005,11 @@ def run_cycle(
                 findings=findings,
                 handoff_path=_handoff_path(directory),
             )
+            round_label = f" round {attempt}" if attempt > 1 else ""
+            progress.message(
+                f"implementer{round_label} started: "
+                f"{active_config.implementer.provider} / {active_config.implementer.model}"
+            )
             implementer_result = _execute_child(
                 executor,
                 _pi_arguments(active_config.implementer, active_config.executable),
@@ -946,7 +1017,9 @@ def run_cycle(
                 ticket=ticket,
                 log_path=directory / f"pi-implementer-round-{attempt}.log",
                 stdin_text=implementer_prompt,
+                heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
             )
+            progress.message(f"implementer finished: exit {implementer_result.returncode}")
             if implementer_result.returncode != 0:
                 _abort(
                     repo_root,
@@ -954,10 +1027,16 @@ def run_cycle(
                     f"implementer exited with code {implementer_result.returncode}",
                 )
             _require_clean_tree(repo_root, ticket, active_config.base_branch, "implementer")
-            _record_handoff(repo_root, ticket, directory, active_config.base_branch)
+            progress.message("validating implementer handoff...")
+            try:
+                _record_handoff(repo_root, ticket, directory, active_config.base_branch)
+            except RunnerError:
+                progress.message("handoff rejected")
+                raise
 
             manifest = _read_manifest(repo_root, ticket)
             reviewed_sha = manifest["current_head_sha"]
+            progress.message(f"handoff accepted: {reviewed_sha}")
             begin_review(repo_root, ticket, reviewed_sha)
             manifest = _read_manifest(repo_root, ticket)
             review_round = manifest["review_round"]
@@ -969,6 +1048,11 @@ def run_cycle(
                 reviewed_sha=reviewed_sha,
                 review_round=review_round,
             )
+            round_label = f" round {review_round}" if review_round > 1 else ""
+            progress.message(
+                f"reviewer{round_label} started: "
+                f"{active_config.reviewer.provider} / {active_config.reviewer.model}"
+            )
             reviewer_result = _execute_child(
                 executor,
                 _pi_arguments(active_config.reviewer, active_config.executable),
@@ -976,7 +1060,9 @@ def run_cycle(
                 ticket=ticket,
                 log_path=directory / f"pi-reviewer-round-{review_round}.log",
                 stdin_text=reviewer_prompt,
+                heartbeat=lambda elapsed: progress.heartbeat("reviewer", elapsed),
             )
+            progress.message(f"reviewer finished: exit {reviewer_result.returncode}")
             if reviewer_result.returncode != 0:
                 _abort(
                     repo_root,
@@ -984,9 +1070,11 @@ def run_cycle(
                     f"reviewer exited with code {reviewer_result.returncode}",
                 )
 
+            progress.message(f"validating review round {review_round}...")
             try:
                 document = extract_review_json(reviewer_result.stdout)
             except RunnerError as error:
+                progress.message("review output rejected")
                 _abort(repo_root, ticket, f"reviewer output rejected: {error}")
             review_input = directory / f"reviewer-input-round-{review_round}.json"
             try:
@@ -996,7 +1084,9 @@ def run_cycle(
             try:
                 manifest = record_review(repo_root, ticket, review_input)
             except CycleError as error:
+                progress.message("review validation rejected")
                 _abort(repo_root, ticket, f"review validation failed: {error}")
+            progress.message(f"review round {review_round}: {document['verdict']}")
 
             if manifest["state"] == "CHANGES_REQUIRED":
                 continue
@@ -1009,6 +1099,12 @@ def run_cycle(
         raise RunnerError(f"agent cycle rejected the operation: {error}") from error
     except OSError as error:
         _abort(repo_root, ticket, f"runner I/O failure: {error}")
+    finally:
+        # Observe the validator's terminal state; logging does not decide transitions.
+        with contextlib.suppress(OSError, json.JSONDecodeError):
+            terminal = _read_manifest(repo_root, ticket)["state"]
+            if terminal in {"PASSED", "STOPPED"}:
+                progress.message(f"cycle {terminal}")
 
 
 def _report(outcome: RunOutcome) -> None:
@@ -1040,28 +1136,47 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("ticket")
     parser.add_argument("--base-branch", default="master")
     parser.add_argument("--pi-executable", default="pi")
-    parser.add_argument("--implementer-provider", default=DEFAULT_IMPLEMENTER.provider)
-    parser.add_argument("--implementer-model", default=DEFAULT_IMPLEMENTER.model)
-    parser.add_argument("--reviewer-provider", default=DEFAULT_REVIEWER.provider)
-    parser.add_argument("--reviewer-model", default=DEFAULT_REVIEWER.model)
+    parser.add_argument("--preset", choices=tuple(ROLE_PRESETS), help="role/provider/model preset")
+    parser.add_argument("--implementer-provider")
+    parser.add_argument("--implementer-model")
+    parser.add_argument("--reviewer-provider")
+    parser.add_argument("--reviewer-model")
     parser.add_argument("--reviewer-tools", default=",".join(DEFAULT_REVIEWER.tools))
     parser.add_argument("--ticket-file", type=Path)
     parser.add_argument("--repo-root", type=Path)
     return parser
 
 
-def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
-    arguments = _parser().parse_args(argv)
-    root = (repo_root or arguments.repo_root or Path.cwd()).resolve()
+def _config_from_arguments(arguments: argparse.Namespace) -> RunnerConfig:
+    roles = ROLE_PRESETS[arguments.preset or "deepseek-codex"]
     reviewer_tools = tuple(
         tool.strip() for tool in arguments.reviewer_tools.split(",") if tool.strip()
     )
-    config = RunnerConfig(
-        implementer=RoleConfig(arguments.implementer_provider, arguments.implementer_model),
-        reviewer=RoleConfig(arguments.reviewer_provider, arguments.reviewer_model, reviewer_tools),
+    return RunnerConfig(
+        implementer=RoleConfig(
+            roles.implementer.provider
+            if arguments.implementer_provider is None
+            else arguments.implementer_provider,
+            roles.implementer.model
+            if arguments.implementer_model is None
+            else arguments.implementer_model,
+        ),
+        reviewer=RoleConfig(
+            roles.reviewer.provider
+            if arguments.reviewer_provider is None
+            else arguments.reviewer_provider,
+            roles.reviewer.model if arguments.reviewer_model is None else arguments.reviewer_model,
+            reviewer_tools,
+        ),
         base_branch=arguments.base_branch,
         executable=arguments.pi_executable,
     )
+
+
+def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
+    arguments = _parser().parse_args(argv)
+    root = (repo_root or arguments.repo_root or Path.cwd()).resolve()
+    config = _config_from_arguments(arguments)
     ticket_text: str | None = None
     if arguments.ticket_file is not None:
         ticket_text = arguments.ticket_file.read_text(encoding="utf-8")

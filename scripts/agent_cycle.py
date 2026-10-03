@@ -372,7 +372,12 @@ def cycle_status(
     errors: list[str] = []
     if facts.head_sha != manifest["current_head_sha"]:
         errors.append("Git HEAD differs from manifest current_head_sha")
-    if facts.clean != manifest["working_tree_clean"]:
+    expected_dirty = (
+        manifest["state"] == CycleState.IMPLEMENTING.value
+        and manifest["active_agent"] == ActiveAgent.IMPLEMENTER.value
+        and not facts.clean
+    )
+    if facts.clean != manifest["working_tree_clean"] and not expected_dirty:
         errors.append("working-tree cleanliness differs from manifest")
     reviewer = handoff["reviewer"]
     review_valid = bool(
@@ -401,6 +406,7 @@ def cycle_status(
         "max_review_rounds": MAX_REVIEW_ROUNDS,
         "active_agent": manifest["active_agent"],
         "working_tree_clean": facts.clean,
+        "working_tree_dirty_expected": expected_dirty,
         "review_valid_for_head": review_valid,
         "remote_tip": remote_tip,
         "errors": errors,
@@ -709,6 +715,8 @@ def _require_no_active_agent(manifest: dict[str, Any]) -> None:
 def _print_status(status: dict[str, Any]) -> None:
     active = status["active_agent"] or "none"
     tree = "clean" if status["working_tree_clean"] else "dirty"
+    if status["working_tree_dirty_expected"]:
+        tree += " (expected during implementation)"
     print(f"Ticket: {status['ticket']}")
     print(f"State: {status['state']}")
     print(f"Branch: {status['branch']}")
