@@ -33,4 +33,7 @@ Focused inspector and runner tests, requested runner/validator tests, full pytes
 - Windows Git stores `core.autocrlf=true` in system configuration on this host. Disabling system config falsely marked CRLF fixtures dirty. Preserve system/global/local non-executable semantics, override executable paths, and read effective config only through fixed internal config queries (not a reviewer config operation).
 - Status and working-tree diff can invoke clean/process filters while hashing files. Discover configured filter names using NUL-delimited name-only output, reject unsupported names, and explicitly disable clean/smudge/process plus required flags for every driver. Malicious filter regressions pass.
 - CRG retry with `PYTHONIOENCODING=utf-8 code-review-graph update --brief` succeeded. It identifies runner/config/prompt changes; its reported test gaps are false negatives verified against preset, unsafe-tool, prompt and fake-cycle tests.
+- Initial remote CI passed Ubuntu but exposed CRLF in the Windows adapter-test source loader.
+  Fixed the test-only stripping regex and added explicit LF/CRLF variants; production adapter
+  does not strip imports and loaded correctly under installed Pi.
 - Installed Pi `--no-extensions --extension ./scripts/reviewer_git/extension.ts --offline --help` loaded without errors, confirming adapter imports/API against the actual runtime without a provider call.

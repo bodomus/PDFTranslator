@@ -223,14 +223,16 @@ def test_output_limit_fails_closed(git_repo: Path) -> None:
         _inspect_git(git_repo, {"operation": "show", "commit": "HEAD"})
 
 
-def test_adapter_has_read_only_runtime_guard_and_fixed_root() -> None:
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_adapter_has_read_only_runtime_guard_and_fixed_root(line_ending: str) -> None:
     # Execute the actual adapter without Pi/provider dependencies: strip only TS imports/types;
     # a minimal schema stub is enough to capture its registered tool and event handlers.
     script = r"""
 import { readFileSync } from 'node:fs';
 import { GitReadonlyInspector, OPERATIONS } from './scripts/reviewer_git/inspector.mjs';
 let source = readFileSync('./scripts/reviewer_git/extension.ts', 'utf8');
-source = source.replace(/^import .*;\n/gm, '').replace('export default function', 'function')
+source = source.replace(/\r\n/g, '\n').replace(/\n/g, process.argv[1]);
+source = source.replace(/^import .*;\r?\n/gm, '').replace('export default function', 'function')
   .replace(': ExtensionAPI', '').replace(': GitReadonlyInspector', '');
 const Type = new Proxy({}, {get: () => (...args) => args});
 const handlers = {}; let tool;
@@ -252,7 +254,7 @@ if (!failed) throw new Error('uninitialized tool did not fail closed');
 console.log(tool.name);
 """
     result = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
+        ["node", "--input-type=module", "-e", script, line_ending],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,

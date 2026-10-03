@@ -24,14 +24,17 @@ PDFTR-40 — Reviewer read-only Git inspection (attempt 1)
 - No new Python/npm dependencies, product/PDF/translation/model/device/cache/OCR behavior changes.
 
 ## Validation
-- Focused inspector tests: PASS (74 tests, no providers/network).
+- Focused inspector tests: PASS (75 tests, no providers/network, including LF/CRLF adapter source variants).
 - Focused runner/validator tests: PASS, including separate contexts for all four presets and fake-cycle independent Git evidence. Focused workflow-only tests use `--no-cov` because they do not import the product coverage target.
-- Full `uv run pytest`: PASS, 592 passed / 3 skipped; total coverage 89%, above 80% gate.
+- Full `uv run pytest`: PASS, 593 passed / 3 skipped; total coverage 89%, above 80% gate.
 - `uv run python scripts/project_wiki/wiki_lint.py`: PASS, zero errors/warnings.
 - `scripts/check.ps1` via Windows PowerShell: PASS; Ruff format/check PASS; mypy PASS (97 source files); full tests/coverage PASS again.
 - Installed Pi extension offline help-load smoke: PASS, no provider called. Node tests exercise actual inspector and adapter registration/guard.
 - `git diff --check`: PASS.
-- Remote Windows/Ubuntu CI and exact-SHA reviewer verdict: not yet observed at report creation; subsequent runner/human evidence, not locally claimed.
+- Initial push CI: Ubuntu PASS; Windows revealed a CRLF-only adapter-test import-stripping failure.
+  Corrected the test harness to accept CRLF and added deterministic LF/CRLF variants; production
+  adapter/inspector unchanged. Final-push CI and exact-SHA reviewer verdict require subsequent
+  evidence, not preclaimed in this report.
 - Real model/CUDA/OCR/PDF manual runs not applicable to workflow-only changes.
 
 ## Documentation and impact
