@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Optional source-backed internal list-layout metadata with separate structural marker/content
+  origins, shared measurement/insertion, first-occurrence-only pagination ownership and typed
+  saved-output occurrence identity. Invalid evidence fails closed. Automatic list reconstruction,
+  translation providers and existing artifact schemas remain unchanged (PDFTR-39).
+
 ### Fixed
 
 - `agent_cycle.py status` treats a dirty working tree during active implementation as expected

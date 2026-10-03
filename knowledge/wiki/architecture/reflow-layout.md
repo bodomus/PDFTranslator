@@ -3,7 +3,7 @@ title: Body, heading, and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-25
+updated: 2026-10-03
 tags:
 - rendering
 - reflow
@@ -11,6 +11,8 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-39.md
+- ../../../tests/test_list_layout_contract.py
 - ../../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
@@ -44,6 +46,29 @@ confident single-column body prose and headings. A logical
 paragraph occurrence is the semantic flow unit; a typed continuation segment is the physical
 placement unit. Each segment retains occurrence identity, exact character offsets, target page and
 rectangle, continuation index, font evidence, and terminal continuation state.
+
+## Optional structural list-layout contract
+
+PDFTR-39 adds internal `ListLayoutContract` evidence without changing artifact schemas or translation
+behavior. Mandatory marker/content source rectangles supply explicit `marker_x` and `content_x`;
+non-finite, missing, overlapping or non-line-aligned evidence is rejected, not normalized. Marker
+text is separate from ordinary `FlowParagraph.text`. No automatic detection or list reconstruction
+is enabled.
+
+The shared planner uses `content_x` for first and continuation semantic bounds, suppresses the
+ordinary first-line indent for this explicit contract, and retains semantic alignment/right indent.
+It measures the marker independently in `marker_x` to `content_x` with LEFT alignment through the
+same measurer. Source-owned box origins disable the HTML body's default margin rather than moving
+rendered glyphs; legacy paragraphs retain their existing HTML representation. Unsafe region geometry
+or a marker that cannot fit one physical line fails closed before mutation.
+
+Only the first logical segment owns a `StructuralFragment`; continuations carry semantic placement
+only. Derived `OutputOccurrence` metadata keys logical occurrence, kind (semantic/structural marker)
+and continuation index, with target page/rectangle and paragraph identity. Insertion and reopened
+saved-output validation iterate those same occurrences using the existing shared HTML/clip path.
+Marker source evidence joins the existing redaction loop. Duplicate/continuation-marker product
+checks, marker typography fidelity and source evidence detection remain future work. Synthetic
+multi-page tests prove shared pagination/insertion and missing-marker validation.
 
 ## Safety model
 

@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-39.md
 - ../../Tickets/PDFTR-37.md
 - ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
 - ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
@@ -24,6 +25,10 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-03
+
+- Documented optional source-backed structural list metadata in the shared reflow model: independent
+  marker/content measurement, first-occurrence ownership, shared insertion/saved-validation identity
+  and fail-closed evidence. Detection, translation behavior and artifact schemas remain unchanged.
 
 - Documented test-local isolation of process-tree service children from inherited coverage
   startup, avoiding statement-only parallel data without changing parent branch policy or
