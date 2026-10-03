@@ -15,11 +15,13 @@ from pdftranslate.rendering.errors import OutputPdfError
 from pdftranslate.rendering.inline_styles import InlineStyleRun, validate_inline_style_runs
 from pdftranslate.rendering.reflow.models import (
     LayoutPlan,
+    OutputOccurrenceKind,
     PlacementSegment,
     Rect,
+    ReflowBoxOrigin,
     ReflowStyle,
 )
-from pdftranslate.rendering.reflow.planner import Measurement
+from pdftranslate.rendering.reflow.planner import Measurement, structural_style
 
 _FONT_NAME = "PDFTranslateReflowFont"
 _PDF_VALIDATION_TEXT = str.maketrans(
@@ -119,7 +121,10 @@ def redact_reflow_fragments(
         for paragraph in plan.paragraphs:
             page_index = page_index_by_number[paragraph.source_page_number]
             page = document[page_index]
-            for source in paragraph.source_fragment_rects:
+            sources = paragraph.source_fragment_rects
+            if paragraph.list_layout is not None:
+                sources += (paragraph.list_layout.marker_source_rect,)
+            for source in sources:
                 key = (paragraph.source_page_number, source.x0, source.y0, source.x1, source.y1)
                 if key in seen:
                     continue
@@ -165,6 +170,7 @@ def insert_reflow_segments(
                 left_indent=segment.left_indent,
                 right_indent=segment.right_indent,
                 alignment=segment.alignment,
+                box_origin=segment.box_origin,
                 bold_requested=segment.bold_requested,
                 bold_applied=segment.bold_applied,
                 italic_requested=segment.italic_requested,
@@ -172,26 +178,29 @@ def insert_reflow_segments(
                 mixed_style=segment.mixed_style,
                 fallback_count=segment.fallback_count,
             )
-            rich_text = build_rich_text(
-                segment.text,
-                font_path,
-                style,
-                segment.color,
-                first_line_indent=segment.first_line_indent,
-                inline_runs=segment.inline_runs,
-            )
-            remaining, scale = page.insert_htmlbox(
-                _pymupdf_rect(segment.target_rect),
-                rich_text.html,
-                css=rich_text.css,
-                archive=archive,
-                scale_low=1,
-            )
-            if remaining < -0.1 or abs(scale - 1.0) > 1e-6:
-                raise OutputPdfError(
-                    "reflow layout changed during insertion for occurrence "
-                    f"{segment.occurrence_index}, continuation {segment.continuation_index}"
+            for occurrence in segment.output_occurrences:
+                is_semantic = occurrence.kind is OutputOccurrenceKind.SEMANTIC
+                occurrence_style = style if is_semantic else structural_style(style)
+                rich_text = build_rich_text(
+                    occurrence.text,
+                    font_path,
+                    occurrence_style,
+                    segment.color,
+                    first_line_indent=occurrence_style.first_line_indent,
+                    inline_runs=segment.inline_runs if is_semantic else (),
                 )
+                remaining, scale = page.insert_htmlbox(
+                    _pymupdf_rect(occurrence.target_rect),
+                    rich_text.html,
+                    css=rich_text.css,
+                    archive=archive,
+                    scale_low=1,
+                )
+                if remaining < -0.1 or abs(scale - 1.0) > 1e-6:
+                    raise OutputPdfError(
+                        "reflow layout changed during insertion for occurrence "
+                        f"{occurrence.identity}"
+                    )
 
 
 def build_rich_text(
@@ -229,6 +238,10 @@ def build_rich_text(
         f"line-height: {style.line_height:.6f}; text-align: {style.alignment.value}; "
         f"text-indent: {first_line_indent:.6f}pt; color: rgb({red}, {green}, {blue}); }}"
     )
+    if style.box_origin is ReflowBoxOrigin.SOURCE_OWNED:
+        # PyMuPDF's HTML body otherwise has a default 1pt margin. Explicit
+        # source coordinates own the box origin; legacy paragraphs stay unchanged.
+        css = f"{css} body {{ margin: 0; }}"
     if run_css:
         css = f"{css} {' '.join(run_css)}"
     return RichTextLayout(html=f"<p>{''.join(chunks)}</p>", css=css)
@@ -248,27 +261,29 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
             normalized_page = page_diagnostics.setdefault(
                 segment.target_page_number, _normalize(str(page.get_text("text")))
             )
-            clip = _segment_clip(page, segment)
-            local = _normalize(str(page.get_text("text", clip=clip)))
-            expected = _normalize(segment.text)
-            if expected not in local:
-                raise OutputPdfError(
-                    "saved PDF is missing a local reflow segment for "
-                    f"occurrence {segment.occurrence_index}, "
-                    f"continuation {segment.continuation_index}; "
-                    f"expected_chars={len(expected)} local_chars={len(local)}; "
-                    f"expected={expected[:160]!r}; local={local[:160]!r}; "
-                    f"expected_tail={expected[-160:]!r}; local_tail={local[-160:]!r}; "
-                    f"page_diagnostic={normalized_page[:160]!r}"
-                )
-            _validate_saved_inline_styles(page, clip, segment)
+            for occurrence in segment.output_occurrences:
+                clip = _occurrence_clip(page, occurrence.target_rect, segment.font_size)
+                local = _normalize(str(page.get_text("text", clip=clip)))
+                expected = _normalize(occurrence.text)
+                if expected not in local:
+                    raise OutputPdfError(
+                        "saved PDF is missing a local reflow segment for "
+                        f"occurrence {segment.occurrence_index}, "
+                        f"continuation {segment.continuation_index}, kind={occurrence.kind}; "
+                        f"expected_chars={len(expected)} local_chars={len(local)}; "
+                        f"expected={expected[:160]!r}; local={local[:160]!r}; "
+                        f"expected_tail={expected[-160:]!r}; local_tail={local[-160:]!r}; "
+                        f"page_diagnostic={normalized_page[:160]!r}"
+                    )
+                if occurrence.kind is OutputOccurrenceKind.SEMANTIC:
+                    _validate_saved_inline_styles(page, clip, segment)
     finally:
         document.close()
 
 
-def _segment_clip(page: pymupdf.Page, segment: PlacementSegment) -> pymupdf.Rect:
-    padding = max(2.0, segment.font_size * 0.8)
-    return _padded_rect(_pymupdf_rect(segment.target_rect), page.rect, padding)
+def _occurrence_clip(page: pymupdf.Page, rect: Rect, font_size: float) -> pymupdf.Rect:
+    padding = max(2.0, font_size * 0.8)
+    return _padded_rect(_pymupdf_rect(rect), page.rect, padding)
 
 
 def _padded_rect(rect: pymupdf.Rect, page_rect: pymupdf.Rect, padding: float) -> pymupdf.Rect:

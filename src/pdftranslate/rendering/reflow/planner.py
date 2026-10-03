@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from pdftranslate.rendering.inline_styles import InlineStyleRun, clip_inline_style_runs
@@ -15,8 +15,11 @@ from pdftranslate.rendering.reflow.models import (
     PlacementSegment,
     PlacementState,
     Rect,
+    ReflowAlignment,
+    ReflowBoxOrigin,
     ReflowContentKind,
     ReflowStyle,
+    StructuralFragment,
 )
 
 
@@ -101,6 +104,32 @@ def plan_flow(
                 paragraph, region, first_segment=first_segment
             )
 
+            structural_fragment = None
+            marker_height = 0.0
+            if first_segment and paragraph.list_layout is not None:
+                layout = paragraph.list_layout
+                marker_measurement = measurer.measure(
+                    layout.marker_text,
+                    width=layout.content_x - layout.marker_x,
+                    height=layout_height,
+                    style=structural_style(paragraph.style),
+                    first_segment=True,
+                )
+                if not marker_measurement.fits:
+                    if cursor_y > region.rect.y0 + 1e-6:
+                        region_index, cursor_y = _advance_region(ordered_regions, region_index)
+                        continue
+                    raise UnsupportedLayoutError(
+                        "structural marker cannot fit in its source region"
+                    )
+                if marker_measurement.line_count != 1:
+                    raise UnsupportedLayoutError("structural marker must fit on one logical line")
+                marker_height = marker_measurement.used_height
+                structural_fragment = StructuralFragment(
+                    layout.marker_text,
+                    Rect(layout.marker_x, segment_y, layout.content_x, segment_y + marker_height),
+                )
+
             remaining = paragraph.text[text_offset:]
             remaining_runs = clip_inline_style_runs(
                 paragraph.inline_styles.applied,
@@ -112,7 +141,7 @@ def plan_flow(
                 remaining,
                 width=usable_width,
                 height=layout_height,
-                style=paragraph.style,
+                style=_semantic_style(paragraph),
                 first_segment=first_segment,
                 inline_runs=remaining_runs,
             )
@@ -165,7 +194,7 @@ def plan_flow(
             completes = text_end == len(paragraph.text)
             segment_height = min(
                 available_height,
-                max(selected.minimum_usable_height, segment_measurement.used_height),
+                max(selected.minimum_usable_height, segment_measurement.used_height, marker_height),
             )
             target = Rect(usable_x0, segment_y, usable_x1, segment_y + segment_height)
             segments.append(
@@ -185,7 +214,9 @@ def plan_flow(
                     line_count=segment_measurement.line_count,
                     color=paragraph.color,
                     alignment=paragraph.style.alignment,
-                    first_line_indent=(paragraph.style.first_line_indent if first_segment else 0.0),
+                    first_line_indent=(
+                        _semantic_style(paragraph).first_line_indent if first_segment else 0.0
+                    ),
                     left_indent=paragraph.style.left_indent,
                     right_indent=paragraph.style.right_indent,
                     space_before=paragraph.style.space_before if first_segment else 0.0,
@@ -198,6 +229,8 @@ def plan_flow(
                     fallback_count=paragraph.style.fallback_count,
                     state=PlacementState.COMPLETE if completes else PlacementState.CONTINUED,
                     inline_runs=segment_runs,
+                    structural_fragment=structural_fragment,
+                    box_origin=_semantic_style(paragraph).box_origin,
                 )
             )
             text_offset = text_end
@@ -255,7 +288,13 @@ def _paragraph_geometry(
     usable_x0 = region.rect.x0 + paragraph.style.left_indent
     usable_x1 = region.rect.x1 - paragraph.style.right_indent
     usable_width = usable_x1 - usable_x0
-    first_line_indent = paragraph.style.first_line_indent if first_segment else 0.0
+    if paragraph.list_layout is not None:
+        layout = paragraph.list_layout
+        if layout.marker_x < region.rect.x0 or layout.content_x >= usable_x1:
+            raise UnsupportedLayoutError("source list geometry escapes the flow region")
+        usable_x0 = layout.content_x
+        usable_width = usable_x1 - usable_x0
+    first_line_indent = _semantic_style(paragraph).first_line_indent if first_segment else 0.0
     first_line_start = usable_x0 + first_line_indent
     first_line_width = usable_x1 - first_line_start
     if first_segment and first_line_start < region.rect.x0 - 1e-6:
@@ -263,6 +302,22 @@ def _paragraph_geometry(
     if usable_width <= 0 or first_line_width <= 0:
         raise UnsupportedLayoutError("paragraph indents leave no usable line width")
     return usable_x0, usable_x1, usable_width
+
+
+def _semantic_style(paragraph: FlowParagraph) -> ReflowStyle:
+    if paragraph.list_layout is None:
+        return paragraph.style
+    return replace(paragraph.style, first_line_indent=0.0, box_origin=ReflowBoxOrigin.SOURCE_OWNED)
+
+
+def structural_style(style: ReflowStyle) -> ReflowStyle:
+    """Source-owned fragments do not inherit semantic alignment or indentation."""
+    return replace(
+        style,
+        alignment=ReflowAlignment.LEFT,
+        first_line_indent=0.0,
+        box_origin=ReflowBoxOrigin.SOURCE_OWNED,
+    )
 
 
 def _advance_region(regions: tuple[FlowRegion, ...], index: int) -> tuple[int, float]:
@@ -333,7 +388,7 @@ def _binary_search(
             text[:boundary],
             width=width,
             height=height,
-            style=paragraph.style,
+            style=_semantic_style(paragraph),
             first_segment=first_segment,
             inline_runs=prefix_runs,
         )

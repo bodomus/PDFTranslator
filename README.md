@@ -170,6 +170,12 @@ padded clip around its own target rectangle. Any unplaced text, fixed-layout ove
 saved segment prevents atomic publication. Source footnote separators are preserved; blank
 continuation pages do not synthesize separators, running headers, or source page numbers.
 
+The internal reflow model also accepts an optional source-backed list-layout contract. It keeps
+marker text separate from semantic content, measures their independent origins, and assigns the
+marker only to the first logical segment through the same planner, insertion and saved-validation
+path. This is infrastructure only: automatic list detection/reconstruction is not enabled, and
+existing JSON artifacts and translation behavior are unchanged.
+
 ## Reflow architecture proof of concept
 
 PDFTR-22 also provides an isolated historical body-text reflow demonstrator under
