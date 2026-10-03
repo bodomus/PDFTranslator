@@ -159,6 +159,12 @@ precede footnote continuation pages, followed by the next original page. Headers
 and captions remain anchored or on the fixed-layout path. Ambiguous, multi-column, intersecting,
 and otherwise unsafe pages never enter reflow automatically.
 
+List-marker fidelity is not supported by production reflow. Candidate list items remain on the
+existing fixed-layout path, without a guarantee of source-owned marker identity or hanging-indent
+fidelity. The current shared paragraph representation cannot independently constrain the source
+marker edge and semantic-content edge. See the [PDFTR-38 investigation](.implementation-plans/investigation-PDFTR-38.md)
+for saved-PDF capability evidence and the unresolved structural-layout boundary.
+
 Mixed-style paragraphs retain the resolved paragraph style as their base. Source-backed inline
 font-size and RGB-color differences are applied only when the exact source substring survives in
 the translation with a unique, order-preserving mapping. Ambiguous, missing, overlapping, or

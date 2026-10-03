@@ -58,6 +58,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Documented the PDFTR-38 list-layout blocker with deterministic saved-PDF capability tests:
+  conventional native list markers work, tested custom marker CSS does not, and the current shared
+  paragraph representation lacks independent marker/content-edge geometry. Production list fidelity
+  is not implemented; existing fixed-layout behavior is unchanged.
+
 - Added `scripts/pi_ticket_cycle.py`, a sequential Pi two-agent runner. One command imports
   `scripts/agent_cycle.py` (the unchanged workflow authority), runs a Pi implementer, validates the
   handoff and exact SHA deterministically, runs a technically read-only Pi reviewer, records the

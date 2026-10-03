@@ -3,7 +3,7 @@ title: Body, heading, and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-09-25
+updated: 2026-10-03
 tags:
 - rendering
 - reflow
@@ -11,6 +11,8 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../.implementation-plans/investigation-PDFTR-38.md
+- ../../../tests/test_list_layout_capabilities.py
 - ../../../Tickets/PDFTR-32-safe-inline-style-runs.md
 - ../../../Tickets/PDFTR-31-footnote-typography-fidelity.md
 - ../../../Tickets/PDFTR-30-heading-typography-fidelity.md
@@ -110,6 +112,14 @@ identity evidence; equal counts alone never authorize ordinal mapping. Prefix fi
 continuation splitting clip/rebase the same runs before measurement and insertion. Ambiguous,
 missing, overlapping, invalid, and unsupported face/family candidates are deferred, and diagnostics
 record hashes/offsets rather than plaintext.
+
+List items remain outside production body reflow. Reconstruction's prefix regex supplies a candidate
+`LIST_ITEM` label, not source-owned marker/content-edge evidence (even `A. Smith` can match). The
+shared `<p>` representation has paragraph indents but no independent structural marker slot.
+PDFTR-38 saved-PDF probes confirm conventional native markers as positive controls, while custom
+string `list-style-type`, `::marker` content, and inline span padding do not supply the required
+custom-marker/content-edge primitive in the installed engine. This is a blocker-only investigation,
+not an activation of list support; fixed-layout fallback and ambiguity protections are unchanged.
 
 Multi-column footnotes, endnotes, marginal notes, tables, arbitrary columns, sidebars, floating
 figures, verse, and complex mathematical layout remain explicit fail-closed follow-ups. See

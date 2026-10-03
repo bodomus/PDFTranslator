@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../.implementation-plans/investigation-PDFTR-38.md
 - ../../Tickets/PDFTR-37.md
 - ../../Tickets/PDFTR-35B-windows-process-safety-final-fix.md
 - ../../Tickets/PDFTR-35A-orchestrator-safety-follow-up.md
@@ -25,6 +26,10 @@ related:
 
 ## 2026-10-03
 
+- Recorded the PDFTR-38 blocker-only list-layout investigation: candidate prefix labels are not
+  structural evidence, and the current shared paragraph representation lacks an independent marker
+  slot. Saved-PDF engine probes cover native positive controls and unsupported custom marker CSS.
+  Production behavior and fixed-layout fallback remain unchanged; list fidelity is not implemented.
 - Documented test-local isolation of process-tree service children from inherited coverage
   startup, avoiding statement-only parallel data without changing parent branch policy or
   production process semantics; added a real child/grandchild diagnostic.
