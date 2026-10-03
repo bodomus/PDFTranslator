@@ -14,3 +14,14 @@
    commit/push, verify remote and CI results, record implementer handoff, and stop.
 
 No reviewer, PR, merge, new state transition, retry engine, worktree, or PDF behavior change.
+
+## CI coverage follow-up (2026-10-03)
+
+1. Inspect Windows CI failure at implementation SHA `468db7977ecb2c15aea1fc45a254abc8589040b3`.
+2. Preserve PID/argv/config and parallel coverage data from heartbeat/process-tree fixtures;
+   prove which files carry statement-only metadata and reproduce the exact combine error.
+3. Disable inherited automatic coverage startup only in `test_pi_ticket_cycle.py`; preserve
+   running parent measurement, project branch policy, and production subprocess semantics.
+4. Add a real executor child/grandchild diagnostic, and confirm it fails without isolation.
+5. Run focused tests, `uv run pytest`, `scripts/check.ps1`, update affected documentation,
+   commit/push the fix, and stop without launching a reviewer.

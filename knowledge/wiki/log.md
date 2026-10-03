@@ -25,6 +25,9 @@ related:
 
 ## 2026-10-03
 
+- Documented test-local isolation of process-tree service children from inherited coverage
+  startup, avoiding statement-only parallel data without changing parent branch policy or
+  production process semantics; added a real child/grandchild diagnostic.
 - Documented Pi lifecycle output, timed communication heartbeat, explicit runtime role/model
   presets, independent same-model contexts, and expected dirty status during active implementation.
   Validator ownership, two-round semantics, reviewer restrictions, and process cleanup remain

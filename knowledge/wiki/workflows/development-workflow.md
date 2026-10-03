@@ -14,6 +14,7 @@ sources:
 - ../../../scripts/check.ps1
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
+- ../../../tests/test_pi_ticket_cycle.py
 - ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
 related:
 - ../index.md
@@ -90,6 +91,13 @@ context even when provider/model are identical. Presets do not alter the validat
 `cycle_status` labels dirty-tree evidence as expected only during IMPLEMENTING with active
 implementer. This read-only status projection leaves the manifest untouched, preserves other
 binding errors, and does not relax initialization, handoff, review, or terminal validation gates.
+
+Process-tree service fixtures in `tests/test_pi_ticket_cycle.py` clear inherited automatic
+coverage startup variables in their test environment. Their temporary child cwd has no coverage
+config; pytest-cov 6 would otherwise create statement-only data alongside the parent's branch
+data. The module's real child/grandchild diagnostic verifies isolation and unchanged parent
+measurement. This test-only exception preserves branch coverage policy and coverage for real
+package subprocesses in other test modules.
 
 ## Completion
 

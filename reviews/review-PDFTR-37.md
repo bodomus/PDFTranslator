@@ -13,3 +13,17 @@ This artifact records implementer work; it is not an independent SHA-bound revie
 
 Delivery branch: `codex/pdftr-37-console-lifecycle`. Remote CI results are not implied by the
 local checks. Reviewer execution and merge are left to the user as requested.
+
+## CI coverage follow-up
+
+Windows CI on the original SHA failed during coverage combine after 486 tests passed. Preserved
+data prove that both heartbeat cleanup parameterizations' `spawn_tree.py` children/grandchildren
+start statement-only coverage in their temporary cwd. Test-module environment isolation now
+prevents automatic coverage startup in these service children while leaving parent branch
+coverage and production process semantics unchanged. A real executor diagnostic detects active
+child coverage, leaked startup variables, and coverage artifacts; it fails when isolation is
+disabled. See the implementation report for exact PID/data evidence and final validation.
+
+Follow-up validation: focused diagnostic/heartbeat tests 3 passed; full `uv run pytest` and
+`scripts/check.ps1` each 487 passed, 3 skipped, branch coverage 89.10%. Wiki/Ruff/mypy clean.
+Remote CI for the follow-up commit is not implied; no reviewer was launched.

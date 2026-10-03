@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 import scripts.pi_ticket_cycle as pi_runner
+from coverage import Coverage
 from scripts.agent_cycle import CycleError, cycle_directory, cycle_status
 from scripts.pi_ticket_cycle import (
     REVIEW_SENTINEL_BEGIN,
@@ -37,6 +38,20 @@ CONTRACT_SOURCE = REPOSITORY_ROOT / ".agents" / "skills" / "two-agent-ticket-wor
 BASE_BRANCH = "master"
 TASK_BRANCH = "pi/PDFTR-35-test"
 TICKET = "PDFTR-35"
+
+
+def _disable_child_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These service children test process ownership, not package code. pytest-cov 6
+    # otherwise auto-starts coverage in their config-less cwd with branch=False.
+    for name in tuple(os.environ):
+        if name.startswith(("COV_CORE_", "COVERAGE_PROCESS_")):
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def service_child_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Measurement in the already-running pytest process is unaffected.
+    _disable_child_coverage(monkeypatch)
 
 
 def _git(repo: Path, *arguments: str) -> str:
@@ -456,6 +471,54 @@ def test_cli_rejects_unsafe_reviewer_tools(git_repo: Path, value: str) -> None:
 
 
 # --- Process helpers ------------------------------------------------------------------------
+
+
+def test_service_children_do_not_inherit_coverage(
+    work_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not any(name.startswith(("COV_CORE_", "COVERAGE_PROCESS_")) for name in os.environ)
+    parent_coverage = Coverage.current()
+    parent_branch = parent_coverage.get_option("run:branch") if parent_coverage else None
+    # Recreate the pytest-cov 6 startup environment: no explicit branch CLI flag
+    # and automatic config lookup from a child cwd without pyproject.toml.
+    startup = {
+        "COV_CORE_SOURCE": "pdftranslate",
+        "COV_CORE_CONFIG": os.pathsep,
+        "COV_CORE_DATAFILE": str(work_dir / ".coverage"),
+        "COV_CORE_CONTEXT": "service-child",
+        "COVERAGE_PROCESS_START": str(REPOSITORY_ROOT / "pyproject.toml"),
+        "COVERAGE_PROCESS_CONFIG": "bootstrap-config",
+    }
+    for name, value in startup.items():
+        monkeypatch.setenv(name, value)
+    _disable_child_coverage(monkeypatch)
+    probe = (
+        "import coverage, json, os; "
+        "print(json.dumps({'active': coverage.Coverage.current() is not None, "
+        "'startup': [k for k in os.environ "
+        "if k.startswith(('COV_CORE_', 'COVERAGE_PROCESS_'))]}))"
+    )
+    script = work_dir / "coverage_probe.py"
+    script.write_text(
+        "import json, subprocess, sys\n"
+        f"child = json.loads(subprocess.check_output([sys.executable, '-c', {probe!r}]))\n"
+        f"exec({probe!r})\n"
+        "print(json.dumps(child))\n",
+        encoding="utf-8",
+    )
+    shim = _make_tree_shim(work_dir, script, work_dir / "self.pid", work_dir / "child.pid")
+    result = SubprocessExecutor(shim).run(
+        [shim], cwd=work_dir, log_path=work_dir / "probe.log", stdin_text=""
+    )
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [
+        {"active": False, "startup": []},
+        {"active": False, "startup": []},
+    ]
+    assert not list(work_dir.glob(".coverage*"))
+    assert Coverage.current() is parent_coverage
+    if parent_coverage:
+        assert parent_coverage.get_option("run:branch") == parent_branch
 
 
 def _spawn_tree_script(directory: Path, *, ignore_sigterm: bool = False) -> Path:

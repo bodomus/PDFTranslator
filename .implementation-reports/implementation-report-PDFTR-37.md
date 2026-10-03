@@ -74,3 +74,58 @@ This local gate does not establish Ubuntu or remote Windows CI success. The exis
 runs on push; its actual result must be checked separately. No real provider/model integration
 is necessary for this workflow-only scope. Independent exact-SHA review and merge remain human
 decisions; no reviewer is automatically started by this delivery.
+
+## Windows CI coverage follow-up (2026-10-03)
+
+The original SHA `468db7977ecb2c15aea1fc45a254abc8589040b3` failed Windows CI after all
+486 tests passed (3 skipped), inside pytest-cov's final combine. Ubuntu passed. Verified run:
+https://github.com/bodomus/PDFTranslator/actions/runs/37124132255
+
+Exact new producers: both parameterizations (`KeyboardInterrupt`, `OSError`) of
+`test_heartbeat_failure_cleans_owned_process_tree`, through `_make_tree_shim` -> `spawn_tree.py`
+-> Python `-c` grandchild. With coverage 7.15.2 / pytest-cov 6.3.0, preserved diagnostic data
+identified child PIDs 42212 and 52736, and grandchildren 60628 and 62732; every file had SQLite
+`has_arcs=0`. Reading each real file with `CoverageData` and updating branch data reproduced
+`DataError: Can't combine statement coverage data with branch data` exactly. Older cancellation
+and I/O failure fixtures use the same path and also produce incompatible empty data.
+
+Cause: pytest-cov 6's `set_env` exports `COV_CORE_CONFIG` as the automatic-config sentinel when
+its default `.coveragerc` does not exist; `COV_CORE_BRANCH` is only set for an explicit CLI branch
+option. The parent reads `branch=true` from `pyproject.toml`; service children running in
+`temp/pi-cycle-tests/<id>` cannot find that config, so embedded coverage starts with `branch=False`.
+Even service children executing no package lines can save data with statement metadata. Empty
+parallel data share a hash, so combine's deduplication/file ordering can mask the mismatch; a
+local full baseline passed while the preserved child files still reproduced the incompatibility.
+This explains why the earlier local gate did not establish Windows CI compatibility.
+
+Fix: one function-scoped autouse fixture in `tests/test_pi_ticket_cycle.py` removes inherited
+`COV_CORE_*` and `COVERAGE_PROCESS_*` startup variables with pytest's reversible monkeypatch.
+Only these service fixtures opt out; measurement in the already-running pytest parent continues.
+Other modules' real package subprocess coverage is retained. No production file, lockfile, CI
+configuration, coverage policy, state machine, process-tree semantics, or cleanup path changed.
+No `coverage erase` workaround is used.
+
+Regression: recreate inherited startup variables, run a normal-exit Python child and grandchild
+through the actual `SubprocessExecutor` and platform shim, assert both have no active coverage or
+startup variables, no `.coverage*` artifacts appear, and the parent's Coverage instance and branch
+option remain unchanged. A temporary diagnostic plugin disabling only isolation makes the test
+fail with `active=True`; isolation makes it pass. Runtime diagnostics remain ignored under `temp/`.
+
+Repository intelligence: ProjectWiki development workflow searched and source-verified; scoped
+CRG callers identify `_spawn_tree_script`'s 12 process-tree test callers. Graphify's existing
+2026-10-01 snapshot predates this runner; it is orientation only and was not rebuilt for this
+test-only change. Production and domain boundaries remain unchanged.
+
+Final follow-up validation:
+
+- Focused real service-child diagnostic and both heartbeat error variants: 3 passed.
+- Regression negative control: fails with child coverage active when isolation is disabled.
+- `uv run pytest`: 487 passed, 3 skipped; branch coverage 89.10% (133.70 s).
+- `scripts/check.ps1`: Wiki 15 pages / 114 links, no errors/warnings; Ruff format/check clean;
+  mypy clean for 97 source files; 487 passed, 3 skipped; branch coverage 89.10% (132.85 s).
+- Post-change CRG scope: one test file, no dependent production files; helper callers are
+  the autouse fixture and its diagnostic. `git diff --check` clean.
+
+The follow-up is committed/pushed on `codex/pdftr-37-console-lifecycle`. This report establishes
+local Windows validation; remote CI for the follow-up SHA is not claimed. No reviewer, PR,
+merge, or agent-cycle transition is launched or synthesized by this fix.
