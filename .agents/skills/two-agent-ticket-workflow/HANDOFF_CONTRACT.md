@@ -84,5 +84,18 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
 - Corrupt authoritative JSON: stop for human inspection. The validator never recreates it silently.
 - Usage or external budget stop: `stop <TICKET> --reason usage_limit` (or another explicit reason).
 
+- Human-approved exhausted-review recovery: an operator may run `agent_cycle.py reopen <TICKET>
+  --reason <APPROVAL>` or `pi_ticket_cycle.py <TICKET> --recover --reason <APPROVAL>`. Agents must
+  not self-approve recovery. Only STOPPED after exhausted reviews with repeated_finding or
+  review_round_limit is eligible. Clean tree, recorded branch and unchanged manifest HEAD are
+  required. HUMAN_APPROVED_REWORK resumes implementation with the next cumulative attempt.
+- The optional strict manifest `human_recoveries` list contains exactly `reason`, `stop_reason`,
+  `review_round`, `reviewed_sha`, `implementation_attempt`, and `previous_handoff` for each approval.
+  Legacy manifests without this field remain supported. Each entry authorizes only one new review;
+  MAX_REVIEW_ROUNDS stays two. New reviews use cumulative immutable filenames (review-3.json etc.).
+  Accepted handoffs are retained as immutable implementation-<attempt>.json snapshots; legacy
+  last handoffs are also captured in the approval audit. No historical reviews are superseded or
+  considered valid for the new SHA. Recovery still requires a new implementation SHA.
+
 Do not delete or rewrite immutable review artifacts as recovery. Human final review and merge remain
 outside the state machine.

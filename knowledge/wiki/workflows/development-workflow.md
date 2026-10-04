@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-03
+updated: 2026-10-04
 tags:
 - development
 - tickets
@@ -15,6 +15,8 @@ sources:
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
 - ../../../tests/test_pi_ticket_cycle.py
+- ../../../tests/test_pi_cycle_resume.py
+- ../../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../../scripts/reviewer_git/inspector.mjs
 - ../../../.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md
 - ../../../.agents/skills/two-agent-ticket-workflow/SKILL.md
@@ -66,7 +68,8 @@ Recovery is conservative: invalid or corrupt state fails closed rather than bein
 silently regenerated.
 
 `scripts/pi_ticket_cycle.py` automates that validated sequence for explicitly assigned tickets. It
-imports the validator rather than reimplementing it: it initializes or reuses a `NEW` cycle, runs
+imports the validator rather than reimplementing it: it initializes a missing cycle or dispatches
+idle `NEW`, `CHANGES_REQUIRED`, `READY_FOR_REVIEW`, and `READY_FOR_REVIEW_2` states, runs
 the Pi implementer, validates the handoff and exact SHA from Git plus `agent_cycle`, runs a
 technically read-only Pi reviewer on that SHA, and records the reviewer JSON through
 `record-review`. It allows one fix/review retry with a required new SHA, stops on abnormal exit,
@@ -79,6 +82,15 @@ runner owns every child process tree and terminates descendants through a Window
 saved POSIX process group on success, cancellation, or any post-spawn failure. Provider, model, and
 tool names are configuration; deterministic tests replace Pi and never contact providers or the
 network.
+
+Human recovery is explicit: `--recover --reason` on the runner or `agent_cycle.py reopen --reason`
+authorizes one further implementation/review pair only from exhausted `STOPPED` review states.
+The validator requires the recorded branch, clean tree, unchanged HEAD and repository bindings.
+`HUMAN_APPROVED_REWORK` plus strict `human_recoveries` audit entries retain approval reason,
+prior stop reason, SHA, round, next attempt and previous handoff. Review numbering is cumulative;
+old reviews and numbered implementation snapshots are immutable. MAX_REVIEW_ROUNDS remains two;
+a recovery changes-required verdict stops again. `PASSED` only reports completion; other terminal
+and active-role states never auto-resume. Approval is a human/operator action, not agent authority.
 
 The runner reports lifecycle boundaries and authoritative handoff/review results with flushed
 plain console output. `SubprocessExecutor` retries timed communication and emits an elapsed-time

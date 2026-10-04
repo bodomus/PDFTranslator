@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Resumable Pi ticket cycles (PDFTR-42): idle review and rework states dispatch directly to the
+  required role; passed cycles report completion without rerunning agents. Explicit human recovery
+  authorizes one further SHA-bound implementation/review pair after exhausted reviews, retaining
+  immutable numbered artifacts and audited approval/stop history. Automatic review limit stays two.
+
 - Source-confirmed list marker fidelity through the existing shared reflow path (PDFTR-41):
   independent source-span rectangles, semantic-only provider input, per-occurrence canonical marker
   restoration, source content/marker origins and first-occurrence pagination. Ambiguous prefixes

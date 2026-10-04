@@ -26,6 +26,7 @@ class CycleError(RuntimeError):
 
 class CycleState(StrEnum):
     NEW = "NEW"
+    HUMAN_APPROVED_REWORK = "HUMAN_APPROVED_REWORK"
     IMPLEMENTING = "IMPLEMENTING"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     REVIEWING = "REVIEWING"
@@ -238,7 +239,7 @@ def begin_implementation(repo_root: Path, ticket: str) -> dict[str, Any]:
     if facts.head_sha != manifest["current_head_sha"]:
         raise CycleError("Git HEAD changed outside a validated implementation phase")
     state = CycleState(manifest["state"])
-    if state not in {CycleState.NEW, CycleState.CHANGES_REQUIRED}:
+    if state not in {CycleState.NEW, CycleState.CHANGES_REQUIRED, CycleState.HUMAN_APPROVED_REWORK}:
         raise CycleError(f"cannot begin implementation from {state.value}")
     manifest["state"] = CycleState.IMPLEMENTING.value
     manifest["active_agent"] = ActiveAgent.IMPLEMENTER.value
@@ -259,8 +260,8 @@ def record_handoff(repo_root: Path, ticket: str, input_file: Path) -> dict[str, 
     if manifest["state"] != CycleState.IMPLEMENTING.value:
         raise CycleError("handoff requires IMPLEMENTING state")
     _require_clean(facts, "handoff")
-    if manifest["review_round"]:
-        previous = _load_json(directory / f"review-{manifest['review_round']}.json")
+    for previous_round in range(1, manifest["review_round"] + 1):
+        previous = _load_json(directory / f"review-{previous_round}.json")
         if previous.get("reviewed_sha") == facts.head_sha:
             raise CycleError("a changes-required handoff must point to a new implementation SHA")
     implementer = _validate_implementer_input(_load_json(input_file), ticket, manifest)
@@ -272,6 +273,10 @@ def record_handoff(repo_root: Path, ticket: str, input_file: Path) -> dict[str, 
         if manifest["review_round"] == 0
         else CycleState.READY_FOR_REVIEW_2.value
     )
+    attempt_path = directory / f"implementation-{implementer['implementation_attempt']}.json"
+    if attempt_path.exists():
+        raise CycleError(f"immutable implementation artifact already exists: {attempt_path.name}")
+    _atomic_write_json(attempt_path, implementer)
     handoff["implementer"] = implementer
     handoff["reviewer"] = None
     _sync_system(handoff, manifest)
@@ -287,8 +292,8 @@ def begin_review(repo_root: Path, ticket: str, expected_sha: str) -> dict[str, A
     state = CycleState(manifest["state"])
     if state not in {CycleState.READY_FOR_REVIEW, CycleState.READY_FOR_REVIEW_2}:
         raise CycleError(f"cannot begin review from {state.value}")
-    if manifest["review_round"] >= MAX_REVIEW_ROUNDS:
-        raise CycleError(f"maximum review rounds is {MAX_REVIEW_ROUNDS}")
+    if manifest["review_round"] >= _authorized_review_limit(manifest):
+        raise CycleError("review limit reached; explicit human-approved recovery is required")
     if expected_sha != facts.head_sha or expected_sha != manifest["current_head_sha"]:
         raise CycleError("expected review SHA must match both current Git HEAD and manifest HEAD")
     manifest["review_round"] += 1
@@ -344,6 +349,59 @@ def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, A
     handoff["reviewer"] = review_document
     _sync_system(handoff, manifest)
     _atomic_write_json(artifact_path, review_document)
+    _write_cycle(directory, manifest, handoff)
+    return manifest
+
+
+def _authorized_review_limit(manifest: dict[str, Any]) -> int:
+    return MAX_REVIEW_ROUNDS + len(manifest.get("human_recoveries", []))
+
+
+def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
+    """Explicit human approval of ONE additional implementation/exact-SHA review pair."""
+    directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
+    diagnostic = (
+        f"state={manifest['state']}; current HEAD={facts.head_sha}; "
+        f"manifest HEAD={manifest['current_head_sha']}; review round={manifest['review_round']}; "
+        f"stop reason={manifest['stop_reason']}; "
+        "human must inspect the cycle and explicitly approve recovery with a reason"
+    )
+    if (
+        not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason) > 200
+        or any(ord(character) < 32 for character in reason)
+    ):
+        raise CycleError(f"recovery reason must be 1-200 printable characters; {diagnostic}")
+    if (
+        manifest["state"] != CycleState.STOPPED.value
+        or manifest["stop_reason"] not in {"repeated_finding", "review_round_limit"}
+        or manifest["review_round"] != _authorized_review_limit(manifest)
+    ):
+        raise CycleError(f"recovery requires STOPPED after exhausted review rounds; {diagnostic}")
+    _require_no_active_agent(manifest)
+    if not facts.clean or facts.head_sha != manifest["current_head_sha"]:
+        raise CycleError(f"recovery requires a clean working tree and unchanged HEAD; {diagnostic}")
+    # Validate the last immutable review before authorizing new work.
+    previous = _load_json(directory / f"review-{manifest['review_round']}.json")
+    _validate_review_input(previous, ticket, manifest, persisted=True)
+    recoveries = list(manifest.get("human_recoveries", []))
+    recoveries.append(
+        {
+            "reason": reason.strip(),
+            "stop_reason": manifest["stop_reason"],
+            "review_round": manifest["review_round"],
+            "reviewed_sha": manifest["current_head_sha"],
+            "implementation_attempt": manifest["review_round"] + 1,
+            "previous_handoff": handoff,
+        }
+    )
+    manifest["human_recoveries"] = recoveries
+    manifest["state"] = CycleState.HUMAN_APPROVED_REWORK.value
+    manifest["stop_reason"] = None
+    # Snapshot must not alias the mutable current handoff.
+    handoff = json.loads(json.dumps(handoff))
+    _sync_system(handoff, manifest)
     _write_cycle(directory, manifest, handoff)
     return manifest
 
@@ -404,6 +462,9 @@ def cycle_status(
         "head_sha": facts.head_sha,
         "review_round": manifest["review_round"],
         "max_review_rounds": MAX_REVIEW_ROUNDS,
+        "authorized_review_limit": _authorized_review_limit(manifest),
+        "human_recovery_count": len(manifest.get("human_recoveries", [])),
+        "stop_reason": manifest["stop_reason"],
         "active_agent": manifest["active_agent"],
         "working_tree_clean": facts.clean,
         "working_tree_dirty_expected": expected_dirty,
@@ -433,7 +494,11 @@ def _load_cycle(
         raise CycleError("cycle belongs to a different Git repository")
     if facts.branch != manifest["branch"]:
         raise CycleError(
-            f"wrong task branch: expected {manifest['branch']!r}, found {facts.branch!r}"
+            f"wrong task branch: expected {manifest['branch']!r}, found {facts.branch!r}; "
+            f"state={manifest['state']}; current HEAD={facts.head_sha}; "
+            f"manifest HEAD={manifest['current_head_sha']}; "
+            f"review round={manifest['review_round']}; stop reason={manifest['stop_reason']}; "
+            "human must return to the recorded ticket branch"
         )
     if facts.base_sha != manifest["base_sha"]:
         raise CycleError("merge base differs from the initialized ticket cycle")
@@ -441,7 +506,56 @@ def _load_cycle(
 
 
 def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
-    _require_exact_keys(document, MANIFEST_KEYS, "manifest")
+    expected = MANIFEST_KEYS | ({"human_recoveries"} if "human_recoveries" in document else set())
+    _require_exact_keys(document, expected, "manifest")
+    recoveries = document.get("human_recoveries", [])
+    if not isinstance(recoveries, list):
+        raise CycleError("manifest human_recoveries must be a list")
+    for index, recovery in enumerate(recoveries):
+        if not isinstance(recovery, dict):
+            raise CycleError("human recovery must be an object")
+        _require_exact_keys(
+            recovery,
+            {
+                "reason",
+                "stop_reason",
+                "review_round",
+                "reviewed_sha",
+                "implementation_attempt",
+                "previous_handoff",
+            },
+            "human recovery",
+        )
+        if (
+            not isinstance(recovery["reason"], str)
+            or not recovery["reason"].strip()
+            or len(recovery["reason"]) > 200
+            or any(ord(character) < 32 for character in recovery["reason"])
+        ):
+            raise CycleError("human recovery requires a printable 1-200 character reason")
+        if not isinstance(recovery["stop_reason"], str) or recovery["stop_reason"] not in {
+            "repeated_finding",
+            "review_round_limit",
+        }:
+            raise CycleError("invalid human recovery stop reason")
+        expected_round = MAX_REVIEW_ROUNDS + index
+        if (
+            type(recovery["review_round"]) is not int
+            or recovery["review_round"] != expected_round
+            or type(recovery["implementation_attempt"]) is not int
+            or recovery["implementation_attempt"] != expected_round + 1
+        ):
+            raise CycleError("invalid human recovery round/attempt")
+        _validated_sha(recovery["reviewed_sha"], "human recovery reviewed_sha")
+        historical = dict(document)
+        historical.update(
+            {
+                "review_round": expected_round,
+                "current_head_sha": recovery["reviewed_sha"],
+                "state": CycleState.STOPPED.value,
+            }
+        )
+        _validate_handoff(recovery["previous_handoff"], historical)
     _require_schema(document, "manifest")
     if document["ticket"] != ticket:
         raise CycleError("manifest belongs to a different ticket")
@@ -456,8 +570,14 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
             raise CycleError(f"manifest {field} must be a non-empty string")
     if not isinstance(document["review_round"], int) or isinstance(document["review_round"], bool):
         raise CycleError("manifest review_round must be an integer")
-    if not 0 <= document["review_round"] <= MAX_REVIEW_ROUNDS:
-        raise CycleError(f"manifest review_round exceeds {MAX_REVIEW_ROUNDS}")
+    if not 0 <= document["review_round"] <= _authorized_review_limit(document):
+        raise CycleError("manifest review_round exceeds human-authorized limit")
+    if recoveries and document["review_round"] < MAX_REVIEW_ROUNDS + len(recoveries) - 1:
+        raise CycleError("manifest round predates human recovery")
+    if document["state"] == CycleState.HUMAN_APPROVED_REWORK.value and (
+        not recoveries or document["review_round"] != _authorized_review_limit(document) - 1
+    ):
+        raise CycleError("HUMAN_APPROVED_REWORK requires an unused explicit human approval")
     try:
         CycleState(document["state"])
     except (TypeError, ValueError) as error:
@@ -478,6 +598,8 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
 
 
 def _validate_handoff(document: dict[str, Any], manifest: dict[str, Any]) -> None:
+    if not isinstance(document, dict):
+        raise CycleError("handoff must be an object")
     _require_exact_keys(document, HANDOFF_KEYS, "handoff")
     _require_schema(document, "handoff")
     system = document["system"]
@@ -509,6 +631,11 @@ def _validate_implementer_input(
     if document["ticket"] != ticket:
         raise CycleError("implementer handoff belongs to a different ticket")
     expected_attempt = manifest["review_round"] + 1
+    if (
+        type(document["implementation_attempt"]) is not int
+        or document["implementation_attempt"] < 1
+    ):
+        raise CycleError("implementation_attempt must be a positive integer")
     if document["implementation_attempt"] != expected_attempt:
         if not persisted:
             raise CycleError(f"implementation_attempt must be {expected_attempt}")
@@ -545,8 +672,8 @@ def _validate_review_input(
     review_round = document["review_round"]
     if not isinstance(review_round, int) or isinstance(review_round, bool):
         raise CycleError("review_round must be an integer")
-    if not 1 <= review_round <= MAX_REVIEW_ROUNDS:
-        raise CycleError(f"review_round must be between 1 and {MAX_REVIEW_ROUNDS}")
+    if not 1 <= review_round <= _authorized_review_limit(manifest):
+        raise CycleError("review_round exceeds human-authorized limit")
     if review_round != manifest["review_round"]:
         raise CycleError("review artifact round does not match manifest review_round")
     reviewed_sha = _validated_sha(document["reviewed_sha"], "reviewed_sha")
@@ -721,7 +848,12 @@ def _print_status(status: dict[str, Any]) -> None:
     print(f"State: {status['state']}")
     print(f"Branch: {status['branch']}")
     print(f"HEAD: {status['head_sha']}")
-    print(f"Review round: {status['review_round']} / {status['max_review_rounds']}")
+    print(
+        f"Review round: {status['review_round']} (automatic limit: {status['max_review_rounds']})"
+    )
+    print(f"Human approvals: {status['human_recovery_count']}")
+    if status["stop_reason"]:
+        print(f"Stop reason: {status['stop_reason']}")
     print(f"Active agent: {active}")
     print(f"Working tree: {tree}")
     print(f"Review valid for HEAD: {'yes' if status['review_valid_for_head'] else 'no'}")
@@ -750,6 +882,9 @@ def _parser() -> argparse.ArgumentParser:
     status.add_argument("ticket")
     status.add_argument("--json", action="store_true")
     status.add_argument("--verify-remote", metavar="REMOTE")
+    reopen = subparsers.add_parser("reopen", help="human approval of one follow-up review pair")
+    reopen.add_argument("ticket")
+    reopen.add_argument("--reason", required=True)
     stop = subparsers.add_parser("stop", help="record an external/manual stop")
     stop.add_argument("ticket")
     stop.add_argument("--reason", required=True)
@@ -770,6 +905,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             begin_review(root, arguments.ticket, arguments.sha)
         elif arguments.command == "record-review":
             record_review(root, arguments.ticket, arguments.file)
+        elif arguments.command == "reopen":
+            reopen_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "stop":
             stop_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "status":
