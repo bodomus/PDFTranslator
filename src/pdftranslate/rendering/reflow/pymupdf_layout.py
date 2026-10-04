@@ -11,6 +11,7 @@ from typing import Any
 
 import pymupdf
 
+from pdftranslate.reconstruction.list_items import is_list_marker
 from pdftranslate.rendering.errors import OutputPdfError
 from pdftranslate.rendering.inline_styles import InlineStyleRun, validate_inline_style_runs
 from pdftranslate.rendering.reflow.models import (
@@ -256,11 +257,47 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
     document = pymupdf.open(path)
     try:
         page_diagnostics: dict[int, str] = {}
+        list_layouts = {
+            paragraph.occurrence_index: paragraph.list_layout
+            for plan in plans
+            for paragraph in plan.paragraphs
+            if paragraph.list_layout is not None
+        }
         for segment in (item for plan in plans for item in plan.segments):
             page = document[segment.target_page_number - 1]
             normalized_page = page_diagnostics.setdefault(
                 segment.target_page_number, _normalize(str(page.get_text("text")))
             )
+            list_layout = list_layouts.get(segment.occurrence_index)
+            if list_layout is not None:
+                # Count actual tokens in this occurrence's structural lane. A marker
+                # elsewhere on the page cannot validate it; continuations own none.
+                lane = Rect(
+                    list_layout.marker_x,
+                    segment.target_rect.y0,
+                    list_layout.content_x,
+                    segment.target_rect.y1,
+                )
+                words = page.get_text("words", clip=_occurrence_clip(page, lane, segment.font_size))
+                markers = [
+                    _normalize(str(word[4]))
+                    for word in words
+                    if lane.x0 - 0.5 <= float(word[0]) < lane.x1 - 0.5
+                    and lane.y0 - 0.5 <= (float(word[1]) + float(word[3])) / 2 <= lane.y1 + 0.5
+                    and is_list_marker(_normalize(str(word[4])))
+                ]
+                expected_markers = (
+                    [_normalize(list_layout.marker_text)]
+                    if segment.structural_fragment is not None
+                    else []
+                )
+                if markers != expected_markers:
+                    raise OutputPdfError(
+                        "saved PDF structural_marker ownership mismatch for "
+                        f"occurrence {segment.occurrence_index}, "
+                        f"continuation {segment.continuation_index}; "
+                        f"expected_markers={len(expected_markers)} actual_markers={len(markers)}"
+                    )
             for occurrence in segment.output_occurrences:
                 clip = _occurrence_clip(page, occurrence.target_rect, segment.font_size)
                 local = _normalize(str(page.get_text("text", clip=clip)))

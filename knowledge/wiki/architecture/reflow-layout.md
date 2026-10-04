@@ -3,7 +3,7 @@ title: Body, heading, and footnote reflow architecture
 type: architecture
 status: active
 created: 2026-09-18
-updated: 2026-10-03
+updated: 2026-10-04
 tags:
 - rendering
 - reflow
@@ -11,6 +11,10 @@ tags:
 - paragraphs
 - continuation
 sources:
+- ../../../Tickets/PDFTR-41.md
+- ../../../src/pdftranslate/reconstruction/list_items.py
+- ../../../src/pdftranslate/translation/paragraphs.py
+- ../../../tests/test_list_marker_fidelity.py
 - ../../../Tickets/PDFTR-39.md
 - ../../../tests/test_list_layout_contract.py
 - ../../../Tickets/PDFTR-32-safe-inline-style-runs.md
@@ -49,11 +53,20 @@ rectangle, continuation index, font evidence, and terminal continuation state.
 
 ## Optional structural list-layout contract
 
-PDFTR-39 adds internal `ListLayoutContract` evidence without changing artifact schemas or translation
-behavior. Mandatory marker/content source rectangles supply explicit `marker_x` and `content_x`;
+PDFTR-39 introduced internal `ListLayoutContract`; PDFTR-41 connects conservative source evidence
+and semantic-only translation without changing artifact versions. Independent source span rectangles
+must prove a marker/content pair on one physical line (including MuPDF's separate lines in one raw
+block). A regex-only list kind does not authorize separation. Letter-dot markers require a neighboring
+sequential marker with matching origins; combined spans and ambiguous evidence retain fallback.
+Mandatory marker/content source rectangles supply explicit `marker_x` and `content_x`;
 non-finite, missing, overlapping or non-line-aligned evidence is rejected, not normalized. Marker
-text is separate from ordinary `FlowParagraph.text`. No automatic detection or list reconstruction
-is enabled.
+text is separate from ordinary `FlowParagraph.text`. A semantic paragraph view excludes marker spans
+before inline mapping and typography extraction, preserving semantic source/target offsets.
+The translation cache stores provider semantic output under semantic-source keys and restores each
+source marker per occurrence, including cache hits and duplicate-source work sharing. Global cache
+revision and artifact schemas remain unchanged; serialized translated text keeps its source marker
+for existing fixed-layout fallback. Provider markers can be replaced only for source-confirmed lists;
+ordinary paragraphs, semantic initials and decimal prefixes remain intact.
 
 The shared planner uses `content_x` for first and continuation semantic bounds, suppresses the
 ordinary first-line indent for this explicit contract, and retains semantic alignment/right indent.
@@ -66,9 +79,13 @@ Only the first logical segment owns a `StructuralFragment`; continuations carry 
 only. Derived `OutputOccurrence` metadata keys logical occurrence, kind (semantic/structural marker)
 and continuation index, with target page/rectangle and paragraph identity. Insertion and reopened
 saved-output validation iterate those same occurrences using the existing shared HTML/clip path.
-Marker source evidence joins the existing redaction loop. Duplicate/continuation-marker product
-checks, marker typography fidelity and source evidence detection remain future work. Synthetic
-multi-page tests prove shared pagination/insertion and missing-marker validation.
+Marker source evidence joins the existing redaction loop. The same saved validator counts exact
+marker tokens in each occurrence's local structural lane: first placement owns exactly its source
+marker, continuation placements own none. A marker elsewhere on the page cannot prove presence.
+Fake-provider regressions and real source/saved-PDF probes verify supported forms, narrow/wide gaps,
+alignment, pagination, missing/duplicate/continuation markers and retained semantic inline styles.
+Marker typography uses the shared semantic base font; exact source marker font reproduction remains
+outside this contract.
 
 ## Safety model
 

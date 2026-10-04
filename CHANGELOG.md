@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Source-confirmed list marker fidelity through the existing shared reflow path (PDFTR-41):
+  independent source-span rectangles, semantic-only provider input, per-occurrence canonical marker
+  restoration, source content/marker origins and first-occurrence pagination. Ambiguous prefixes
+  retain fallback behavior; ordinary text, semantic initials/decimals and artifact/cache versions
+  remain compatible. Saved validation rejects local duplicate and continuation markers in addition
+  to missing marker/content, and semantic inline offsets exclude structural spans.
+
 - Reviewer-only constrained `git_readonly` capability for all Pi role presets (PDFTR-40):
   independent exact-SHA/status/branch/diff/show/merge-base/history evidence without shell,
   arbitrary Git argv or repository writes. Fixed root, helper/filter/pager/network hardening,

@@ -11,10 +11,12 @@ from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
+from pdftranslate.reconstruction.list_items import source_list_item
 from pdftranslate.rendering.inline_styles import map_inline_styles
 from pdftranslate.rendering.reflow.models import (
     ContentDisposition,
     FlowParagraph,
+    ListLayoutContract,
     Rect,
     ReflowStyle,
 )
@@ -44,11 +46,19 @@ def discover_reflow_page(
     """Return a page only when structured and PDF evidence proves a safe body region."""
     if document.schema_version != "1.3" or page_model.classification is not PageClassification.TEXT:
         return None
+    list_items = {
+        index: item
+        for index, paragraph in enumerate(document.paragraphs)
+        if (item := source_list_item(paragraph, document.paragraphs)) is not None
+    }
     candidates: list[tuple[int, LogicalParagraph]] = []
     for index, paragraph in enumerate(document.paragraphs):
         if paragraph.anchor_page_number != page_model.page_number:
             continue
-        if paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.HEADING}:
+        if (
+            paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.HEADING}
+            and index not in list_items
+        ):
             continue
         # Reconstruction can label short running titles and page numbers as body
         # when a selected artifact has too few pages for repeated-element evidence.
@@ -69,15 +79,35 @@ def discover_reflow_page(
         ):
             return None
         candidates.append((index, paragraph))
-    body = [item for item in candidates if item[1].kind is ParagraphKind.BODY]
-    if len(body) < 2 or not _stable_single_column(body, page_model):
+    body = [
+        item
+        for item in candidates
+        if item[1].kind is ParagraphKind.BODY and item[0] not in list_items
+    ]
+    lists = [item for item in candidates if item[0] in list_items]
+    if len(body) >= 2:
+        if not _stable_single_column(body, page_model):
+            return None
+    elif len(lists) >= 2:
+        origins = [list_items[index] for index, _ in lists]
+        if (
+            max(item.marker_source_rect.x0 for item in origins)
+            - min(item.marker_source_rect.x0 for item in origins)
+            > 0.5
+            or max(item.content_source_rect.x0 for item in origins)
+            - min(item.content_source_rect.x0 for item in origins)
+            > 0.5
+        ):
+            return None
+    else:
         return None
     if not _ambiguity_resolved_by_page_evidence(candidates, body):
         return None
-    body_rects = [rect_from_bbox(item.bbox) for _, item in body]
     flow_rects = [rect_from_bbox(item.bbox) for _, item in candidates]
-    x0 = min(item.x0 for item in body_rects)
-    x1 = max(item.x1 for item in body_rects)
+    body_rects = [rect_from_bbox(item.bbox) for _, item in body]
+    region_rects = flow_rects if lists else body_rects
+    x0 = min(item.x0 for item in region_rects)
+    x1 = max(item.x1 for item in region_rects)
     y0 = min(item.y0 for item in flow_rects)
     if y0 < page_model.height * 0.07:
         return None
@@ -113,10 +143,19 @@ def discover_reflow_page(
 
     flow: list[FlowParagraph] = []
     for index, paragraph in sorted(candidates, key=lambda item: item[0]):
+        list_item = list_items.get(index)
+        semantic = list_item.semantic if list_item is not None else paragraph
+        text = (
+            list_item.rendered_text(paragraph.translated_text or "")
+            if list_item is not None
+            else paragraph.translated_text or ""
+        )
+        if not text.strip():
+            return None
         source_rect = rect_from_bbox(paragraph.bbox)
         if not region.contains(source_rect):
             return None
-        source_size = paragraph_font_size(paragraph, default_font_size)
+        source_size = paragraph_font_size(semantic, default_font_size)
         is_heading = paragraph.kind is ParagraphKind.HEADING
         font_size = max(min_font_size, source_size)
         resolved_style: ResolvedParagraphStyle | None = None
@@ -130,7 +169,7 @@ def discover_reflow_page(
                     space_after=font_size * 0.65,
                     heading=True,
                 )
-                color = paragraph_color(paragraph)
+                color = paragraph_color(semantic)
             else:
                 resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
                 if resolved is None:
@@ -148,7 +187,7 @@ def discover_reflow_page(
                     space_before=0.0,
                     space_after=font_size * 0.45,
                 )
-                color = paragraph_color(paragraph)
+                color = paragraph_color(semantic)
             else:
                 resolved = _resolved_occurrence(style_by_occurrence, index, paragraph)
                 if resolved is None:
@@ -169,7 +208,7 @@ def discover_reflow_page(
                     if is_heading
                     else ContentDisposition.FLOWABLE_BODY
                 ),
-                text=paragraph.translated_text or "",
+                text=text,
                 source_rect=source_rect,
                 source_fragment_rects=tuple(
                     rect_from_bbox(fragment.bbox) for fragment in paragraph.fragments
@@ -177,8 +216,8 @@ def discover_reflow_page(
                 style=style,
                 color=color,
                 inline_styles=map_inline_styles(
-                    paragraph,
-                    translated_text=paragraph.translated_text or "",
+                    semantic,
+                    translated_text=text,
                     base_font_size=style.font_size,
                     base_color=color,
                     base_bold=style.bold_requested,
@@ -188,6 +227,15 @@ def discover_reflow_page(
                         if resolved_style is not None
                         else None
                     ),
+                ),
+                list_layout=(
+                    ListLayoutContract(
+                        list_item.marker_text,
+                        rect_from_bbox(list_item.marker_source_rect),
+                        rect_from_bbox(list_item.content_source_rect),
+                    )
+                    if list_item is not None
+                    else None
                 ),
             )
         )

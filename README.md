@@ -183,11 +183,20 @@ padded clip around its own target rectangle. Any unplaced text, fixed-layout ove
 saved segment prevents atomic publication. Source footnote separators are preserved; blank
 continuation pages do not synthesize separators, running headers, or source page numbers.
 
-The internal reflow model also accepts an optional source-backed list-layout contract. It keeps
-marker text separate from semantic content, measures their independent origins, and assigns the
-marker only to the first logical segment through the same planner, insertion and saved-validation
-path. This is infrastructure only: automatic list detection/reconstruction is not enabled, and
-existing JSON artifacts and translation behavior are unchanged.
+Source-confirmed lists preserve `•`, `-`, `–`, `*`, numeric (`1.`, `2)`) and letter (`a)`, `A.`)
+markers through the shared reflow path. Detection requires independently bounded source spans on
+the same physical line; MuPDF marker/content lines in one source block can also supply that evidence.
+Letter-dot markers additionally need an adjacent sequential list with matching origins. A combined
+marker/content span or ambiguous geometry keeps the existing fallback behavior.
+
+The provider receives semantic content only. For a confirmed source item `1. Configure project`,
+provider output `2. Настройте проект` becomes `1. Настройте проект`. Ordinary text and semantic
+prefixes such as `A. Smith`, `1.5 mm` and `3.14` remain intact. Source marker and content origins
+populate the existing list-layout contract: wrapped content stays at `content_x`, the marker stays
+at `marker_x`, and continuation pages carry semantic text only. Saved validation rejects locally
+missing, duplicate and continuation markers. Semantic inline styles remain independent of marker
+offsets. Artifact versions and the global translation-cache revision are unchanged; translated
+JSON retains the canonical marker for compatibility with fixed-layout fallback.
 
 ## Reflow architecture proof of concept
 

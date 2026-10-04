@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-03
+updated: 2026-10-04
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-41.md
 - ../../Tickets/PDFTR-40.md
 - ../../Tickets/PDFTR-39.md
 - ../../Tickets/PDFTR-37.md
@@ -24,6 +25,12 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-04
+
+- Connected conservative source list evidence to semantic-only translation and the shared reflow
+  contract; documented source marker restoration, independent inline offsets, unchanged artifact
+  versions/cache revision and local missing/duplicate/continuation-marker validation.
 
 ## 2026-10-03
 

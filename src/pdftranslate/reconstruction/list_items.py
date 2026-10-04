@@ -1,0 +1,189 @@
+"""Conservative list evidence from immutable source spans, independent of rendering."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from math import isfinite
+
+from pdftranslate.domain.text_block import BoundingBox
+from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphKind
+
+_PREFIX = re.compile(r"^\s*(?P<marker>[•\-–*]|\d+[.)]|[A-Za-z][.)])\s+(?=\S)")
+_INITIAL_NAME = re.compile(r"^[A-Z]\.\s+[A-Z][a-z]+(?:\s|$)")
+
+
+def is_list_marker(text: str) -> bool:
+    """Recognize a marker token; this alone never authorizes source classification."""
+    match = _PREFIX.match(f"{text} x")
+    return match is not None and match.group("marker") == text
+
+
+@dataclass(frozen=True)
+class SourceListItem:
+    marker_text: str
+    marker_source_rect: BoundingBox
+    content_source_rect: BoundingBox
+    semantic: LogicalParagraph
+
+    def semantic_output(self, text: str) -> str:
+        """Replace provider structure only after source geometry has proved a list item."""
+        match = _PREFIX.match(text)
+        if match is None or _INITIAL_NAME.match(text.lstrip()):
+            return text
+        # A semantic nested prefix belongs to the content, even in a confirmed list.
+        source_prefix = _PREFIX.match(self.semantic.text)
+        if source_prefix is not None and source_prefix.group("marker") == match.group("marker"):
+            return text
+        return text[match.end() :]
+
+    def translated_text(self, text: str) -> str:
+        return f"{self.marker_text} {self.semantic_output(text)}"
+
+    def rendered_text(self, text: str) -> str:
+        """Read canonical serialized output, or a legacy provider value, as semantic text."""
+        canonical = f"{self.marker_text} "
+        if text.startswith(canonical):
+            return text[len(canonical) :]
+        return self.semantic_output(text)
+
+
+def source_list_item(
+    paragraph: LogicalParagraph,
+    paragraphs: Sequence[LogicalParagraph] = (),
+) -> SourceListItem | None:
+    """Return evidence only for independently bounded marker/content on one source line.
+
+    A regex-only list kind, a combined span or guessed font advance is insufficient.
+    Letter-dot initials require a neighboring sequential list with the same origins.
+    """
+    candidate = _source_candidate(paragraph)
+    if candidate is None:
+        return None
+    marker = candidate.marker_text
+    if len(marker) == 2 and marker[0].isalpha() and marker[1] == ".":
+        try:
+            index = next(i for i, item in enumerate(paragraphs) if item is paragraph)
+        except StopIteration:
+            return None
+        for other_index in (index - 1, index + 1):
+            if not 0 <= other_index < len(paragraphs):
+                continue
+            other = paragraphs[other_index]
+            witness = _source_candidate(other)
+            if (
+                witness is not None
+                and len(witness.marker_text) == 2
+                and witness.marker_text[1] == "."
+                and ord(witness.marker_text[0]) - ord(marker[0]) == other_index - index
+                and other.anchor_page_number == paragraph.anchor_page_number
+                and other.fragments[0].column == paragraph.fragments[0].column
+                and abs(witness.marker_source_rect.x0 - candidate.marker_source_rect.x0) <= 0.5
+                and abs(witness.content_source_rect.x0 - candidate.content_source_rect.x0) <= 0.5
+            ):
+                return candidate
+        return None
+    return candidate
+
+
+def _source_candidate(paragraph: LogicalParagraph) -> SourceListItem | None:
+    if paragraph.ambiguous or paragraph.kind not in {ParagraphKind.BODY, ParagraphKind.LIST_ITEM}:
+        return None
+    first = paragraph.fragments[0]
+    if first.mapping.page_number != paragraph.anchor_page_number:
+        return None
+    match = _PREFIX.match(paragraph.text)
+    if match is None:
+        return None
+    marker = match.group("marker")
+    separate_line = first.text.strip() == marker
+    if separate_line:
+        if len(paragraph.fragments) < 2 or len(first.spans) != 1:
+            return None
+        content_first = paragraph.fragments[1]
+        if content_first.mapping.source_block_id != first.mapping.source_block_id:
+            return None
+        spans = (*first.spans, *content_first.spans)
+    else:
+        content_first = first
+        spans = first.spans
+        if not first.text.startswith(paragraph.text[: match.end()]):
+            return None
+    if len(spans) < 2 or spans[0].text.strip() != marker or not spans[1].text.strip():
+        return None
+    semantic_first_text = content_first.text if separate_line else first.text[match.end() :]
+    if "".join(span.text for span in spans[1:]).strip() != semantic_first_text.strip():
+        return None
+    if any(not _valid_box(span.bbox) for span in spans):
+        return None
+    marker_box = spans[0].bbox
+    content_box = _union(tuple(span.bbox for span in spans[1:]))
+    boxes = (paragraph.bbox, first.bbox, marker_box, content_box, *(span.bbox for span in spans))
+    if any(not _valid_box(box) for box in boxes):
+        return None
+    if (
+        marker_box.x1 > content_box.x0
+        or not (marker_box.y0 < content_box.y1 and content_box.y0 < marker_box.y1)
+        or not _contains(first.bbox, marker_box)
+        or any(not _contains(content_first.bbox, span.bbox) for span in spans[1:])
+        or not _contains(paragraph.bbox, first.bbox)
+        or any(
+            previous.bbox.x1 > current.bbox.x0
+            for previous, current in zip(spans[1:], spans[2:], strict=False)
+        )
+    ):
+        return None
+    # Every semantic span on this fragment must really share the marker's source line.
+    if any(
+        not (marker_box.y0 < span.bbox.y1 and span.bbox.y0 < marker_box.y1) for span in spans[1:]
+    ):
+        return None
+    semantic_first = content_first.model_copy(
+        update={"text": semantic_first_text, "bbox": content_box, "spans": spans[1:]}
+    )
+    fragments = (semantic_first, *paragraph.fragments[2 if separate_line else 1 :])
+    if any(
+        fragment.mapping.page_number != paragraph.anchor_page_number
+        or fragment.column != first.column
+        or not _valid_box(fragment.bbox)
+        or not _contains(paragraph.bbox, fragment.bbox)
+        for fragment in fragments
+    ):
+        return None
+    semantic = paragraph.model_copy(
+        update={
+            "text": paragraph.text[match.end() :],
+            "kind": ParagraphKind.BODY,
+            "bbox": _union(tuple(fragment.bbox for fragment in fragments)),
+            "fragments": fragments,
+            "spans": tuple(span for fragment in fragments for span in fragment.spans),
+        }
+    )
+    return SourceListItem(marker, marker_box, content_box, semantic)
+
+
+def _valid_box(box: BoundingBox) -> bool:
+    return (
+        all(isfinite(value) for value in (box.x0, box.y0, box.x1, box.y1))
+        and box.x1 > box.x0
+        and box.y1 > box.y0
+    )
+
+
+def _contains(outer: BoundingBox, inner: BoundingBox) -> bool:
+    return (
+        inner.x0 >= outer.x0 - 0.5
+        and inner.y0 >= outer.y0 - 0.5
+        and inner.x1 <= outer.x1 + 0.5
+        and inner.y1 <= outer.y1 + 0.5
+    )
+
+
+def _union(boxes: tuple[BoundingBox, ...]) -> BoundingBox:
+    return BoundingBox(
+        x0=min(box.x0 for box in boxes),
+        y0=min(box.y0 for box in boxes),
+        x1=max(box.x1 for box in boxes),
+        y1=max(box.y1 for box in boxes),
+    )

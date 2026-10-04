@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextSpan
+from pdftranslate.reconstruction.list_items import is_list_marker, source_list_item
 from pdftranslate.reconstruction.models import (
     DecisionAction,
     DecisionReason,
@@ -213,6 +214,14 @@ def _reconstruct_page(
 ) -> tuple[list[LogicalParagraph], list[ReconstructionDecision], int]:
     paragraphs: list[LogicalParagraph] = []
     decisions: list[ReconstructionDecision] = []
+    standalone_candidates = {
+        (first.id, second.id): _paragraph_from_fragments(
+            (first, second), ParagraphKind.LIST_ITEM, False
+        )
+        for first, second in zip(layout.fragments, layout.fragments[1:], strict=False)
+        if is_list_marker(first.text.strip())
+    }
+    standalone_context = tuple(standalone_candidates.values())
     removed = 0
     current: list[ParagraphFragment] = []
     current_kind: ParagraphKind | None = None
@@ -223,7 +232,24 @@ def _reconstruct_page(
             current = [fragment]
             current_kind = kind
             continue
-        action, reasons = _decide(current[-1], fragment, current_kind, kind, layout, options)
+        standalone = standalone_candidates.get((current[-1].id, fragment.id))
+        if (
+            len(current) == 1
+            and current_kind in {ParagraphKind.BODY, ParagraphKind.HEADING, ParagraphKind.LIST_ITEM}
+            and kind in {ParagraphKind.BODY, ParagraphKind.HEADING, ParagraphKind.LIST_ITEM}
+            and standalone is not None
+            and source_list_item(standalone, standalone_context) is not None
+        ):
+            # MuPDF can expose a marker and its content as separate physical
+            # lines in one source block. Shared-line rectangles prove this join.
+            action = DecisionAction.MERGE
+            reasons: tuple[DecisionReason, ...] = (
+                DecisionReason.SAME_SOURCE_BLOCK,
+                DecisionReason.LIST_BOUNDARY,
+            )
+            current_kind = ParagraphKind.LIST_ITEM
+        else:
+            action, reasons = _decide(current[-1], fragment, current_kind, kind, layout, options)
         decisions.append(
             ReconstructionDecision(
                 previous_fragment_id=current[-1].id,
