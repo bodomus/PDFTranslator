@@ -26,3 +26,12 @@ continuation lines (otherwise retain fallback), validate authoritative explicit 
 and reject unexpected extra markers in semantic target rectangles while allowing planned literals.
 Added real-source and reopened-PDF regressions. Attempt-specific validation evidence is in the
 implementation report and implementer input; this note still does not claim an independent verdict.
+
+## Human-approved remaining R1 recovery
+
+Extended initial/name ambiguity handling to surname qualifiers, lowercase particles and compound
+names. Real-source probes preserve complete source/provider/translated semantic text and create no
+list contract; genuine prose A./B. lists remain supported. Focused suite: 236 passed. Full
+scripts/check.ps1: 663 passed / 3 skipped, coverage 89.53%; Wiki lint, Ruff and mypy passed.
+The exhausted cycle's review artifacts, manifest and handoff remain unchanged. This completion note
+does not create an additional automated review round or claim an independent verdict.

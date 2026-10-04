@@ -187,7 +187,9 @@ Source-confirmed lists preserve `•`, `-`, `–`, `*`, numeric (`1.`, `2)`) and
 markers through the shared reflow path. Detection requires independently bounded source spans on
 the same physical line; MuPDF marker/content lines in one source block can also supply that evidence.
 Letter-dot markers additionally need prose content and an adjacent sequential list with matching
-origins; name-shaped prefixes such as adjacent `A. Smith` / `B. Jones` remain semantic text.
+origins; name-shaped prefixes such as adjacent `A. Smith` / `B. Jones` remain semantic text,
+including surname qualifiers (`A. Smith (editor)`) and particles (`A. van Smith`). Qualifiers
+and name particles do not provide prose evidence for separating a letter marker.
 Same-block source continuation lines join their item only with matching content origins, compatible
 styles and close line geometry. Unresolved tails retain fallback instead of flowing a partial item.
 A combined marker/content span or ambiguous geometry also keeps the existing fallback behavior.

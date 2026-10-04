@@ -92,3 +92,19 @@ built at that SHA and source-verified all four reproduction paths during review.
 
 No schema, cache revision, translation preprocessing, dependency, renderer or planner change is
 needed. Add real extracted/saved-PDF regressions and retain the existing focused suites.
+
+## Human-approved R1 recovery
+
+Baseline `97773bd5e51fcf720aefae6442d87c3d8e15ff1e` is clean on the ticket branch. The final
+review reproduced false list confirmation for aligned A./B. names with `(editor)` qualifiers or
+`van` particles. `_initial_name` previously required every semantic word to be capitalized; qualifier
+punctuation and lowercase particles therefore supplied accidental prose evidence.
+
+The smallest change stays inside this ambiguity guard: inspect the name before qualifier punctuation,
+allow common lowercase name particles and compound-name components, and preserve source-text joining
+without structural ownership. Both candidates and neighboring witnesses use the guard already.
+No module boundary, source geometry, translation/cache behavior, shared layout or R2–R4 logic changes.
+Reused Graphify context and CRG's three direct call sites in source_list_item/source_initial_name;
+source verification confirms propagation to reconstruction, translation, typography and reflow.
+Add real-source qualified/particle/compound-name probes, full semantic output assertions, genuine
+prose positives and ambiguous-witness negatives. Leave all stopped-cycle artifacts untouched.

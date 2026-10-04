@@ -211,6 +211,29 @@ def test_separate_initial_and_surname_remain_ambiguous() -> None:
 
 
 @pytest.mark.parametrize(
+    "contents",
+    [
+        ("Configure project (recommended)", "Run tests [required]"),
+        ("Open the file", "Check the result"),
+        ("Install packages and configure the project", "Verify behavior"),
+        ("Read notes from Smith", "Review examples"),
+    ],
+)
+def test_genuine_letter_prose_is_not_a_name(contents: tuple[str, str]) -> None:
+    paragraphs = (_paragraph("A.", contents[0]), _paragraph("B.", contents[1], index=1))
+    for paragraph, content in zip(paragraphs, contents, strict=True):
+        item = source_list_item(paragraph, paragraphs)
+        assert item is not None
+        assert item.semantic.text == content
+
+
+@pytest.mark.parametrize("name", ["Smith (editor)", "van Jones", "Smith, editor"])
+def test_ambiguous_initial_cannot_confirm_neighboring_letter_item(name: str) -> None:
+    paragraphs = (_paragraph("A."), _paragraph("B.", name, index=1))
+    assert all(source_list_item(item, paragraphs) is None for item in paragraphs)
+
+
+@pytest.mark.parametrize(
     "output", ["2. Настройте проект", "• Настройте проект", "Настройте проект"]
 )
 def test_provider_receives_semantic_only_and_source_marker_is_restored(
@@ -461,25 +484,50 @@ def test_real_source_pdf_translation_to_production_renderer(
         assert all(word[0] == pytest.approx(40, abs=0.1) for word in markers)
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("Smith", "Jones"),
+        ("Smith (editor)", "Jones (editor)"),
+        ("van Smith", "van Jones"),
+        ("Smith, editor", "Jones, editor"),
+        ("Smith [editor]", "Jones [editor]"),
+        ("Smith - editor", "Jones - editor"),
+        ("de la Cruz", "von der Berg"),
+        ("al-Hassan", "O'Neill"),
+        ("O'neill", "Smith-jones"),
+        ("Smith and Jones", "Jones et al."),
+    ],
+)
 def test_adjacent_source_initials_preserve_semantics_without_list_contract(
-    tmp_path: Path, cyrillic_font_path: Path
+    tmp_path: Path, cyrillic_font_path: Path, names: tuple[str, str]
 ) -> None:
     path = tmp_path / "names.pdf"
     with pymupdf.open() as pdf:
         page = pdf.new_page(width=300, height=400)
         page.insert_font(fontname="sourcefont", fontfile=str(cyrillic_font_path))
-        for initial, surname, y in (("A.", "Smith", 80), ("B.", "Jones", 120)):
+        for initial, surname, y in zip(("A.", "B."), names, (80, 120), strict=True):
             page.insert_text(
                 (40, y), initial + " ", fontname="sourcefont", fontsize=10, color=(0.2, 0.2, 0.2)
             )
             page.insert_text((70, y), surname, fontname="sourcefont", fontsize=10)
         pdf.save(path)
     source = PdfExtractor().extract(path)
-    assert [item.text for item in source.paragraphs] == ["A. Smith", "B. Jones"]
+    expected = [f"{initial} {name}" for initial, name in zip(("A.", "B."), names, strict=True)]
+    assert [item.text for item in source.paragraphs] == expected
     assert all(source_list_item(item, source.paragraphs) is None for item in source.paragraphs)
-    provider = Provider("Имя сохранено")
+
+    class NameProvider(Provider):
+        def translate_batch(self, texts: Sequence[str]) -> list[str]:
+            self.inputs.extend(texts)
+            return [f"{text} — автор" for text in texts]
+
+    provider = NameProvider()
     translated = _translate(source, provider, tmp_path / "cache.db")
-    assert provider.inputs == ["A. Smith", "B. Jones"]
+    assert provider.inputs == expected
+    assert [item.translated_text for item in translated.paragraphs] == [
+        f"{text} — автор" for text in expected
+    ]
     with pymupdf.open(path) as pdf:
         assert _discover(translated, pdf[0]) is None
 

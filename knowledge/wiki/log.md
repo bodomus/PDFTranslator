@@ -28,6 +28,9 @@ related:
 
 ## 2026-10-04
 
+- Expanded source initial/name ambiguity handling for surname qualifiers, lowercase particles and
+  compound names; preserved genuine prose letter lists and full semantic provider input.
+
 - Connected conservative source list evidence to semantic-only translation and the shared reflow
   contract; documented source marker restoration, independent inline offsets, unchanged artifact
   versions/cache revision and local missing/duplicate/continuation-marker validation.

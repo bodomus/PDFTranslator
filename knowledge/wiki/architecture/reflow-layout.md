@@ -58,7 +58,10 @@ and semantic-only translation without changing artifact versions. Independent so
 must prove a marker/content pair on one physical line (including MuPDF's separate lines in one raw
 block). A regex-only list kind does not authorize separation. Letter-dot markers require a neighboring
 sequential marker with matching origins and prose content; adjacent initial/surname prefixes remain
-semantic text. Combined spans and ambiguous evidence retain fallback. Proven same-block, same-column
+semantic text. Parenthetical/bracketed or punctuation-separated surname qualifiers, lowercase name
+particles and compound surnames do not establish prose evidence. The ambiguity guard also applies
+to neighboring witnesses, so an ambiguous name cannot confirm another letter item.
+Combined spans and ambiguous evidence retain fallback. Proven same-block, same-column
 continuation lines with matching content origins, compatible styles and close vertical geometry join
 their list item before translation. An unresolved same-block tail or a close indented neighboring
 paragraph prevents partial-item reflow, including tails MuPDF placed in another source block.

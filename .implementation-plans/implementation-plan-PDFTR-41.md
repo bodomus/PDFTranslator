@@ -16,6 +16,15 @@
 The earlier clarification commit contains only Tickets/PDFTR-41.md. No unrelated files belong in
 the implementation commit. Independent exact-SHA review and merge remain outside implementer work.
 
+## Human-approved recovery after final review
+
+Address only repeated R1 from baseline `97773bd5e51fcf720aefae6442d87c3d8e15ff1e`.
+Expand source-name ambiguity handling for qualifiers, lowercase particles and compound surnames;
+apply the same rejection to neighboring witnesses. Verify full source/provider/translated semantic
+text with real PDFs, preserve genuine prose letter lists, run focused and full gates, commit and push.
+The exhausted cycle and all existing coordination/review artifacts remain immutable; no transition
+or implementer handoff is generated for this human-authorized recovery.
+
 ## Attempt 2
 
 1. Address only R1–R4 against the reviewed SHA; preserve the shared layout and cache contracts.

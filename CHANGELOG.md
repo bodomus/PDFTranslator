@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   continuation lines with their items, and retain fallback for unresolved tails. Saved validation
   accepts explicit contract tokens beyond automatic detection and rejects extra markers in semantic
   rectangles while allowing marker-like text already present in the planned content.
+  Human-approved R1 recovery also preserves complete initials/names with surname qualifiers,
+  lowercase particles and compound surnames instead of treating them as structural letter lists.
 
 - Reviewer-only constrained `git_readonly` capability for all Pi role presets (PDFTR-40):
   independent exact-SHA/status/branch/diff/show/merge-base/history evidence without shell,

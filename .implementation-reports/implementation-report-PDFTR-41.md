@@ -119,3 +119,35 @@ Conservative limits remain: ambiguous short capitalized letter-dot labels can re
 retain fallback. Cross-block continuation ownership is not inferred; nearby uncertain tails retain
 fallback. Existing combined-span, unsupported geometry/layout and marker-font limits still apply.
 External YouTrack availability is unchanged. This is an implementer report, not a reviewer verdict.
+
+## Human-approved recovery — remaining R1
+
+The human authorized a narrow recovery from `97773bd5e51fcf720aefae6442d87c3d8e15ff1e`
+after the exhausted cycle stopped with repeated R1. This recovery performs no agent-cycle transition
+and writes no coordination input. Existing review artifacts, manifest and handoff remain immutable.
+
+Changed only `_initial_name` source ambiguity handling and its focused regressions, with required
+documentation updates. Qualifiers after a name do not establish prose/list evidence; common lowercase
+name particles and compound-name components remain semantic. The existing candidate/witness guard
+also prevents an ambiguous name from confirming a neighboring letter item. Source-text joining retains
+the complete initial/name without authorizing a list contract. Source geometry, shared layout,
+translation/cache code, R2–R4 fixes, schemas, dependencies, model lifecycle and OCR remain untouched.
+
+Real PDFs cover the exact Smith/Jones `(editor)` and `van` reproductions plus comma/bracket/dash
+qualifiers, multiword particles, apostrophe/hyphen names, mixed-case compound names and name
+connectors. Assertions verify no source confirmation or reflow list contract, complete provider
+input including A./B., and full semantic translated output. Genuine prose letter-list positives,
+including the existing real-source production renderer probe, and ambiguous-witness negatives pass.
+
+Level 1 investigation reused Graphify's existing context; CRG was incrementally updated without
+errors. The three direct ambiguity-guard call sites remain source_list_item/source_initial_name;
+source verification confirms only the existing reconstruction/translation/typography/reflow path.
+No module-boundary change required a Graphify rebuild. README, CHANGELOG and the affected reflow Wiki
+page/log, ticket plan/investigation and this completion documentation were updated.
+
+Final validation: focused eight-file suite **236 passed**; full **scripts/check.ps1 passed** with
+**663 passed / 3 skipped**, **89.53% coverage** (80% required). Wiki lint: 15 pages / 125 links,
+zero errors/warnings; Ruff formatting/lint and mypy (98 source files) passed. All PDF/cache fixtures
+and runtime temporary files stayed under repository temp; fake providers only, no model downloads.
+The four explicitly protected cycle files retained their original SHA-256 hashes before commit.
+This records implementation evidence, not a new automated review or merge decision.

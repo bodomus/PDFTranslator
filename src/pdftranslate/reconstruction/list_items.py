@@ -12,6 +12,37 @@ from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphFragme
 
 _PREFIX = re.compile(r"^\s*(?P<marker>[•\-–*]|\d+[.)]|[A-Za-z][.)])\s+(?=\S)")
 _INITIAL_NAME = re.compile(r"^[A-Z]\.\s+[A-Z][a-z]+(?:\s|$)")
+_NAME_QUALIFIER = re.compile(r"[([]|[,;:]|\s[-–—/]\s")
+_NAME_PARTICLES = frozenset(
+    [
+        "al",
+        "and",
+        "bin",
+        "bint",
+        "da",
+        "das",
+        "de",
+        "del",
+        "della",
+        "den",
+        "der",
+        "di",
+        "do",
+        "dos",
+        "du",
+        "el",
+        "et",
+        "ibn",
+        "la",
+        "le",
+        "of",
+        "ten",
+        "ter",
+        "van",
+        "von",
+        "y",
+    ]
+)
 
 
 def is_list_marker(text: str) -> bool:
@@ -127,11 +158,19 @@ def _initial_name(candidate: SourceListItem) -> bool:
     marker = candidate.marker_text
     if len(marker) != 2 or not marker[0].isalpha() or marker[1] != ".":
         return False
-    # A surname or sequence of capitalized name tokens is indistinguishable from
-    # a short letter-list label, even when adjacent initials happen to be A/B.
-    words = candidate.semantic.text.split()
-    return bool(words) and all(
-        word[0].isupper() and all(char.isalpha() or char in "'-’.," for char in word)
+    # Qualifiers after a name do not prove prose/list ownership. Name particles
+    # and apostrophe/hyphen components belong to the name, not to list evidence.
+    # An aligned A/B sequence still cannot distinguish these semantic initials.
+    name = _NAME_QUALIFIER.split(candidate.semantic.text, maxsplit=1)[0]
+    words = tuple(
+        part
+        for word in name.split()
+        for part in ((word,) if word[0].isupper() else re.split(r"['’\-]+", word))
+        if part
+    )
+    return any(word[0].isupper() for word in words) and all(
+        (word[0].isupper() or word.casefold().rstrip(".") in _NAME_PARTICLES)
+        and all(char.isalpha() or char in "'-’." for char in word)
         for word in words
     )
 
