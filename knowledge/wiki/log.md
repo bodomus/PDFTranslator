@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../Tickets/PDFTR-41.md
 - ../../Tickets/PDFTR-40.md
 - ../../Tickets/PDFTR-39.md
@@ -27,6 +28,9 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-04
+
+- Documented state-dispatched Pi resume and explicit one-pair human recovery, cumulative immutable
+  review/implementation artifacts, audit metadata and unchanged two-round automatic limit (PDFTR-42).
 
 - Preserved lowercase apostrophe name components and mixed prose/name neighbors as complete
   semantic text; separated geometry-backed letter-prefix joining from structural list ownership.

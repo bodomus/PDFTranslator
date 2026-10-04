@@ -79,7 +79,7 @@ authority:
 uv run python scripts/pi_ticket_cycle.py PDFTR-36
 ```
 
-It imports `scripts/agent_cycle.py`, initializes or reuses a `NEW` cycle, runs a Pi implementer
+It imports `scripts/agent_cycle.py`, initializes a missing cycle or resumes an idle cycle, runs a Pi implementer
 (default `deepseek / deepseek-v4-pro`), validates the handoff and exact SHA deterministically,
 starts a read-only Pi reviewer (default `openai-codex / gpt-6.1-sol` with `read,grep,find,ls,git_readonly`), and
 records the reviewer JSON through the validator. The implementer may write project files and only
@@ -97,6 +97,31 @@ failure. Ticket files match the exact ID boundary, so `PDFTR-35` never selects `
 creates a pull request or merges. Provider, model, and tool names are configuration;
 `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi, providers, or the
 network.
+
+Rerun the same command to resume `READY_FOR_REVIEW` or `READY_FOR_REVIEW_2` directly with
+its exact-SHA reviewer, or `CHANGES_REQUIRED` with the next implementation attempt and previous
+findings. `PASSED` only reports completion; `BLOCKED`, `STOPPED`, and active `IMPLEMENTING` /
+`REVIEWING` states fail closed without launching a child. Active phases require human inspection;
+the runner does not guess whether another process is still running.
+
+After exhausted reviews, a human may explicitly approve **one** additional implementation/review
+pair (not an automatic retry budget):
+
+```powershell
+uv run python scripts/pi_ticket_cycle.py PDFTR-XX --recover --reason "human-approved follow-up for R1"
+# Alternatively approve now, then run the normal runner command:
+uv run python scripts/agent_cycle.py reopen PDFTR-XX --reason "human-approved follow-up for R1"
+```
+
+Approval is accepted only for `STOPPED` with `repeated_finding` or `review_round_limit` after the
+review budget is exhausted, on the recorded branch with a clean tree and unchanged manifest HEAD.
+`HUMAN_APPROVED_REWORK` and `human_recoveries` audit metadata record the reason, old stop reason,
+SHA, round, attempt and prior handoff. Reviews retain cumulative numbers (`review-3.json`, etc.);
+earlier artifacts are never overwritten. Numbered `implementation-<attempt>.json` snapshots retain
+accepted handoffs. A new implementation SHA and independent exact-SHA review remain mandatory.
+Any recovery review requesting changes stops again and needs another explicit human approval.
+Agents must never request their own recovery; this command is a human/operator approval boundary,
+not an authenticated identity service. Corrupt state and arbitrary operational stops cannot be reopened.
 
 The runner prints flushed lifecycle messages for phase starts/exits, handoff validation, review
 verdicts, and the validator's terminal state. A running child produces a heartbeat every five

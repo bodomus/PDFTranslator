@@ -35,6 +35,7 @@ from scripts.agent_cycle import (  # noqa: E402
     initialize_cycle,
     record_handoff,
     record_review,
+    reopen_cycle,
     stop_cycle,
     validate_ticket_id,
 )
@@ -973,6 +974,8 @@ def run_cycle(
     config: RunnerConfig | None = None,
     ticket_text: str | None = None,
     reporter: ProgressReporter | None = None,
+    recover: bool = False,
+    reason: str | None = None,
 ) -> RunOutcome:
     """Drive the sequential Pi cycle for one ticket; return the terminal outcome."""
     active_config = config or RunnerConfig()
@@ -980,7 +983,6 @@ def run_cycle(
     progress = reporter or ProgressReporter(ticket)
     validate_reviewer_config(active_config)
     repo_root = repo_root.resolve()
-    executor.ensure_available()
     if ticket_text is None:
         ticket_text = _load_ticket_text(repo_root, ticket)
     implementer_contract = _load_contract(
@@ -989,68 +991,97 @@ def run_cycle(
     reviewer_contract = _load_contract(repo_root, "REVIEWER_CONTRACT.md", REVIEWER_FALLBACK)
 
     directory = cycle_directory(repo_root, ticket)
+    if recover != (reason is not None):
+        raise RunnerError("human recovery requires both --recover and --reason")
+    if recover and not directory.is_dir():
+        raise RunnerError("human recovery requires an existing STOPPED cycle")
     if not directory.is_dir():
+        executor.ensure_available()
         initialize_cycle(repo_root, ticket, active_config.base_branch)
         progress.message("cycle initialized")
+    if recover:
+        try:
+            reopen_cycle(repo_root, ticket, reason or "")
+        except CycleError as error:
+            raise RunnerError(f"human recovery rejected: {error}") from error
     status = cycle_status(repo_root, ticket)
+    manifest = _read_manifest(repo_root, ticket)
+    diagnostic = (
+        f"cycle is {status['state']}: {manifest['stop_reason']}; "
+        f"current HEAD={status['head_sha']}; manifest HEAD={manifest['current_head_sha']}; "
+        f"review round={manifest['review_round']}; "
+        "manual inspection or explicit human-approved recovery is required"
+    )
     if status["errors"]:
-        raise RunnerError("cycle preflight failed: " + "; ".join(status["errors"]))
-    if status["state"] != "NEW":
         raise RunnerError(
-            f"runner expects a NEW cycle but found {status['state']}; recover manually"
+            "cycle preflight failed: " + "; ".join(status["errors"]) + "; " + diagnostic
         )
-    progress.message("cycle ready: NEW")
+    if status["state"] == "PASSED":
+        return _outcome(manifest, active_config)
+    if status["state"] not in {
+        "NEW",
+        "CHANGES_REQUIRED",
+        "HUMAN_APPROVED_REWORK",
+        "READY_FOR_REVIEW",
+        "READY_FOR_REVIEW_2",
+    }:
+        raise RunnerError(diagnostic)
+    executor.ensure_available()
+    progress.message(f"cycle ready: {status['state']}")
 
     try:
         while True:
-            begin_implementation(repo_root, ticket)
             manifest = _read_manifest(repo_root, ticket)
-            attempt = manifest["review_round"] + 1
-            findings = _load_findings(repo_root, ticket, manifest["review_round"])
-
-            facts = collect_git_facts(repo_root, active_config.base_branch)
-            implementer_prompt = _implementer_prompt(
-                ticket=ticket,
-                ticket_text=ticket_text,
-                contract=implementer_contract,
-                context={
-                    "branch": facts.branch,
-                    "base_sha": facts.base_sha,
-                    "head_sha": facts.head_sha,
-                    "review_round": manifest["review_round"],
-                },
-                attempt=attempt,
-                findings=findings,
-                handoff_path=_handoff_path(directory),
-            )
-            round_label = f" round {attempt}" if attempt > 1 else ""
-            progress.message(
-                f"implementer{round_label} started: "
-                f"{active_config.implementer.provider} / {active_config.implementer.model}"
-            )
-            implementer_result = _execute_child(
-                executor,
-                _pi_arguments(active_config.implementer, active_config.executable),
-                repo_root=repo_root,
-                ticket=ticket,
-                log_path=directory / f"pi-implementer-round-{attempt}.log",
-                stdin_text=implementer_prompt,
-                heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
-            )
-            progress.message(f"implementer finished: exit {implementer_result.returncode}")
-            if implementer_result.returncode != 0:
-                _abort(
-                    repo_root,
-                    ticket,
-                    f"implementer exited with code {implementer_result.returncode}",
+            if manifest["state"] in {"NEW", "CHANGES_REQUIRED", "HUMAN_APPROVED_REWORK"}:
+                begin_implementation(repo_root, ticket)
+                manifest = _read_manifest(repo_root, ticket)
+                attempt = manifest["review_round"] + 1
+                findings = _load_findings(repo_root, ticket, manifest["review_round"])
+                # Do not accept an input left over from an earlier attempt.
+                _handoff_path(directory).unlink(missing_ok=True)
+                facts = collect_git_facts(repo_root, manifest["base_branch"])
+                implementer_prompt = _implementer_prompt(
+                    ticket=ticket,
+                    ticket_text=ticket_text,
+                    contract=implementer_contract,
+                    context={
+                        "branch": facts.branch,
+                        "base_sha": facts.base_sha,
+                        "head_sha": facts.head_sha,
+                        "review_round": manifest["review_round"],
+                    },
+                    attempt=attempt,
+                    findings=findings,
+                    handoff_path=_handoff_path(directory),
                 )
-            _require_clean_tree(repo_root, ticket, active_config.base_branch, "implementer")
-            progress.message("validating implementer handoff...")
-            try:
-                _record_handoff(repo_root, ticket, directory, active_config.base_branch)
-            except RunnerError:
-                progress.message("handoff rejected")
-                raise
+                round_label = f" round {attempt}" if attempt > 1 else ""
+                progress.message(
+                    f"implementer{round_label} started: "
+                    f"{active_config.implementer.provider} / {active_config.implementer.model}"
+                )
+                implementer_result = _execute_child(
+                    executor,
+                    _pi_arguments(active_config.implementer, active_config.executable),
+                    repo_root=repo_root,
+                    ticket=ticket,
+                    log_path=directory / f"pi-implementer-round-{attempt}.log",
+                    stdin_text=implementer_prompt,
+                    heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
+                )
+                progress.message(f"implementer finished: exit {implementer_result.returncode}")
+                if implementer_result.returncode != 0:
+                    _abort(
+                        repo_root,
+                        ticket,
+                        f"implementer exited with code {implementer_result.returncode}",
+                    )
+                _require_clean_tree(repo_root, ticket, manifest["base_branch"], "implementer")
+                progress.message("validating implementer handoff...")
+                try:
+                    _record_handoff(repo_root, ticket, directory, manifest["base_branch"])
+                except RunnerError:
+                    progress.message("handoff rejected")
+                    raise
 
             manifest = _read_manifest(repo_root, ticket)
             reviewed_sha = manifest["current_head_sha"]
@@ -1154,6 +1185,8 @@ def _report(outcome: RunOutcome) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ticket")
+    parser.add_argument("--recover", action="store_true", help="explicit human approval of rework")
+    parser.add_argument("--reason", help="required human recovery approval reason")
     parser.add_argument("--base-branch", default="master")
     parser.add_argument("--pi-executable", default="pi")
     parser.add_argument("--preset", choices=tuple(ROLE_PRESETS), help="role/provider/model preset")
@@ -1207,8 +1240,10 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             executor=SubprocessExecutor(arguments.pi_executable),
             config=config,
             ticket_text=ticket_text,
+            recover=arguments.recover,
+            reason=arguments.reason,
         )
-    except RunnerError as error:
+    except (RunnerError, CycleError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     _report(outcome)
