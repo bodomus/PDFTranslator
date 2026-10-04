@@ -117,6 +117,30 @@ Do not strip these unless source evidence independently proves a structural list
 
 No broad regex-only destructive prefix removal.
 
+### Clarification: provider marker replacement for source-confirmed list items
+
+For source-confirmed list items, it is explicitly allowed to replace
+a provider-added or provider-changed list marker with the marker derived
+from the source/shared layout contract.
+
+Example:
+
+```text
+source: 1. Configure project
+provider output: 2. Настройте проект
+final: 1. Настройте проект
+```
+
+This is not considered forbidden translated-prefix stripping when the
+block is already confirmed by the source/shared layout contract to be a
+list item.
+
+Do NOT apply this rule to ordinary text or semantic prefixes such as:
+
+- A. Smith
+- 1.5 mm
+- 3.14
+
 ### 4. Build ListLayoutContract from source evidence
 
 For each confidently recognized list item, construct the shared contract using actual source geometry:
