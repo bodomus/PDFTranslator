@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from pdftranslate.domain.text_block import BoundingBox
-from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphKind
+from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphFragment, ParagraphKind
 
 _PREFIX = re.compile(r"^\s*(?P<marker>[•\-–*]|\d+[.)]|[A-Za-z][.)])\s+(?=\S)")
 _INITIAL_NAME = re.compile(r"^[A-Z]\.\s+[A-Z][a-z]+(?:\s|$)")
@@ -56,10 +56,10 @@ def source_list_item(
     """Return evidence only for independently bounded marker/content on one source line.
 
     A regex-only list kind, a combined span or guessed font advance is insufficient.
-    Letter-dot initials require a neighboring sequential list with the same origins.
+    Letter-dot prefixes require prose content and neighboring sequential source evidence.
     """
     candidate = _source_candidate(paragraph)
-    if candidate is None:
+    if candidate is None or _initial_name(candidate):
         return None
     marker = candidate.marker_text
     if len(marker) == 2 and marker[0].isalpha() and marker[1] == ".":
@@ -74,6 +74,7 @@ def source_list_item(
             witness = _source_candidate(other)
             if (
                 witness is not None
+                and not _initial_name(witness)
                 and len(witness.marker_text) == 2
                 and witness.marker_text[1] == "."
                 and ord(witness.marker_text[0]) - ord(marker[0]) == other_index - index
@@ -85,6 +86,54 @@ def source_list_item(
                 return candidate
         return None
     return candidate
+
+
+def source_initial_name(paragraph: LogicalParagraph) -> bool:
+    """Identify a spatially split name for source-text joining, never list ownership."""
+    candidate = _source_candidate(paragraph)
+    return candidate is not None and _initial_name(candidate)
+
+
+def source_list_continuation(
+    item: SourceListItem,
+    previous: ParagraphFragment,
+    fragment: ParagraphFragment,
+    max_vertical_gap_ratio: float,
+) -> bool:
+    """Prove ownership of a following source line, without crossing raw blocks."""
+    first = item.semantic.fragments[0]
+    if (
+        fragment.mapping.source_block_id != first.mapping.source_block_id
+        or fragment.mapping.page_number != first.mapping.page_number
+        or fragment.column != first.column
+        or not fragment.spans
+        or not _valid_box(fragment.bbox)
+        or not _contains(fragment.mapping.bbox, fragment.bbox)
+        or any(
+            not _valid_box(span.bbox) or not _contains(fragment.bbox, span.bbox)
+            for span in fragment.spans
+        )
+        or "".join(span.text for span in fragment.spans).strip() != fragment.text.strip()
+        or abs(fragment.bbox.x0 - item.content_source_rect.x0) > 0.5
+        or _PREFIX.match(fragment.text) is not None
+    ):
+        return False
+    height = min(previous.bbox.y1 - previous.bbox.y0, fragment.bbox.y1 - fragment.bbox.y0)
+    gap = fragment.bbox.y0 - previous.bbox.y1
+    return -height * 0.35 <= gap <= height * max_vertical_gap_ratio
+
+
+def _initial_name(candidate: SourceListItem) -> bool:
+    marker = candidate.marker_text
+    if len(marker) != 2 or not marker[0].isalpha() or marker[1] != ".":
+        return False
+    # A surname or sequence of capitalized name tokens is indistinguishable from
+    # a short letter-list label, even when adjacent initials happen to be A/B.
+    words = candidate.semantic.text.split()
+    return bool(words) and all(
+        word[0].isupper() and all(char.isalpha() or char in "'-’.," for char in word)
+        for word in words
+    )
 
 
 def _source_candidate(paragraph: LogicalParagraph) -> SourceListItem | None:

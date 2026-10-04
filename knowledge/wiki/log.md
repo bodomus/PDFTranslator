@@ -31,6 +31,9 @@ related:
 - Connected conservative source list evidence to semantic-only translation and the shared reflow
   contract; documented source marker restoration, independent inline offsets, unchanged artifact
   versions/cache revision and local missing/duplicate/continuation-marker validation.
+- Applied PDFTR-41 review corrections for adjacent semantic initials, owned source continuation
+  lines and unresolved-tail fallback, explicit contract markers, and duplicate checks in semantic
+  placement rectangles while retaining planned marker-like content.
 
 ## 2026-10-03
 

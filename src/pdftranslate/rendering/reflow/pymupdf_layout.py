@@ -11,7 +11,6 @@ from typing import Any
 
 import pymupdf
 
-from pdftranslate.reconstruction.list_items import is_list_marker
 from pdftranslate.rendering.errors import OutputPdfError
 from pdftranslate.rendering.inline_styles import InlineStyleRun, validate_inline_style_runs
 from pdftranslate.rendering.reflow.models import (
@@ -284,7 +283,6 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
                     for word in words
                     if lane.x0 - 0.5 <= float(word[0]) < lane.x1 - 0.5
                     and lane.y0 - 0.5 <= (float(word[1]) + float(word[3])) / 2 <= lane.y1 + 0.5
-                    and is_list_marker(_normalize(str(word[4])))
                 ]
                 expected_markers = (
                     [_normalize(list_layout.marker_text)]
@@ -297,6 +295,30 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
                         f"occurrence {segment.occurrence_index}, "
                         f"continuation {segment.continuation_index}; "
                         f"expected_markers={len(expected_markers)} actual_markers={len(markers)}"
+                    )
+                # The contract is authoritative even for tokens outside source
+                # detection's vocabulary. Planned semantic marker tokens remain
+                # legitimate; an extra copy anywhere in this placement does not.
+                target = Rect(lane.x0, lane.y0, segment.target_rect.x1, lane.y1)
+                words = page.get_text(
+                    "words", clip=_occurrence_clip(page, target, segment.font_size)
+                )
+                marker = _normalize(list_layout.marker_text)
+                actual_count = sum(
+                    _normalize(str(word[4])) == marker
+                    for word in words
+                    if target.x0 - 0.5 <= float(word[0]) < target.x1 + 0.5
+                    and target.y0 - 0.5 <= (float(word[1]) + float(word[3])) / 2 <= target.y1 + 0.5
+                )
+                expected_count = _normalize(segment.text).split().count(marker) + len(
+                    expected_markers
+                )
+                if actual_count != expected_count:
+                    raise OutputPdfError(
+                        "saved PDF structural_marker multiplicity mismatch for "
+                        f"occurrence {segment.occurrence_index}, "
+                        f"continuation {segment.continuation_index}; "
+                        f"expected_markers={expected_count} actual_markers={actual_count}"
                     )
             for occurrence in segment.output_occurrences:
                 clip = _occurrence_clip(page, occurrence.target_rect, segment.font_size)

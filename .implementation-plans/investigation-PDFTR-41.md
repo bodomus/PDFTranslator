@@ -71,3 +71,24 @@ Unit/integration fixtures use fake providers, bundled fonts and repository-local
 Run focused list/translation/reflow/style tests, Wiki lint and scripts/check.ps1 (full pytest,
 coverage, Ruff, mypy). CI and exact-SHA reviewer outcome require separate evidence after push.
 YouTrack lookup returned issue-not-found, so ticket field updates/attachments are unavailable.
+
+## Attempt 2: reviewer findings R1–R4
+
+Reviewed baseline: `d44410d56bafa74a8e9863d1ad1f11003cc0264d`; the validator has already
+entered IMPLEMENTING. The working tree is clean. Reused the existing Graphify/CRG context
+built at that SHA and source-verified all four reproduction paths during review.
+
+- R1: aligned sequential initials do not prove a list. Name-shaped letter-dot content must
+  remain ambiguous. A physically split initial/surname can still be joined as source text,
+  without authorizing structural separation or a ListLayoutContract.
+- R2: LIST_BOUNDARY prevents source continuation lines from joining the item. Join only
+  same-block, same-column, close, content-aligned, compatible BODY fragments after confirmed
+  first-line evidence. Unresolved same-block fragments must prevent partial-item reflow.
+- R3: explicit ListLayoutContract accepts single-token markers beyond automatic detection.
+  Saved validation must compare structural-lane tokens to the authoritative contract.
+- R4: also count the contract token throughout the local placement rectangle, allowing exactly
+  the planned semantic occurrences plus the first structural occurrence. This catches extra
+  markers in semantic rectangles without rejecting legitimate planned prefixes.
+
+No schema, cache revision, translation preprocessing, dependency, renderer or planner change is
+needed. Add real extracted/saved-PDF regressions and retain the existing focused suites.

@@ -459,3 +459,81 @@ def test_real_source_pdf_translation_to_production_renderer(
         markers = [word for word in words if word[4] in marker_pair]
         assert [word[4] for word in markers] == list(marker_pair)
         assert all(word[0] == pytest.approx(40, abs=0.1) for word in markers)
+
+
+def test_adjacent_source_initials_preserve_semantics_without_list_contract(
+    tmp_path: Path, cyrillic_font_path: Path
+) -> None:
+    path = tmp_path / "names.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page(width=300, height=400)
+        page.insert_font(fontname="sourcefont", fontfile=str(cyrillic_font_path))
+        for initial, surname, y in (("A.", "Smith", 80), ("B.", "Jones", 120)):
+            page.insert_text(
+                (40, y), initial + " ", fontname="sourcefont", fontsize=10, color=(0.2, 0.2, 0.2)
+            )
+            page.insert_text((70, y), surname, fontname="sourcefont", fontsize=10)
+        pdf.save(path)
+    source = PdfExtractor().extract(path)
+    assert [item.text for item in source.paragraphs] == ["A. Smith", "B. Jones"]
+    assert all(source_list_item(item, source.paragraphs) is None for item in source.paragraphs)
+    provider = Provider("Имя сохранено")
+    translated = _translate(source, provider, tmp_path / "cache.db")
+    assert provider.inputs == ["A. Smith", "B. Jones"]
+    with pymupdf.open(path) as pdf:
+        assert _discover(translated, pdf[0]) is None
+
+
+@pytest.mark.parametrize("continuation_x", [70, 82])
+def test_real_source_wrapped_items_are_owned_or_fall_back(
+    tmp_path: Path, cyrillic_font_path: Path, continuation_x: float
+) -> None:
+    path = tmp_path / "wrapped.pdf"
+    first_lines = (
+        "Configure project and install package",
+        "Run tests and verify the results",
+    )
+    continuation = "and keep the settings for later use."
+    with pymupdf.open() as pdf:
+        page = pdf.new_page(width=300, height=400)
+        page.insert_font(fontname="sourcefont", fontfile=str(cyrillic_font_path))
+        for marker, text, y in zip(("1.", "2."), first_lines, (80, 140), strict=True):
+            page.insert_text(
+                (40, y), marker + " ", fontname="sourcefont", fontsize=10, color=(0.2, 0.2, 0.2)
+            )
+            page.insert_text((70, y), text, fontname="sourcefont", fontsize=10)
+            page.insert_text(
+                (continuation_x, y + 12), continuation, fontname="sourcefont", fontsize=10
+            )
+        pdf.save(path)
+    source = PdfExtractor().extract(path)
+    provider = Provider("2. " + "Сохраните параметры проекта и проверьте результаты работы. " * 3)
+    translated = _translate(source, provider, tmp_path / "cache.db")
+    with pymupdf.open(path) as pdf:
+        discovered = _discover(translated, pdf[0])
+    if continuation_x != 70:
+        assert len(source.paragraphs) == 4
+        assert discovered is None
+        return
+    assert len(source.paragraphs) == 2
+    assert provider.inputs == [f"{text} {continuation}" for text in first_lines]
+    assert discovered is not None
+    assert all(item.list_layout is not None for item in discovered.paragraphs)
+    output = tmp_path / "wrapped-translated.pdf"
+    result = PdfRenderer().render(
+        path, translated, output, font_path=cyrillic_font_path, options=RenderOptions()
+    )
+    assert result.reflowed_paragraphs == 2
+    with pymupdf.open(output) as pdf:
+        words = [word for page in pdf for word in page.get_text("words")]
+        assert sum(word[4] == "1." for word in words) == 1
+        assert sum(word[4] == "2." for word in words) == 1
+        lines = [
+            line
+            for page in pdf
+            for block in page.get_text("dict")["blocks"]
+            for line in block.get("lines", ())
+            if not any(span["text"] in {"1.", "2."} for span in line["spans"])
+        ]
+        assert len(lines) > 2
+        assert all(line["bbox"][0] == pytest.approx(70, abs=0.1) for line in lines)

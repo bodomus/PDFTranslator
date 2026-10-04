@@ -57,7 +57,11 @@ PDFTR-39 introduced internal `ListLayoutContract`; PDFTR-41 connects conservativ
 and semantic-only translation without changing artifact versions. Independent source span rectangles
 must prove a marker/content pair on one physical line (including MuPDF's separate lines in one raw
 block). A regex-only list kind does not authorize separation. Letter-dot markers require a neighboring
-sequential marker with matching origins; combined spans and ambiguous evidence retain fallback.
+sequential marker with matching origins and prose content; adjacent initial/surname prefixes remain
+semantic text. Combined spans and ambiguous evidence retain fallback. Proven same-block, same-column
+continuation lines with matching content origins, compatible styles and close vertical geometry join
+their list item before translation. An unresolved same-block tail or a close indented neighboring
+paragraph prevents partial-item reflow, including tails MuPDF placed in another source block.
 Mandatory marker/content source rectangles supply explicit `marker_x` and `content_x`;
 non-finite, missing, overlapping or non-line-aligned evidence is rejected, not normalized. Marker
 text is separate from ordinary `FlowParagraph.text`. A semantic paragraph view excludes marker spans
@@ -80,8 +84,12 @@ only. Derived `OutputOccurrence` metadata keys logical occurrence, kind (semanti
 and continuation index, with target page/rectangle and paragraph identity. Insertion and reopened
 saved-output validation iterate those same occurrences using the existing shared HTML/clip path.
 Marker source evidence joins the existing redaction loop. The same saved validator counts exact
-marker tokens in each occurrence's local structural lane: first placement owns exactly its source
-marker, continuation placements own none. A marker elsewhere on the page cannot prove presence.
+tokens in each occurrence's local structural lane: first placement owns exactly its contract
+marker, continuation placements own none. Explicit contract tokens are independent of automatic
+source detection's vocabulary. Contract-marker counts throughout the local placement must equal
+the planned semantic token count plus the first structural occurrence. Extra copies in semantic
+rectangles are rejected; planned initials, decimals and literal marker tokens remain valid.
+A marker elsewhere on the page cannot prove presence.
 Fake-provider regressions and real source/saved-PDF probes verify supported forms, narrow/wide gaps,
 alignment, pagination, missing/duplicate/continuation markers and retained semantic inline styles.
 Marker typography uses the shared semantic base font; exact source marker font reproduction remains

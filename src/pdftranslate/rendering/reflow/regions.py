@@ -10,7 +10,11 @@ import pymupdf
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.page import ExtractedPage, PageClassification
 from pdftranslate.domain.text_block import BoundingBox
-from pdftranslate.reconstruction import LogicalParagraph, ParagraphKind
+from pdftranslate.reconstruction import (
+    LogicalParagraph,
+    ParagraphKind,
+    ParagraphReconstructionOptions,
+)
 from pdftranslate.reconstruction.list_items import source_list_item
 from pdftranslate.rendering.inline_styles import map_inline_styles
 from pdftranslate.rendering.reflow.models import (
@@ -51,6 +55,48 @@ def discover_reflow_page(
         for index, paragraph in enumerate(document.paragraphs)
         if (item := source_list_item(paragraph, document.paragraphs)) is not None
     }
+    list_blocks = {
+        (fragment.mapping.page_number, fragment.mapping.source_block_id)
+        for index in list_items
+        for fragment in document.paragraphs[index].fragments
+        if fragment.mapping.page_number == page_model.page_number
+    }
+    if any(
+        (fragment.mapping.page_number, fragment.mapping.source_block_id) in list_blocks
+        for index, paragraph in enumerate(document.paragraphs)
+        if index not in list_items
+        for fragment in paragraph.fragments
+    ):
+        # An unresolved tail in a confirmed item's raw block must not become an
+        # independent BODY flow at marker_x. Preserve the whole page's fallback.
+        return None
+    options = (
+        document.reconstruction.options
+        if document.reconstruction is not None
+        else ParagraphReconstructionOptions()
+    )
+    for index, item in list_items.items():
+        if index + 1 >= len(document.paragraphs) or index + 1 in list_items:
+            continue
+        paragraph = document.paragraphs[index]
+        following = document.paragraphs[index + 1]
+        previous_fragment, next_fragment = paragraph.fragments[-1], following.fragments[0]
+        height = min(
+            previous_fragment.bbox.y1 - previous_fragment.bbox.y0,
+            next_fragment.bbox.y1 - next_fragment.bbox.y0,
+        )
+        gap = next_fragment.bbox.y0 - previous_fragment.bbox.y1
+        if (
+            paragraph.anchor_page_number == page_model.page_number
+            and following.anchor_page_number == page_model.page_number
+            and following.kind in {ParagraphKind.BODY, ParagraphKind.HEADING}
+            and previous_fragment.column == next_fragment.column
+            and item.content_source_rect.x0 - 0.5 <= next_fragment.bbox.x0 < paragraph.bbox.x1
+            and -height * 0.35 <= gap <= height * options.max_vertical_gap_ratio
+        ):
+            # MuPDF may split a nearby indented tail into a different raw block.
+            # Its ownership is unproved; do not publish a partially flowed item.
+            return None
     candidates: list[tuple[int, LogicalParagraph]] = []
     for index, paragraph in enumerate(document.paragraphs):
         if paragraph.anchor_page_number != page_model.page_number:

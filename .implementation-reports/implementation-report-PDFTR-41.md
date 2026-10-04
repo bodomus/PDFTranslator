@@ -79,3 +79,43 @@ could not be performed through that connection. Ticket, plan, report and complet
 The earlier unrelated user edits were explicitly restored; clarification commit `c6b114c` changed
 only Tickets/PDFTR-41.md. The old stopped cycle was archived under repository temp and a new cycle
 entered IMPLEMENTING through the validator. Final exact-SHA review and merge remain human-owned.
+
+## Implementer attempt 2 — R1–R4
+
+Baseline: independently reviewed `d44410d56bafa74a8e9863d1ad1f11003cc0264d`. The validator
+already entered IMPLEMENTING for this attempt; no reviewer action or manual state edit is performed.
+
+- R1: name-shaped letter-dot prefixes remain ambiguous despite sequential aligned neighbors.
+  Physically split initials/surnames are joined only as source text, without structural ownership.
+  A real A. Smith / B. Jones PDF now retains both complete provider inputs and creates no list
+  contract. Existing real-source genuine letter-list regressions continue to pass.
+- R2: same-block, same-column, content-aligned BODY continuation lines with compatible styles,
+  bounded spans and close vertical geometry join the confirmed item before translation. Unresolved
+  same-block tails and nearby indented neighboring paragraphs prevent partial-item reflow, including
+  the different-block tail produced by MuPDF for additional indentation. Real multiline-source
+  tests verify complete semantic provider input, continuation origin 70, marker origin 40,
+  one occurrence of each source marker, and fallback for unproved ownership.
+- R3: saved structural-lane tokens are compared directly to the authoritative contract, without
+  automatic-detector vocabulary restrictions. Real saved PDFs cover + and § success, missing and
+  duplicate rejection, alongside the existing 1. contract.
+- R4: contract-marker counts throughout each occurrence's local placement must equal planned
+  semantic token counts plus first structural ownership. Extra copies in first-placement and
+  continuation semantic rectangles fail. Planned A. Smith, 1.5 mm, 3.14 and literal contract-marker
+  tokens continue to pass.
+
+Changes stay within source evidence/reconstruction, reflow eligibility and the existing shared saved
+validator, plus focused tests and required documentation. Translation/cache code, schema versions,
+dependencies, planner, measurer and insertion remain unchanged. No second rendering or validation
+path was introduced. Graphify context was reused (no module-boundary change); incremental CRG
+updated the affected symbols and dependants without errors. Both added source helpers have only
+the expected reconstruction caller; existing translation, typography and rendering callers remain.
+
+Attempt 2 validation: focused eight-file suite 220 passed; full scripts/check.ps1 passed with
+647 passed / 3 skipped and 89.50% coverage. Wiki lint: 15 pages / 125 links, zero errors/warnings;
+Ruff format/check and mypy (98 source files) passed. PDFs and caches stay under repository temp;
+fake providers only, no model downloads. CI for the new commit is subsequent handoff evidence.
+
+Conservative limits remain: ambiguous short capitalized letter-dot labels can resemble names and
+retain fallback. Cross-block continuation ownership is not inferred; nearby uncertain tails retain
+fallback. Existing combined-span, unsupported geometry/layout and marker-font limits still apply.
+External YouTrack availability is unchanged. This is an implementer report, not a reviewer verdict.

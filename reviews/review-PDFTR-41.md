@@ -18,3 +18,11 @@ BODY/HEADING/FOOTNOTE/inline behavior were checked. Graphify and CRG context was
 source-verified; graph coverage limitations are documented in the report.
 No automatic independent review or merge is represented by this note. External YouTrack updates
 and attachments are unavailable because PDFTR-41 was not found by the configured connection.
+
+## Implementer attempt 2
+
+Addressed R1–R4: preserve adjacent semantic initial/surname prefixes, join only source-proven
+continuation lines (otherwise retain fallback), validate authoritative explicit contract tokens,
+and reject unexpected extra markers in semantic target rectangles while allowing planned literals.
+Added real-source and reopened-PDF regressions. Attempt-specific validation evidence is in the
+implementation report and implementer input; this note still does not claim an independent verdict.

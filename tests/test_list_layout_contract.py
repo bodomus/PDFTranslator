@@ -276,3 +276,43 @@ def test_marker_source_evidence_joins_shared_redaction(cyrillic_font_path: Path)
         assert not page.get_text().strip()
         insert_reflow_segments(document, (plan,), cyrillic_font_path)
         assert page.get_text().count("1.") == 1
+
+
+@pytest.mark.parametrize("marker", ["+", "§", "1."])
+def test_saved_contract_marker_ownership_includes_semantic_rectangle(
+    tmp_path: Path, cyrillic_font_path: Path, marker: str
+) -> None:
+    # Explicit contract tokens are independent of automatic detection. Planned
+    # marker-like semantic text, including the contract token itself, is valid.
+    text = f"A. Smith compares 1.5 mm and 3.14; {marker} is a literal semantic token. " * 20
+    paragraph = replace(_paragraph(text), list_layout=replace(_contract(), marker_text=marker))
+    with PyMuPdfMeasurer(300, 200, cyrillic_font_path) as measurer:
+        plan = plan_flow((paragraph,), _regions(), measurer)
+    assert len(plan.segments) > 1
+    output = tmp_path / "valid.pdf"
+    with pymupdf.open() as pdf:
+        pdf.new_page(width=300, height=200)
+        insert_continuation_pages(pdf, (plan,))
+        insert_reflow_segments(pdf, (plan,), cyrillic_font_path)
+        pdf.save(output)
+    validate_saved_segments(output, (plan,))
+    for defect in ("missing", "duplicate_lane", "duplicate_semantic", "continuation_semantic"):
+        broken = tmp_path / f"{defect}.pdf"
+        with pymupdf.open(output) as pdf:
+            segment = plan.segments[1 if defect == "continuation_semantic" else 0]
+            page = pdf[segment.target_page_number - 1]
+            if defect == "missing":
+                fragment = segment.structural_fragment
+                assert fragment is not None
+                rect = fragment.target_rect
+                page.add_redact_annot(pymupdf.Rect(rect.x0, rect.y0 - 3, rect.x1, rect.y1 + 3))
+                page.apply_redactions()
+            else:
+                x = 40 if defect == "duplicate_lane" else segment.target_rect.x0 + 30
+                page.insert_font(fontname="probe", fontfile=str(cyrillic_font_path))
+                page.insert_text(
+                    (x, segment.target_rect.y0 + 9), marker, fontsize=10, fontname="probe"
+                )
+            pdf.save(broken)
+        with pytest.raises(OutputPdfError, match="structural_marker"):
+            validate_saved_segments(broken, (plan,))

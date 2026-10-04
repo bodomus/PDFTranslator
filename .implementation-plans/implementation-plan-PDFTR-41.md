@@ -15,3 +15,13 @@
 
 The earlier clarification commit contains only Tickets/PDFTR-41.md. No unrelated files belong in
 the implementation commit. Independent exact-SHA review and merge remain outside implementer work.
+
+## Attempt 2
+
+1. Address only R1–R4 against the reviewed SHA; preserve the shared layout and cache contracts.
+2. Add source-initial ambiguity rejection and proven source-continuation association/fallback.
+3. Validate explicit contract tokens and local duplicate counts against planned semantic text.
+4. Add real-source and reopened-PDF regressions, then run focused suites and scripts/check.ps1.
+5. Update affected documentation/report and CRG, commit and push a new SHA with a clean tree.
+6. Write only the designated implementer input for implementation_attempt 2; no reviewer actions
+   or manual cycle-state edits.
