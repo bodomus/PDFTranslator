@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-03
+updated: 2026-10-04
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-41.md
 - ../../Tickets/PDFTR-40.md
 - ../../Tickets/PDFTR-39.md
 - ../../Tickets/PDFTR-37.md
@@ -24,6 +25,21 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-04
+
+- Preserved lowercase apostrophe name components and mixed prose/name neighbors as complete
+  semantic text; separated geometry-backed letter-prefix joining from structural list ownership.
+
+- Expanded source initial/name ambiguity handling for surname qualifiers, lowercase particles and
+  compound names; preserved genuine prose letter lists and full semantic provider input.
+
+- Connected conservative source list evidence to semantic-only translation and the shared reflow
+  contract; documented source marker restoration, independent inline offsets, unchanged artifact
+  versions/cache revision and local missing/duplicate/continuation-marker validation.
+- Applied PDFTR-41 review corrections for adjacent semantic initials, owned source continuation
+  lines and unresolved-tail fallback, explicit contract markers, and duplicate checks in semantic
+  placement rectangles while retaining planned marker-like content.
 
 ## 2026-10-03
 

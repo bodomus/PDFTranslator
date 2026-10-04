@@ -9,6 +9,12 @@ from dataclasses import dataclass
 
 from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextSpan
+from pdftranslate.reconstruction.list_items import (
+    is_list_marker,
+    source_letter_prefix,
+    source_list_continuation,
+    source_list_item,
+)
 from pdftranslate.reconstruction.models import (
     DecisionAction,
     DecisionReason,
@@ -213,6 +219,24 @@ def _reconstruct_page(
 ) -> tuple[list[LogicalParagraph], list[ReconstructionDecision], int]:
     paragraphs: list[LogicalParagraph] = []
     decisions: list[ReconstructionDecision] = []
+    standalone_candidates = {
+        (first.id, second.id): _paragraph_from_fragments(
+            (first, second), ParagraphKind.LIST_ITEM, False
+        )
+        for first, second in zip(layout.fragments, layout.fragments[1:], strict=False)
+        if is_list_marker(first.text.strip())
+    }
+    list_candidates = {
+        fragment.id: _paragraph_from_fragments((fragment,), ParagraphKind.LIST_ITEM, False)
+        for fragment in layout.fragments
+        if fragment.text.strip() and is_list_marker(fragment.text.split(maxsplit=1)[0])
+    }
+    list_candidates.update({first: item for (first, _), item in standalone_candidates.items()})
+    list_context = tuple(
+        list_candidates[fragment.id]
+        for fragment in layout.fragments
+        if fragment.id in list_candidates
+    )
     removed = 0
     current: list[ParagraphFragment] = []
     current_kind: ParagraphKind | None = None
@@ -223,7 +247,46 @@ def _reconstruct_page(
             current = [fragment]
             current_kind = kind
             continue
-        action, reasons = _decide(current[-1], fragment, current_kind, kind, layout, options)
+        standalone = standalone_candidates.get((current[-1].id, fragment.id))
+        owner = list_candidates.get(current[0].id)
+        list_item = source_list_item(owner, list_context) if owner is not None else None
+        if (
+            len(current) == 1
+            and current_kind in {ParagraphKind.BODY, ParagraphKind.HEADING, ParagraphKind.LIST_ITEM}
+            and kind in {ParagraphKind.BODY, ParagraphKind.HEADING, ParagraphKind.LIST_ITEM}
+            and standalone is not None
+            and (
+                source_list_item(standalone, list_context) is not None
+                or source_letter_prefix(standalone)
+            )
+        ):
+            # MuPDF can expose a marker and its content as separate physical
+            # lines in one source block. Join a geometrically proven letter
+            # prefix even when an ambiguous name invalidates list evidence;
+            # source_list_item still decides structural ownership independently.
+            action = DecisionAction.MERGE
+            reasons: tuple[DecisionReason, ...] = (
+                DecisionReason.SAME_SOURCE_BLOCK,
+                DecisionReason.LIST_BOUNDARY,
+            )
+            current_kind = ParagraphKind.LIST_ITEM
+        elif (
+            list_item is not None
+            and current_kind in {ParagraphKind.BODY, ParagraphKind.LIST_ITEM}
+            and not current_ambiguous
+            and kind is ParagraphKind.BODY
+            and source_list_continuation(
+                list_item, current[-1], fragment, options.max_vertical_gap_ratio
+            )
+            and _style_compatible(current[-1].spans, fragment.spans, layout.median_font_size)
+        ):
+            action = DecisionAction.MERGE
+            reasons = (DecisionReason.SAME_SOURCE_BLOCK, DecisionReason.CLOSE_VERTICAL_GAP)
+            current_kind = ParagraphKind.LIST_ITEM
+            if _is_soft_hyphen(current[-1].text, fragment.text):
+                reasons = (*reasons, DecisionReason.SOFT_HYPHEN)
+        else:
+            action, reasons = _decide(current[-1], fragment, current_kind, kind, layout, options)
         decisions.append(
             ReconstructionDecision(
                 previous_fragment_id=current[-1].id,

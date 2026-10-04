@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pdftranslate.domain.document import ExtractedDocument
 from pdftranslate.domain.text_block import TextSpan
 from pdftranslate.reconstruction import LogicalParagraph, ParagraphFragment, ParagraphKind
+from pdftranslate.reconstruction.list_items import source_list_item
 from pdftranslate.typography.models import (
     MixedStyleEvidence,
     ParagraphTypographyEvidence,
@@ -43,10 +44,16 @@ def normalize_source_font_name(name: str) -> str:
 def extract_typography_evidence(document: ExtractedDocument) -> TypographyBaseline:
     """Derive compact typography evidence without reopening or mutating the source PDF."""
     page_widths = {page.page_number: page.width for page in document.pages}
-    regions = _role_regions(document.paragraphs)
+    paragraphs = tuple(
+        item.semantic
+        if (item := source_list_item(paragraph, document.paragraphs)) is not None
+        else paragraph
+        for paragraph in document.paragraphs
+    )
+    regions = _role_regions(paragraphs)
     evidence = tuple(
-        _paragraph_evidence(index, paragraph, document.paragraphs, page_widths, regions)
-        for index, paragraph in enumerate(document.paragraphs)
+        _paragraph_evidence(index, paragraph, paragraphs, page_widths, regions)
+        for index, paragraph in enumerate(paragraphs)
     )
     return TypographyBaseline(source_sha256=document.source.sha256, paragraphs=evidence)
 

@@ -183,11 +183,30 @@ padded clip around its own target rectangle. Any unplaced text, fixed-layout ove
 saved segment prevents atomic publication. Source footnote separators are preserved; blank
 continuation pages do not synthesize separators, running headers, or source page numbers.
 
-The internal reflow model also accepts an optional source-backed list-layout contract. It keeps
-marker text separate from semantic content, measures their independent origins, and assigns the
-marker only to the first logical segment through the same planner, insertion and saved-validation
-path. This is infrastructure only: automatic list detection/reconstruction is not enabled, and
-existing JSON artifacts and translation behavior are unchanged.
+Source-confirmed lists preserve `•`, `-`, `–`, `*`, numeric (`1.`, `2)`) and letter (`a)`, `A.`)
+markers through the shared reflow path. Detection requires independently bounded source spans on
+the same physical line; MuPDF marker/content lines in one source block can also supply that evidence.
+Letter-dot markers additionally need prose content and an adjacent sequential list with matching
+origins; name-shaped prefixes such as adjacent `A. Smith` / `B. Jones` remain semantic text,
+including surname qualifiers (`A. Smith (editor)`) and particles (`A. van Smith`). Qualifiers
+and name particles do not provide prose evidence for separating a letter marker. Lowercase
+apostrophe components (`d'Angelo`, `l’Ouverture`) also remain semantic; an ambiguous neighboring
+name cannot confirm a prose letter item. Geometrically proven letter prefixes retain their complete
+source text even when list evidence is rejected.
+Same-block source continuation lines join their item only with matching content origins, compatible
+styles and close line geometry. Unresolved tails retain fallback instead of flowing a partial item.
+A combined marker/content span or ambiguous geometry also keeps the existing fallback behavior.
+
+The provider receives semantic content only. For a confirmed source item `1. Configure project`,
+provider output `2. Настройте проект` becomes `1. Настройте проект`. Ordinary text and semantic
+prefixes such as `A. Smith`, `1.5 mm` and `3.14` remain intact. Source marker and content origins
+populate the existing list-layout contract: wrapped content stays at `content_x`, the marker stays
+at `marker_x`, and continuation pages carry semantic text only. Saved validation rejects locally
+missing, duplicate and continuation markers throughout each local placement, accounting for
+legitimate marker tokens in planned semantic text. Explicit list-layout contract markers are
+validated independently of automatic detection's vocabulary. Semantic inline styles remain
+independent of marker offsets. Artifact versions and the global translation-cache revision are unchanged; translated
+JSON retains the canonical marker for compatibility with fixed-layout fallback.
 
 ## Reflow architecture proof of concept
 

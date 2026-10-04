@@ -256,11 +256,70 @@ def validate_saved_segments(path: Path, plans: tuple[LayoutPlan, ...]) -> None:
     document = pymupdf.open(path)
     try:
         page_diagnostics: dict[int, str] = {}
+        list_layouts = {
+            paragraph.occurrence_index: paragraph.list_layout
+            for plan in plans
+            for paragraph in plan.paragraphs
+            if paragraph.list_layout is not None
+        }
         for segment in (item for plan in plans for item in plan.segments):
             page = document[segment.target_page_number - 1]
             normalized_page = page_diagnostics.setdefault(
                 segment.target_page_number, _normalize(str(page.get_text("text")))
             )
+            list_layout = list_layouts.get(segment.occurrence_index)
+            if list_layout is not None:
+                # Count actual tokens in this occurrence's structural lane. A marker
+                # elsewhere on the page cannot validate it; continuations own none.
+                lane = Rect(
+                    list_layout.marker_x,
+                    segment.target_rect.y0,
+                    list_layout.content_x,
+                    segment.target_rect.y1,
+                )
+                words = page.get_text("words", clip=_occurrence_clip(page, lane, segment.font_size))
+                markers = [
+                    _normalize(str(word[4]))
+                    for word in words
+                    if lane.x0 - 0.5 <= float(word[0]) < lane.x1 - 0.5
+                    and lane.y0 - 0.5 <= (float(word[1]) + float(word[3])) / 2 <= lane.y1 + 0.5
+                ]
+                expected_markers = (
+                    [_normalize(list_layout.marker_text)]
+                    if segment.structural_fragment is not None
+                    else []
+                )
+                if markers != expected_markers:
+                    raise OutputPdfError(
+                        "saved PDF structural_marker ownership mismatch for "
+                        f"occurrence {segment.occurrence_index}, "
+                        f"continuation {segment.continuation_index}; "
+                        f"expected_markers={len(expected_markers)} actual_markers={len(markers)}"
+                    )
+                # The contract is authoritative even for tokens outside source
+                # detection's vocabulary. Planned semantic marker tokens remain
+                # legitimate; an extra copy anywhere in this placement does not.
+                target = Rect(lane.x0, lane.y0, segment.target_rect.x1, lane.y1)
+                words = page.get_text(
+                    "words", clip=_occurrence_clip(page, target, segment.font_size)
+                )
+                marker = _normalize(list_layout.marker_text)
+                actual_count = sum(
+                    _normalize(str(word[4])) == marker
+                    for word in words
+                    if target.x0 - 0.5 <= float(word[0]) < target.x1 + 0.5
+                    and target.y0 - 0.5 <= (float(word[1]) + float(word[3])) / 2 <= target.y1 + 0.5
+                )
+                expected_count = _normalize(segment.text).split().count(marker) + len(
+                    expected_markers
+                )
+                if actual_count != expected_count:
+                    raise OutputPdfError(
+                        "saved PDF structural_marker multiplicity mismatch for "
+                        f"occurrence {segment.occurrence_index}, "
+                        f"continuation {segment.continuation_index}; "
+                        f"expected_markers={expected_count} actual_markers={actual_count}"
+                    )
             for occurrence in segment.output_occurrences:
                 clip = _occurrence_clip(page, occurrence.target_rect, segment.font_size)
                 local = _normalize(str(page.get_text("text", clip=clip)))

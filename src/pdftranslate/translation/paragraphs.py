@@ -25,6 +25,7 @@ from pdftranslate.glossary import (
     validate_glossary_output,
 )
 from pdftranslate.reconstruction import LogicalParagraph
+from pdftranslate.reconstruction.list_items import source_list_item
 from pdftranslate.repeated import RepeatedElementPolicy
 from pdftranslate.translation.cache import TRANSLATION_BEHAVIOR_REVISION, TranslationCache
 from pdftranslate.translation.errors import (
@@ -209,6 +210,16 @@ def translate_paragraphs(
         )
 
     work_by_text: dict[str, _Work] = {}
+    list_items = {
+        index: item
+        for index, paragraph in enumerate(document.paragraphs)
+        if (item := source_list_item(paragraph, document.paragraphs)) is not None
+    }
+
+    def output_text(index: int, text: str) -> str:
+        item = list_items.get(index)
+        return item.translated_text(text) if item is not None else text
+
     try:
         for index, paragraph in enumerate(document.paragraphs):
             if paragraphs[index].translated_text is not None:
@@ -231,9 +242,11 @@ def translate_paragraphs(
                 notify(index, "skipped", 0)
                 save()
                 continue
-            normalized = normalize_source_text(paragraph.text)
+            list_item = list_items.get(index)
+            semantic_text = list_item.semantic.text if list_item is not None else paragraph.text
+            normalized = normalize_source_text(semantic_text)
             prepared = (
-                prepare_glossary_text(paragraph.text, options.glossary)
+                prepare_glossary_text(semantic_text, options.glossary)
                 if options.glossary is not None
                 else None
             )
@@ -244,9 +257,9 @@ def translate_paragraphs(
                 )
             )
             foreign_language = prepare_foreign_language_text(
-                prepared.value if prepared is not None else paragraph.text,
+                prepared.value if prepared is not None else semantic_text,
                 allow_whole_unit=allow_whole_unit,
-                whole_unit_text=paragraph.text,
+                whole_unit_text=semantic_text,
             )
             if (
                 foreign_language.decision.classification
@@ -274,7 +287,9 @@ def translate_paragraphs(
             )
             if cached is not None:
                 foreign_language.validate_restored(cached, paragraph.id)
-                paragraphs[index] = paragraph.model_copy(update={"translated_text": cached})
+                paragraphs[index] = paragraph.model_copy(
+                    update={"translated_text": output_text(index, cached)}
+                )
                 if prepared is not None:
                     glossary_evidence[paragraph.id] = validate_glossary_output(
                         cached,
@@ -325,7 +340,7 @@ def translate_paragraphs(
                         prepared.restore_and_validate(translated_text, paragraph.id)
                     )
                 paragraphs[index] = paragraph.model_copy(
-                    update={"translated_text": translated_text}
+                    update={"translated_text": output_text(index, translated_text)}
                 )
                 foreign_language_evidence[index] = _foreign_evidence(
                     index,
@@ -399,7 +414,7 @@ def translate_paragraphs(
                 for index, cache_status in work.targets:
                     source_paragraph = document.paragraphs[index]
                     paragraphs[index] = source_paragraph.model_copy(
-                        update={"translated_text": translated_text}
+                        update={"translated_text": output_text(index, translated_text)}
                     )
                     completed += 1
                     if evidence is not None:
