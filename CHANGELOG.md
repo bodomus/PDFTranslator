@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rectangles while allowing marker-like text already present in the planned content.
   Human-approved R1 recovery also preserves complete initials/names with surname qualifiers,
   lowercase particles and compound surnames instead of treating them as structural letter lists.
+  The R1 follow-up recognizes lowercase straight/curly-apostrophe name components without a
+  surname allowlist; mixed prose/name neighbors retain complete initials and fallback behavior.
 
 - Reviewer-only constrained `git_readonly` capability for all Pi role presets (PDFTR-40):
   independent exact-SHA/status/branch/diff/show/merge-base/history evidence without shell,

@@ -25,6 +25,16 @@ text with real PDFs, preserve genuine prose letter lists, run focused and full g
 The exhausted cycle and all existing coordination/review artifacts remain immutable; no transition
 or implementer handoff is generated for this human-authorized recovery.
 
+## Human-approved apostrophe-component follow-up
+
+From `dfbdac611241db326a948760a06547806b3d60de`, address only the remaining R1 edge:
+recognize lowercase apostrophe-prefixed name components without a surname allowlist, using the
+existing candidate and witness ambiguity guard. Add real-source aligned-span name/name and
+prose/name regressions for complete source/provider/translated text and absent list contracts,
+plus genuine apostrophe-containing prose positives. Preserve geometry-proven letter-prefix/content
+joining even when a name invalidates neighboring list evidence. Run focused and full gates, update
+the affected documentation/report, commit and push a new SHA. Preserve every stopped-cycle artifact unchanged.
+
 ## Attempt 2
 
 1. Address only R1–R4 against the reviewed SHA; preserve the shared layout and cache contracts.

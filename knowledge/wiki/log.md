@@ -28,6 +28,9 @@ related:
 
 ## 2026-10-04
 
+- Preserved lowercase apostrophe name components and mixed prose/name neighbors as complete
+  semantic text; separated geometry-backed letter-prefix joining from structural list ownership.
+
 - Expanded source initial/name ambiguity handling for surname qualifiers, lowercase particles and
   compound names; preserved genuine prose letter lists and full semantic provider input.
 

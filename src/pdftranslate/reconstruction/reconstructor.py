@@ -11,7 +11,7 @@ from pdftranslate.domain.page import ExtractedPage
 from pdftranslate.domain.text_block import BoundingBox, TextBlock, TextSpan
 from pdftranslate.reconstruction.list_items import (
     is_list_marker,
-    source_initial_name,
+    source_letter_prefix,
     source_list_continuation,
     source_list_item,
 )
@@ -257,12 +257,13 @@ def _reconstruct_page(
             and standalone is not None
             and (
                 source_list_item(standalone, list_context) is not None
-                or source_initial_name(standalone)
+                or source_letter_prefix(standalone)
             )
         ):
             # MuPDF can expose a marker and its content as separate physical
-            # lines in one source block. A spatially split initial/surname is
-            # joined as text too, but source_list_item keeps it nonstructural.
+            # lines in one source block. Join a geometrically proven letter
+            # prefix even when an ambiguous name invalidates list evidence;
+            # source_list_item still decides structural ownership independently.
             action = DecisionAction.MERGE
             reasons: tuple[DecisionReason, ...] = (
                 DecisionReason.SAME_SOURCE_BLOCK,

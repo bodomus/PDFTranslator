@@ -151,3 +151,39 @@ zero errors/warnings; Ruff formatting/lint and mypy (98 source files) passed. Al
 and runtime temporary files stayed under repository temp; fake providers only, no model downloads.
 The four explicitly protected cycle files retained their original SHA-256 hashes before commit.
 This records implementation evidence, not a new automated review or merge decision.
+
+## Human-approved apostrophe-component follow-up
+
+Addressed only remaining R1 from `dfbdac611241db326a948760a06547806b3d60de`. The ambiguity
+guard recognizes a lowercase alphabetic component attached by straight/curly apostrophe to a
+capitalized name component, without hardcoding surnames or adding particle names to an allowlist.
+Normalization is confined to ambiguity detection; semantic source/provider text is unchanged.
+The same guard rejects both candidates and neighboring sequential-letter witnesses.
+
+Real-PDF tests also exposed a reconstruction consequence in the mixed prose/name pair: once
+the name stops confirming the list, MuPDF's separate `A.` / `Configure project` fragments must
+still be joined. The text-only predicate is now `source_letter_prefix`, using the original
+`_source_candidate` span/rectangle/physical-line checks independently of structural list ownership.
+This preserves complete initials while `source_list_item` and reflow keep the ambiguous pair on
+fallback. R2–R4, translation/cache behavior, schemas, dependencies and rendering are unchanged.
+
+Added real-source independently bounded aligned-span cases for `A. d'Angelo` / `B. d'Artagnan`,
+`A. Configure project` / `B. d'Angelo`, curly apostrophes, multi-letter prefixes and qualified
+compound surnames. Assertions cover complete source/provider/translated text, rejection of both
+source items and absent list contracts. Prose with contractions and possessive names retains positive
+letter-list coverage. The added tests first reproduced six baseline failures before the fix.
+
+Validation: focused eight-file suite **244 passed**; full **scripts/check.ps1 passed** with
+**671 passed / 3 skipped**, **89.54% coverage** (80% required). Wiki lint: 15 pages / 125 links,
+zero errors/warnings; Ruff format/lint and mypy (98 source files) passed. Temporary PDFs, caches,
+test workspaces and the quality-gate log stayed under repository `temp/`; fake providers only.
+CRG was updated and confirms two candidate/witness ambiguity checks and one text-joining caller;
+all relevant relationships were source-verified. Existing Graphify context was reused because
+module boundaries and pipeline architecture did not change. README, CHANGELOG, affected Wiki,
+plan/investigation and the implementation completion note were updated.
+
+The complete `.agent-cycle/PDFTR-41` artifact set retained its initial SHA-256 hashes, including
+review-1.json, review-2.json, manifest.json and handoff.json. No cycle transitions or handoffs
+were run; the exhausted automated cycle remains STOPPED. YouTrack returned "Issue not found"
+for PDFTR-41, so its fields/attachments could not be updated. Independent review and merge
+remain human-owned; these results describe implementation validation only.

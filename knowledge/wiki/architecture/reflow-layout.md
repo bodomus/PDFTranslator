@@ -61,6 +61,10 @@ sequential marker with matching origins and prose content; adjacent initial/surn
 semantic text. Parenthetical/bracketed or punctuation-separated surname qualifiers, lowercase name
 particles and compound surnames do not establish prose evidence. The ambiguity guard also applies
 to neighboring witnesses, so an ambiguous name cannot confirm another letter item.
+Lowercase components attached by a straight/curly apostrophe to a capitalized name component
+remain ambiguous without a surname allowlist. Geometry-backed letter-prefix joining preserves
+complete source text even when an ambiguous neighboring name invalidates list evidence; it does
+not authorize a list contract.
 Combined spans and ambiguous evidence retain fallback. Proven same-block, same-column
 continuation lines with matching content origins, compatible styles and close vertical geometry join
 their list item before translation. An unresolved same-block tail or a close indented neighboring

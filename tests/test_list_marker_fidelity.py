@@ -217,6 +217,8 @@ def test_separate_initial_and_surname_remain_ambiguous() -> None:
         ("Open the file", "Check the result"),
         ("Install packages and configure the project", "Verify behavior"),
         ("Read notes from Smith", "Review examples"),
+        ("Don't change John's settings", "Check the result"),
+        ("Use d'Angelo's examples", "Review l'Ouverture's notes"),
     ],
 )
 def test_genuine_letter_prose_is_not_a_name(contents: tuple[str, str]) -> None:
@@ -227,7 +229,9 @@ def test_genuine_letter_prose_is_not_a_name(contents: tuple[str, str]) -> None:
         assert item.semantic.text == content
 
 
-@pytest.mark.parametrize("name", ["Smith (editor)", "van Jones", "Smith, editor"])
+@pytest.mark.parametrize(
+    "name", ["Smith (editor)", "van Jones", "Smith, editor", "d'Angelo", "l’Ouverture"]
+)
 def test_ambiguous_initial_cannot_confirm_neighboring_letter_item(name: str) -> None:
     paragraphs = (_paragraph("A."), _paragraph("B.", name, index=1))
     assert all(source_list_item(item, paragraphs) is None for item in paragraphs)
@@ -497,6 +501,10 @@ def test_real_source_pdf_translation_to_production_renderer(
         ("al-Hassan", "O'Neill"),
         ("O'neill", "Smith-jones"),
         ("Smith and Jones", "Jones et al."),
+        ("d'Angelo", "d'Artagnan"),
+        ("Configure project", "d'Angelo"),
+        ("l’Ouverture", "dell'Acqua"),
+        ("d'Angelo-Smith (editor)", "l'Ouverture"),
     ],
 )
 def test_adjacent_source_initials_preserve_semantics_without_list_contract(

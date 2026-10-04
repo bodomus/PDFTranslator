@@ -13,6 +13,7 @@ from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphFragme
 _PREFIX = re.compile(r"^\s*(?P<marker>[•\-–*]|\d+[.)]|[A-Za-z][.)])\s+(?=\S)")
 _INITIAL_NAME = re.compile(r"^[A-Z]\.\s+[A-Z][a-z]+(?:\s|$)")
 _NAME_QUALIFIER = re.compile(r"[([]|[,;:]|\s[-–—/]\s")
+_APOSTROPHE_NAME_PREFIX = re.compile(r"^[a-z]+['’](?=[A-Z])")
 _NAME_PARTICLES = frozenset(
     [
         "al",
@@ -119,10 +120,15 @@ def source_list_item(
     return candidate
 
 
-def source_initial_name(paragraph: LogicalParagraph) -> bool:
-    """Identify a spatially split name for source-text joining, never list ownership."""
+def source_letter_prefix(paragraph: LogicalParagraph) -> bool:
+    """Prove a letter-dot prefix/content source line for text joining, never list ownership."""
     candidate = _source_candidate(paragraph)
-    return candidate is not None and _initial_name(candidate)
+    return (
+        candidate is not None
+        and len(candidate.marker_text) == 2
+        and candidate.marker_text[0].isalpha()
+        and candidate.marker_text[1] == "."
+    )
 
 
 def source_list_continuation(
@@ -160,12 +166,18 @@ def _initial_name(candidate: SourceListItem) -> bool:
         return False
     # Qualifiers after a name do not prove prose/list ownership. Name particles
     # and apostrophe/hyphen components belong to the name, not to list evidence.
+    # Lowercase apostrophe prefixes need no particle/surname allowlist; only
+    # the ambiguity check normalizes them, never the semantic text itself.
     # An aligned A/B sequence still cannot distinguish these semantic initials.
     name = _NAME_QUALIFIER.split(candidate.semantic.text, maxsplit=1)[0]
     words = tuple(
         part
         for word in name.split()
-        for part in ((word,) if word[0].isupper() else re.split(r"['’\-]+", word))
+        for part in (
+            (word,)
+            if word[0].isupper()
+            else re.split(r"['’\-]+", _APOSTROPHE_NAME_PREFIX.sub("", word))
+        )
         if part
     )
     return any(word[0].isupper() for word in words) and all(

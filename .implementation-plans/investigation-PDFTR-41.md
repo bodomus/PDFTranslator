@@ -108,3 +108,25 @@ Reused Graphify context and CRG's three direct call sites in source_list_item/so
 source verification confirms propagation to reconstruction, translation, typography and reflow.
 Add real-source qualified/particle/compound-name probes, full semantic output assertions, genuine
 prose positives and ambiguous-witness negatives. Leave all stopped-cycle artifacts untouched.
+
+## Apostrophe-component follow-up
+
+Independent real-PDF review at `dfbdac611241db326a948760a06547806b3d60de` confirmed R1 for
+`A. d'Angelo` / `B. d'Artagnan`; `B. d'Angelo` also incorrectly witnessed `A. Configure project`.
+Splitting a lowercase word on apostrophes leaves `d`, which is not a known whitespace particle,
+and therefore misclassifies a name as prose. Recognize a lowercase alphabetic prefix attached by
+straight/curly apostrophe to a capitalized name component, without hardcoding surnames or particles.
+Keep this recognition inside `_initial_name`, which already guards both candidates and witnesses.
+Real-source regressions must also check source joining when an ambiguous witness invalidates prose.
+Existing shared layout, translation, cache, geometry and R2–R4 logic remain the compatibility boundary.
+CRG preflight at this SHA confirms the existing reconstruction, translation, typography and reflow
+dependants; relationships were source-verified in the independent review. Graphify context is reused.
+
+Red regressions reproduced six failures. The name guard alone fixed five, but the real mixed pair
+then extracted `A.` and `Configure project` as separate paragraphs: reconstruction previously joined
+physical marker/content lines only for confirmed lists or recognized names. Broaden that text-only
+joining predicate to geometrically proven letter-dot source prefixes (`source_letter_prefix`),
+retaining `_source_candidate`'s original same-block, physical-line, rectangle and span checks.
+Structural classification remains exclusively in `source_list_item`; no renderer, translation,
+cache or module-boundary change is required. Python design-pattern guidance supports keeping these
+two existing source-evidence responsibilities separate without introducing an abstraction layer.

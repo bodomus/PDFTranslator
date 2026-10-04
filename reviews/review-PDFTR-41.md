@@ -35,3 +35,13 @@ list contract; genuine prose A./B. lists remain supported. Focused suite: 236 pa
 scripts/check.ps1: 663 passed / 3 skipped, coverage 89.53%; Wiki lint, Ruff and mypy passed.
 The exhausted cycle's review artifacts, manifest and handoff remain unchanged. This completion note
 does not create an additional automated review round or claim an independent verdict.
+
+## Human-approved apostrophe-component follow-up
+
+Resolved the remaining lowercase apostrophe-component R1 without a surname allowlist. Real-source
+name/name and prose/name pairs retain full initials in source/provider/translated text and create
+no list contracts. Geometry-backed letter-prefix joining preserves full text when an ambiguous
+name invalidates neighboring list evidence; genuine prose letter lists remain supported.
+Focused eight-file suite: 244 passed. Full scripts/check.ps1: 671 passed / 3 skipped,
+89.54% coverage; Wiki lint, Ruff and mypy passed. All stopped-cycle artifacts retain their
+original hashes. This implementer completion note is not an independent exact-SHA review verdict.
