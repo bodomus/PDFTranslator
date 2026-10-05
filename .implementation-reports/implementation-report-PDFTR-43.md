@@ -1,5 +1,38 @@
 # Implementation Report
 
+## Human-approved R1/R2 recovery after independent review
+- Baseline: exact reviewed SHA `6e09414901cb631b4abe34d77d249ddcdcc38746`, clean existing task
+  branch. Scope is limited to the two HIGH findings and their tests/documentation.
+- R1: reuse the runner's strict envelope selection before removal. Protect the selected
+  sentinel/fenced/raw review span; remove only separate external tracking metadata. Reject nested,
+  unmatched/overlapping boundaries and competing raw verdicts. Valid separate metadata and the
+  existing malformed-field/non-blocking integration behavior remain supported.
+- R2: initially create/reuse/update only neutral metadata, verify exact head, publish explicitly
+  SHA-bound review/readiness and an observed CI snapshot, then verify again. Movement or an
+  uncertain publication triggers neutral replacement and prevents human-review.json. Existing
+  PR reuse and recovery after a newly reviewed head use the same PR without duplication.
+- Preserved: reviewer allowlist, exact branch/SHA validation, two-round/resume/recovery contracts,
+  YouTrack identity checks, non-blocking outages, historical coordination files and human merge.
+- Focused validation: PASS, 324 passed / 2 Windows skips in 207.51 seconds. Evidence:
+  `temp/pdftr43-r1-r2/focused-verified.log`. Targeted tracking/CLI/recovery validation:
+  90 passed in 6.55 seconds (`targeted.log`). An initial broad run had one Git-inspector
+  subprocess failure; its isolated rerun and the final focused suite passed without changing
+  inspector limits or safety controls.
+- Full `scripts/check.ps1`: PASS, 786 passed / 3 skipped in 242.22 seconds, coverage 89.54%
+  (required 80%). Wiki lint: 15 pages / 133 links, zero errors/warnings. Ruff format/lint and
+  mypy (98 source files): PASS. Evidence: `temp/pdftr43-r1-r2/full-check.log`. Used the existing
+  uv/Python 3.12 workflow with offline resolution and repository-local temporary/cache output.
+- CRG incremental update completed with UTF-8; scoped caller query confirmed the runner boundary.
+  Dynamic method lookup required direct source verification. Reused Graphify's existing runner/
+  tracking context; no pipeline/module architecture or dependency change. Context7 confirmed the
+  [official gh pr edit stdin contract](https://cli.github.com/manual/gh_pr_edit) and
+  [gh pr view metadata interface](https://cli.github.com/manual/gh_pr_view).
+- Live YouTrack/PR APIs and remote CI remain unverified; local tests never imply CI success.
+  If GitHub rejects cleanup or is unavailable during neutralization, reconciliation remains an
+  operator task; integration failure still prevents a handoff and preserves the local cycle verdict.
+- Operational milestones: `.agent-cycle/PDFTR-43/implementer-progress.log`; test evidence under
+  ignored repository-local `temp/pdftr43-r1-r2/`. No manual cycle transition is performed.
+
 ## Ticket
 PDFTR-43 — GitHub PR / ChatGPT Work Integration and YouTrack Agent Ownership
 

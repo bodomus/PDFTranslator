@@ -140,7 +140,9 @@ Optional agent metadata is a separate YouTrack stdout envelope, not a change to 
 review schemas. The runner applies it only after accepting the relevant local result. The reviewer
 keeps its fixed read-only tools. Integration tokens are removed from child environments; generic
 external error messages avoid server-body/credential disclosure. Invalid metadata is isolated from
-an otherwise valid review result. Competing/nested review envelopes cannot be hidden in metadata.
+an otherwise valid review result. The strict review envelope is selected first and never rewritten
+by metadata removal. Nested, overlapping and unmatched intent delimiters, including those inside
+fenced JSON, fail closed; metadata cannot hide competing verdicts.
 Unavailable or partially malformed field schemas skip unsupported definitions; ticket attachments
 and review comments continue independently of custom-field availability.
 
@@ -151,10 +153,14 @@ are attached after accepted handoff. Configuration/audit failures disable integr
 local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
 
 After PASSED, GitHub integration uses the explicit configured repository and head/base. It creates
-or reuses one open PR, checks exact reviewed head before and after metadata updates, and includes
+or reuses one open PR with neutral metadata, checks exact reviewed head, publishes SHA-bound
+readiness/review/CI evidence, checks the head again, and includes
 local validation/report evidence, persisted role/model provenance, warnings and recovery history.
 Exact-head check rollup is classified independently from local validation. A moved head invalidates
-readiness. `human-review.json` records verified SHA, PR/YouTrack URLs, timestamp, CI status and audit
+readiness and triggers remote replacement with neutral metadata. Uncertain readiness updates also
+trigger neutralization. If GitHub is unavailable during cleanup, operator reconciliation is required;
+no human handoff is produced and the local verdict remains unchanged.
+`human-review.json` records verified SHA, PR/YouTrack URLs, timestamp, CI status and audit
 context for independent human/ChatGPT Work review; `github-events.jsonl` records success/failure.
 No Work UI automation or automatic merge is implemented. Passed-cycle resume re-verifies external
 readiness without rerunning agents, including idempotent YouTrack bootstrap/PASS catch-up for legacy passed

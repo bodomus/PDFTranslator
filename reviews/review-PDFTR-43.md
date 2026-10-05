@@ -3,6 +3,16 @@
 This is the implementer's completion summary, not an authoritative automated review verdict.
 The runner/reviewer must bind the final review to the implementation commit independently.
 
+## Independent-review R1/R2 recovery
+- Protected selected review envelopes before external metadata removal, including fenced JSON;
+  nested/overlapping/malformed delimiters and hidden competing verdicts are rejected.
+- Staged PR publication through neutral metadata, exact-head verification, SHA-bound readiness/CI,
+  final verification and neutral replacement after detected movement or uncertain updates.
+- Added deterministic race/parser recovery coverage. Focused/full evidence is recorded in the
+  implementation report. Historical `.agent-cycle` review artifacts remain unchanged.
+- Final validation: focused 324 passed / 2 skipped; full check.ps1 786 passed / 3 skipped,
+  coverage 89.54%. This is local evidence, not a new automated review verdict or remote CI result.
+
 ## Completed scope
 - Harness-owned YouTrack bootstrap, schema-checked current-ticket intents and lifecycle updates.
 - Identity-safe, journaled external mutations and credential-free audit evidence.

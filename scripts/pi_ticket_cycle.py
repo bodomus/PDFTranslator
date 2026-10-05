@@ -41,6 +41,7 @@ from scripts.agent_cycle import (  # noqa: E402
 )
 from scripts.project_tracking import (  # noqa: E402
     INTENT_HELP,
+    TrackingError,
     child_environment,
     review_without_intent,
 )
@@ -1154,7 +1155,7 @@ def run_cycle(
                 document = extract_review_json(
                     review_without_intent(reviewer_result.stdout, ticket)
                 )
-            except RunnerError as error:
+            except (RunnerError, TrackingError) as error:
                 progress.message("review output rejected")
                 _abort(repo_root, ticket, f"reviewer output rejected: {error}")
             review_input = directory / f"reviewer-input-round-{review_round}.json"

@@ -48,6 +48,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- PDFTR-43 recovery: protect the selected review envelope from metadata removal and reject
+  nested/overlapping intent delimiters. Stage GitHub PR publication through neutral metadata,
+  exact-head verification and SHA-bound readiness/CI evidence; revoke claims on detected races.
+
 - Reviewer Git inspection rejects `.git/commondir` entries before any Git subprocess, preventing
   foreign common-directory redirects (PDFTR-40 P1). Linked-worktree/common-directory layouts
   remain unsupported; normal repositories and existing safety guards are unchanged.

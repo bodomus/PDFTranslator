@@ -30,6 +30,9 @@ related:
 
 ## 2026-10-05
 
+- Recorded independent-review R1/R2 recovery: protect selected fenced/raw/sentinel review content
+  and stage SHA-bound PR readiness with remote neutralization after detected head movement.
+
 - Documented PDFTR-43 interrupted-process recovery fixes: custom-field schema failures preserve
   attachments/comments, and metadata cannot hide competing or nested reviewer results.
 

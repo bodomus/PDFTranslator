@@ -23,3 +23,14 @@ No remote calls during tests; no historical backfill; no automatic merge; extern
 - Keep operational milestones in `.agent-cycle/PDFTR-43/implementer-progress.log`, archive the
   existing WIP patch under ignored `temp/pdftr43/`, then commit/push intended ticket files.
 - Exact live YouTrack mappings remain deployment configuration, never a completion prerequisite.
+
+## Human-approved R1/R2 recovery after independent review
+- Start from reviewed SHA `6e09414901cb631b4abe34d77d249ddcdcc38746`; retain the existing branch,
+  implementation, validator, reviewer capabilities and historical coordination artifacts.
+- R1: select the existing strict review envelope before metadata removal; remove only external
+  metadata and reject nested/overlapping/malformed boundaries and hidden competing verdicts.
+- R2: create/update neutral PR metadata, verify exact head, publish SHA-bound readiness/review/CI,
+  reverify and revoke published claims after movement or uncertain publication.
+- Exercise tracking/parser/races plus reviewer/validator/resume regressions, run full check.ps1,
+  update the report and docs, commit/push and preserve a clean working tree. Append only factual
+  milestones to the existing implementer-progress.log; run no cycle transitions.

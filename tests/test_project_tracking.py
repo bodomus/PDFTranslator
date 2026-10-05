@@ -9,7 +9,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from scripts.pi_ticket_cycle import extract_review_json
+from scripts.pi_ticket_cycle import (
+    REVIEW_SENTINEL_BEGIN,
+    REVIEW_SENTINEL_END,
+    RunnerError,
+    extract_review_json,
+)
 from scripts.project_tracking import (
     INTENT_BEGIN,
     INTENT_END,
@@ -314,6 +319,7 @@ class FakeGitHub(GitHub):
         self.sha = SHA
         self.calls: list[tuple[str, ...]] = []
         self.bodies: list[str] = []
+        self.body = ""
         self.pr = {
             "url": "https://github.example/pr/1",
             "headRefOid": SHA,
@@ -328,6 +334,7 @@ class FakeGitHub(GitHub):
         self.calls.append(args)
         if input_text is not None:
             self.bodies.append(input_text)
+            self.body = input_text
         if args[:2] == ("pr", "list"):
             return [{"number": 1}] if self.exists else []
         if args[0] == "api":
@@ -354,7 +361,8 @@ def test_pr_moved_head_fails_closed(tmp_path: Path, exists: bool) -> None:
     gh.pr["headRefOid"] = "b" * 40
     with pytest.raises(IdentityError):
         gh.ensure("ticket-branch", "master", SHA, "title", "body")
-    assert not any(c[:2] == ("pr", "edit") for c in gh.calls)
+    assert "READY FOR HUMAN REVIEW" not in gh.body
+    assert "automated verdict: PASS" not in gh.body
 
 
 def test_human_handoff_and_nonfatal_github_failure(tmp_path: Path) -> None:
@@ -519,7 +527,7 @@ def test_metadata_cannot_hide_competing_review_envelope(envelope: str) -> None:
             + INTENT_END
             + REVIEW_SENTINEL_END
         )
-    with pytest.raises(RunnerError):
+    with pytest.raises((RunnerError, TrackingError)):
         extract_review_json(review_without_intent(stdout, TICKET))
 
 
@@ -845,3 +853,172 @@ def test_duplicate_and_reversed_intents_rejected() -> None:
     for stdout in (duplicate, INTENT_END + INTENT_BEGIN + "{}"):
         with pytest.raises(TrackingError):
             parse_intent(stdout, TICKET, "reviewer")
+
+
+def complete_review() -> str:
+    return json.dumps(
+        {
+            "schema_version": "1.0",
+            "ticket": TICKET,
+            "review_round": 1,
+            "reviewed_sha": SHA,
+            "verdict": "PASS",
+            "findings": [],
+            "blocked_reason": None,
+        }
+    )
+
+
+def test_tracking_metadata_inside_selected_fence_cannot_hide_verdict() -> None:
+    stdout = (
+        "```json\n"
+        + complete_review()[:-1]
+        + INTENT_BEGIN
+        + ',"verdict":"CHANGES_REQUIRED"'
+        + INTENT_END
+        + "}\n```"
+    )
+    with pytest.raises((RunnerError, TrackingError)):
+        extract_review_json(review_without_intent(stdout, TICKET))
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        INTENT_BEGIN + INTENT_BEGIN + "{}" + INTENT_END + INTENT_END,
+        INTENT_END + INTENT_BEGIN + "{}",
+        INTENT_BEGIN + "{}",
+        INTENT_END,
+        INTENT_BEGIN + "{}" + INTENT_END + INTENT_END,
+    ],
+)
+def test_nested_or_malformed_tracking_boundaries_rejected(metadata: str) -> None:
+    stdout = "```json\n" + complete_review() + "\n```" + metadata
+    with pytest.raises((RunnerError, TrackingError)):
+        extract_review_json(review_without_intent(stdout, TICKET))
+
+
+def test_tracking_envelope_overlapping_review_rejected() -> None:
+    stdout = INTENT_BEGIN + "```json\n" + complete_review() + INTENT_END + "\n```"
+    with pytest.raises((RunnerError, TrackingError)):
+        extract_review_json(review_without_intent(stdout, TICKET))
+
+
+@pytest.mark.parametrize("envelope", ["fence", "sentinel", "raw"])
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_separate_tracking_metadata_preserves_complete_review(envelope: str, position: str) -> None:
+    body = complete_review()
+    review = {
+        "fence": "```json\n" + body + "\n```",
+        "sentinel": REVIEW_SENTINEL_BEGIN + body + REVIEW_SENTINEL_END,
+        "raw": body,
+    }[envelope]
+    stdout = intent() + "\n" + review if position == "before" else review + "\n" + intent()
+    assert extract_review_json(review_without_intent(stdout, TICKET)) == json.loads(body)
+    assert parse_intent(stdout, TICKET, "reviewer") is not None
+
+
+def test_raw_competing_review_inside_tracking_metadata_rejected() -> None:
+    competing = json.loads(complete_review())
+    competing["verdict"] = "CHANGES_REQUIRED"
+    stdout = (
+        REVIEW_SENTINEL_BEGIN
+        + complete_review()
+        + REVIEW_SENTINEL_END
+        + INTENT_BEGIN
+        + json.dumps(competing)
+        + INTENT_END
+    )
+    with pytest.raises((RunnerError, TrackingError)):
+        extract_review_json(review_without_intent(stdout, TICKET))
+
+
+class RacingGitHub(FakeGitHub):
+    def __init__(self, root: Path, phase: str) -> None:
+        super().__init__(root, exists=phase != "create")
+        self.phase = phase
+
+    def command(self, *args: str, input_text: str | None = None) -> Any:
+        result = super().command(*args, input_text=input_text)
+        if self.phase == "create" and args[:2] == ("pr", "create"):
+            self.pr["headRefOid"] = "b" * 40
+        if args[:2] == ("pr", "edit"):
+            ready = "READY FOR HUMAN REVIEW" in (input_text or "")
+            if self.phase == "neutral" and not ready or self.phase == "ready" and ready:
+                self.pr["headRefOid"] = "b" * 40
+        return result
+
+
+def passed_tracking(root: Path, gh: FakeGitHub) -> ProjectTracking:
+    tracking = tracker(root, FakeYouTrack(), github=gh)
+    tracking.directory.mkdir(parents=True)
+    (tracking.directory / "handoff.json").write_text(
+        json.dumps({"implementer": {"focused_tests": "PASS", "full_tests": "PASS"}})
+    )
+    return tracking
+
+
+@pytest.mark.parametrize("phase", ["create", "neutral", "ready"])
+def test_pr_races_leave_remote_neutral_and_revoke_local_readiness(
+    tmp_path: Path, phase: str
+) -> None:
+    gh = RacingGitHub(tmp_path, phase)
+    gh.body = "READY FOR HUMAN REVIEW; automated verdict: PASS; CI: passed"
+    tracking = passed_tracking(tmp_path, gh)
+    output = tracking.directory / "human-review.json"
+    output.write_text('{"stale":true}')
+    tracking.passed(manifest(), None)
+    assert "READY FOR HUMAN REVIEW" not in gh.body
+    assert "PASS" not in gh.body
+    assert "CI: passed" not in gh.body
+    assert not output.exists()
+    assert tracking.data["warnings"]
+    if phase == "ready":
+        assert any("READY FOR HUMAN REVIEW" in body for body in gh.bodies[:-1])
+
+
+def test_stable_pr_stages_readiness_and_binds_ci_to_observed_sha(tmp_path: Path) -> None:
+    gh = FakeGitHub(tmp_path)
+    gh.pr["statusCheckRollup"] = [{"conclusion": "SUCCESS"}]
+    tracking = passed_tracking(tmp_path, gh)
+    tracking.passed(manifest(), None)
+    assert "READY FOR HUMAN REVIEW" not in gh.bodies[0]
+    assert "PASS" not in gh.bodies[0]
+    assert f"READY FOR HUMAN REVIEW for reviewed SHA {SHA}" in gh.body
+    assert f"Automated review for reviewed SHA {SHA}: PASS" in gh.body
+    assert f"CI snapshot for observed head SHA {SHA}: passed" in gh.body
+    output = json.loads((tracking.directory / "human-review.json").read_text())
+    assert output["head_sha"] == SHA and output["ci_status"] == "passed"
+    tracking.passed(manifest(), None)
+    assert sum(c[:2] == ("pr", "create") for c in gh.calls) == 1
+
+
+def test_stale_pr_recovers_only_after_new_sha_is_reviewed(tmp_path: Path) -> None:
+    gh = RacingGitHub(tmp_path, "ready")
+    tracking = passed_tracking(tmp_path, gh)
+    tracking.passed(manifest(), None)
+    assert "READY FOR HUMAN REVIEW" not in gh.body
+    gh.phase = "stable"
+    newly_reviewed = manifest()
+    newly_reviewed["current_head_sha"] = "b" * 40
+    tracking.passed(newly_reviewed, None)
+    assert "READY FOR HUMAN REVIEW for reviewed SHA " + "b" * 40 in gh.body
+    output = json.loads((tracking.directory / "human-review.json").read_text())
+    assert output["head_sha"] == "b" * 40
+    assert not any(c[:2] == ("pr", "create") for c in gh.calls)
+
+
+def test_uncertain_readiness_write_is_neutralized_without_handoff(tmp_path: Path) -> None:
+    class LostResponse(FakeGitHub):
+        def command(self, *args: str, input_text: str | None = None) -> Any:
+            result = super().command(*args, input_text=input_text)
+            if args[:2] == ("pr", "edit") and "READY FOR HUMAN REVIEW" in (input_text or ""):
+                raise TrackingError("response lost after remote publication")
+            return result
+
+    gh = LostResponse(tmp_path, True)
+    tracking = passed_tracking(tmp_path, gh)
+    tracking.passed(manifest(), None)
+    assert "READY FOR HUMAN REVIEW" not in gh.body and "PASS" not in gh.body
+    assert not (tracking.directory / "human-review.json").exists()
+    assert tracking.data["warnings"]

@@ -99,26 +99,74 @@ def parse_intent(stdout: str, ticket: str, role: str) -> dict[str, Any] | None:
 
 
 def review_without_intent(stdout: str, ticket: str) -> str:
-    """Strip bounded metadata without hiding competing review envelopes.
-
-    Lifecycle validates intent cardinality/schema separately. Unmatched delimiters
-    remain visible to the strict review parser because their boundaries are ambiguous.
-    """
-
-    def strip(match: re.Match[str]) -> str:
-        body = match.group(0)
-        before = stdout[: match.start()]
-        review_begin = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
-        review_end = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
-        if any(marker in body for marker in (review_begin, review_end, "```")) or before.count(
-            review_begin
-        ) != before.count(review_end):
-            return body
-        return ""
-
-    return re.sub(
-        re.escape(INTENT_BEGIN) + r".*?" + re.escape(INTENT_END), strip, stdout, flags=re.S
+    """Select the strict review envelope before removing separate external metadata."""
+    # Runtime import reuses the runner's exact grammar without an import-time cycle.
+    from scripts.pi_ticket_cycle import (
+        _JSON_FENCE,
+        REVIEW_SENTINEL_BEGIN,
+        REVIEW_SENTINEL_END,
+        RunnerError,
+        _single_envelope,
     )
+
+    try:
+        _single_envelope(stdout)  # Reject ambiguous review envelopes before any stripping.
+    except RunnerError as error:
+        # A CLI launched as __main__ has a distinct RunnerError class. Keep errors
+        # in this adapter's type so both CLI and imported runner handle them identically.
+        raise TrackingError(str(error)) from error
+    protected: tuple[int, int] | None = None
+    if REVIEW_SENTINEL_BEGIN in stdout:
+        protected = (
+            stdout.index(REVIEW_SENTINEL_BEGIN),
+            stdout.index(REVIEW_SENTINEL_END) + len(REVIEW_SENTINEL_END),
+        )
+    elif match := _JSON_FENCE.search(stdout):
+        protected = match.span()
+
+    spans: list[tuple[int, int]] = []
+    opened: int | None = None
+    for marker in re.finditer(re.escape(INTENT_BEGIN) + "|" + re.escape(INTENT_END), stdout):
+        if marker.group() == INTENT_BEGIN:
+            if opened is not None:
+                raise TrackingError("nested tracking metadata delimiters")
+            opened = marker.start()
+        else:
+            if opened is None:
+                raise TrackingError("unmatched tracking metadata delimiter")
+            spans.append((opened, marker.end()))
+            opened = None
+    if opened is not None:
+        raise TrackingError("unmatched tracking metadata delimiter")
+    if not spans:
+        return stdout
+
+    if protected is None:
+        # Whole-stdout JSON also has a protected span. Skip leading external metadata
+        # without rewriting stdout, then decode the first complete review object.
+        offset = 0
+        for start, end in spans:
+            if stdout[offset:start].strip():
+                break
+            offset = end
+        offset += len(stdout[offset:]) - len(stdout[offset:].lstrip())
+        try:
+            _, end = json.JSONDecoder().raw_decode(stdout, offset)
+        except ValueError as error:
+            raise TrackingError("invalid raw review before metadata stripping") from error
+        protected = (offset, end)
+
+    for start, end in spans:
+        if start < protected[1] and end > protected[0]:
+            raise TrackingError("tracking metadata overlaps the selected review envelope")
+        metadata = stdout[start + len(INTENT_BEGIN) : end - len(INTENT_END)]
+        # Invalid metadata remains non-blocking, but it must never hide a raw review.
+        if re.search(r'"verdict"\s*:', metadata):
+            raise TrackingError("tracking metadata contains a competing review verdict")
+
+    for start, end in reversed(spans):
+        stdout = stdout[:start] + stdout[end:]
+    return stdout
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -199,6 +247,11 @@ class GitHub:
             raise TrackingError("GitHub unavailable") from None
 
     def ensure(self, branch: str, base: str, sha: str, title: str, body: str) -> dict[str, Any]:
+        neutral = (
+            f"Expected reviewed SHA: {sha}\n"
+            "Readiness: unavailable; exact PR head verification is required.\n"
+            "Merge remains human-owned."
+        )
         prs = self.command(
             "pr",
             "list",
@@ -216,7 +269,7 @@ class GitHub:
         if len(prs) > 1:
             raise IdentityError("ambiguous PR identity")
         if not prs:
-            # Head verification precedes creation, so an unreviewed branch is never advertised.
+            # Creation publishes no verdict/readiness even if the branch moves after this read.
             remote = self.command(
                 "api", f"repos/{self.repository}/commits/{quote(branch, safe='')}"
             )
@@ -235,7 +288,7 @@ class GitHub:
                 title,
                 "--body-file",
                 "-",
-                input_text=body,
+                input_text=neutral,
             )
             prs = self.command(
                 "pr",
@@ -267,35 +320,58 @@ class GitHub:
                 "headRepository,headRepositoryOwner",
             )
 
-        pr = view()
         owner, repository = self.repository.split("/", 1)
-        if (
-            pr.get("headRepositoryOwner", {}).get("login") != owner
-            or pr.get("headRepository", {}).get("name") != repository
-        ):
-            raise IdentityError("PR head repository differs from configured repository")
-        if (pr["headRefOid"], pr["headRefName"], pr["baseRefName"]) != (sha, branch, base):
-            raise IdentityError("PR head/base differs from reviewed implementation")
-        self.command(
-            "pr",
-            "edit",
-            number,
-            "--repo",
-            self.repository,
-            "--title",
-            title,
-            "--body-file",
-            "-",
-            input_text=body + "\nExact-head CI snapshot: " + ci_status(pr.get("statusCheckRollup")),
-        )
-        pr = view()
-        if (
-            (pr["headRefOid"], pr["headRefName"], pr["baseRefName"]) != (sha, branch, base)
-            or pr.get("headRepositoryOwner", {}).get("login") != owner
-            or pr.get("headRepository", {}).get("name") != repository
-        ):
-            raise IdentityError("PR head/base/repository moved during update")
-        return pr
+
+        def verify(pr: dict[str, Any], *, exact_head: bool = True) -> None:
+            if (
+                pr.get("headRepositoryOwner", {}).get("login") != owner
+                or pr.get("headRepository", {}).get("name") != repository
+                or (pr["headRefName"], pr["baseRefName"]) != (branch, base)
+            ):
+                raise IdentityError("PR branch/base/repository differs from configured identity")
+            if exact_head and pr["headRefOid"] != sha:
+                raise IdentityError("PR head differs from reviewed implementation")
+
+        def publish(metadata: str) -> None:
+            self.command(
+                "pr",
+                "edit",
+                number,
+                "--repo",
+                self.repository,
+                "--title",
+                title,
+                "--body-file",
+                "-",
+                input_text=metadata,
+            )
+
+        # Verify mutation identity separately: a moved SHA may be neutralized, but a
+        # different head repository/branch/base must never gain mutation permission.
+        verify(view(), exact_head=False)
+        try:
+            publish(neutral)
+            pr = view()
+            verify(pr)
+            readiness = "\n".join(
+                [
+                    f"All review/validation evidence below applies to reviewed SHA {sha}.",
+                    body,
+                    f"Automated review for reviewed SHA {sha}: PASS",
+                    f"READY FOR HUMAN REVIEW for reviewed SHA {sha}.",
+                    f"CI snapshot for observed head SHA {sha}: "
+                    + ci_status(pr.get("statusCheckRollup")),
+                    "CI observed at: " + datetime.now(UTC).isoformat(),
+                ]
+            )
+            publish(readiness)
+            pr = view()
+            verify(pr)
+            return pr
+        except Exception:
+            # Includes ambiguous edit/response failures: revoke possibly applied claims.
+            publish(neutral)
+            raise
 
 
 def ci_status(checks: list[dict[str, Any]] | None) -> str:
@@ -820,15 +896,15 @@ class ProjectTracking:
                     f"Branch/base: {manifest['branch']} / {base}",
                     f"Implementer: {implementer['provider']} / {implementer['model']}",
                     f"Reviewer: {reviewer['provider']} / {reviewer['model']}",
-                    f"Review rounds: {manifest['review_round']}; automated verdict: PASS",
-                    "Validation evidence (local, NOT CI):\n```json\n"
+                    f"Review rounds: {manifest['review_round']}",
+                    f"Validation evidence for reviewed SHA {sha} (local, NOT CI):\n```json\n"
                     + json.dumps(handoff["implementer"], indent=2)
                     + "\n```",
                     "Warnings: " + json.dumps(self.data["warnings"]),
                     "Human recovery history: " + json.dumps(manifest.get("human_recoveries", [])),
-                    "CI: inspect exact-head checks on this PR; "
+                    f"CI evidence must match reviewed SHA {sha}; "
                     "local checks do not imply CI success.",
-                    "READY FOR HUMAN REVIEW. Merge remains human-owned.",
+                    "Merge remains human-owned.",
                     report_evidence,
                 ]
             )

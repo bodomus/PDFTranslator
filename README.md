@@ -92,9 +92,10 @@ stdout envelope containing exactly `ticket`, `role`, `summary`, `proposed_fields
 Proposed fields permit only string-valued `assignee`, `estimation`, `due_date`, `type`, `priority`.
 The harness supplies state and exact SHA, validates the current ticket/role, and applies updates.
 Reviewer tools remain read-only; malformed metadata does not change a valid review verdict.
-Complete bounded metadata is validated separately; competing or nested review envelopes still
-fail closed. Unavailable or partially malformed project schemas skip unsupported fields while
-safe ticket attachments and review comments continue.
+The strict review envelope is selected before metadata removal. Only separate external metadata
+may be removed; nested, overlapping or unmatched intent delimiters and competing verdicts fail
+closed, including those inside fenced review JSON. Unavailable or partially malformed project
+schemas skip unsupported fields while safe ticket attachments and review comments continue.
 
 Ignored runtime artifacts include `youtrack.json`, `youtrack-events.jsonl`, `github-events.jsonl`,
 and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent is journaled before
@@ -104,14 +105,18 @@ Already applied fields/comments are not repeated on resume. Warnings are passed 
 the completion comment includes local validation and the implementation report is attached.
 An existing committed `reviews/review-<TICKET>.md` completion summary is attached after PASS.
 
-After `PASSED`, the runner creates or reuses a PR and verifies its head against the reviewed SHA
-before and after updating metadata. A moved head prevents the human-review artifact; an external
-failure leaves the local cycle `PASSED` with a warning. The PR includes role/model provenance,
+After `PASSED`, the runner creates or reuses a PR with neutral metadata, verifies its head against
+the reviewed SHA, publishes SHA-bound review/readiness/CI evidence, and verifies the head again.
+Detected movement or an uncertain readiness update triggers replacement with neutral metadata.
+A moved head prevents the human-review artifact; an external failure leaves the local cycle
+`PASSED` with a warning. The PR includes role/model provenance,
 validation evidence, warnings and human recovery history. Exact-head checks are represented as
 `pending`, `passed`, `failed` or `unavailable` in `human-review.json`; local `check.ps1` is never CI
 evidence. Rerunning a passed cycle safely catches up YouTrack bootstrap/PASS synchronization
 and refreshes PR/check evidence without rerunning agents.
 Give the PR URL and this deterministic handoff to a human or ChatGPT Work for independent review.
+If GitHub is unavailable during neutralization, remote cleanup requires operator reconciliation;
+the failed integration still produces no handoff and does not change the local cycle verdict.
 No browser automation, historical backfill, automatic merge, or automatic merged-event polling is
 implemented. Human review and merge remain human-owned.
 
