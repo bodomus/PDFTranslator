@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -137,6 +138,42 @@ def _state(repo: Path) -> str:
 
 def _provider(command: Sequence[str]) -> str:
     return command[command.index("--provider") + 1]
+
+
+def test_tracking_hooks_sequence_and_passed_resume(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Hooks:
+        data = {"warnings": []}
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            events.append("initialize")
+
+        def call(self, action: str, *args: object) -> None:
+            label = str(args[0]) if action == "lifecycle" else action
+            events.append(label)
+
+    monkeypatch.setattr(pi_runner, "TrackingHooks", Hooks)
+    executor = FakePi(git_repo)
+    outcome = run_cycle(git_repo, TICKET, executor=executor, config=_config())
+    assert outcome.passed
+    assert events == [
+        "initialize",
+        "bootstrap",
+        "role_metadata",
+        "start",
+        "handoff",
+        "role_metadata",
+        "PASS",
+        "passed",
+    ]
+    events.clear()
+    run_cycle(git_repo, TICKET, executor=executor, config=_config())
+    assert events == ["initialize", "bootstrap", "PASS", "passed"]
+    assert executor.implementer_runs == executor.reviewer_runs == 1
 
 
 def _model(command: Sequence[str]) -> str:
@@ -1276,6 +1313,28 @@ def test_duplicate_verdict_output_stops_cycle(git_repo: Path) -> None:
     with pytest.raises(RunnerError, match="reviewer output rejected"):
         _run(git_repo, fake)
 
+    assert _state(git_repo) == "STOPPED"
+    assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
+
+
+@pytest.mark.parametrize("standalone", [False, True])
+def test_nested_tracking_verdict_stops_cycle_in_imported_and_cli_module(
+    git_repo: Path, standalone: bool
+) -> None:
+    from scripts.project_tracking import INTENT_BEGIN, INTENT_END
+
+    runner = (
+        runpy.run_path(str(pi_runner.__file__), run_name="standalone_runner_regression")
+        if standalone
+        else vars(pi_runner)
+    )
+    fake = FakePi(git_repo)
+    body = json.dumps(_valid_review())[:-1]
+    fake.reviewer_stdout_override = (
+        "```json\n" + body + INTENT_BEGIN + ',"verdict":"CHANGES_REQUIRED"' + INTENT_END + "}\n```"
+    )
+    with pytest.raises(runner["RunnerError"], match="reviewer output rejected"):
+        runner["run_cycle"](git_repo, TICKET, executor=fake, config=_config())
     assert _state(git_repo) == "STOPPED"
     assert not (cycle_directory(git_repo, TICKET) / "review-1.json").exists()
 

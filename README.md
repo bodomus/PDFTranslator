@@ -70,6 +70,56 @@ See [the two-agent workflow skill](.agents/skills/two-agent-ticket-workflow/SKIL
 recovery contracts. The tool records workflow state only; it does not launch agents, fetch, merge,
 or create pull requests. PDFTR-33 itself is the one explicitly authorized bootstrap exception.
 
+### External tracking and human review (PDFTR-43)
+
+`project-tracking.toml` controls the harness-owned YouTrack and GitHub adapters. Before launching
+an implementer, the runner reads the exact ticket Markdown, discovers or creates its YouTrack issue,
+verifies ticket/project/account identity, synchronizes summary/body, and attaches the definition.
+Configure `YOUTRACK_URL` (HTTPS) and `YOUTRACK_TOKEN` securely in the runner environment; configure
+`expected_login` for the authorized account. Tokens are excluded from child environments and audit
+logs. For GitHub, install/authenticate `gh`; the repository and base branch are explicit config.
+Disable either integration with `enabled = false` / `create_pr_on_pass = false`.
+
+Project field names and lifecycle state values are configurable, but mutations use inspected schema
+and existing bundle values, not guessed IDs. Assignee defaults to `bodomus`; coarse Markdown-scope
+estimation is 1 or 3 days with a conservative future due date, overridable under `[youtrack.defaults]`.
+Unknown fields, unsupported values, API failures and unavailable credentials generate warnings,
+not a failed implementation/review. Identity mismatch prevents further YouTrack mutations.
+Historical PDFTR-38…PDFTR-42 placeholders are excluded from automatic synchronization.
+
+Agents may optionally emit a separate `<<<YOUTRACK_UPDATE_JSON>>>` / `<<<END_YOUTRACK_UPDATE_JSON>>>`
+stdout envelope containing exactly `ticket`, `role`, `summary`, `proposed_fields`, and `comment`.
+Proposed fields permit only string-valued `assignee`, `estimation`, `due_date`, `type`, `priority`.
+The harness supplies state and exact SHA, validates the current ticket/role, and applies updates.
+Reviewer tools remain read-only; malformed metadata does not change a valid review verdict.
+The strict review envelope is selected before metadata removal. Only separate external metadata
+may be removed; nested, overlapping or unmatched intent delimiters and competing verdicts fail
+closed, including those inside fenced review JSON. Unavailable or partially malformed project
+schemas skip unsupported fields while safe ticket attachments and review comments continue.
+
+Ignored runtime artifacts include `youtrack.json`, `youtrack-events.jsonl`, `github-events.jsonl`,
+and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent is journaled before
+mutation: an uncertain create is recovered by exact-key discovery, never by blind re-creation;
+uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.
+Already applied fields/comments are not repeated on resume. Warnings are passed to agent reports;
+the completion comment includes local validation and the implementation report is attached.
+An existing committed `reviews/review-<TICKET>.md` completion summary is attached after PASS.
+
+After `PASSED`, the runner creates or reuses a PR with neutral metadata, verifies its head against
+the reviewed SHA, publishes SHA-bound review/readiness/CI evidence, and verifies the head again.
+Detected movement or an uncertain readiness update triggers replacement with neutral metadata.
+A moved head prevents the human-review artifact; an external failure leaves the local cycle
+`PASSED` with a warning. The PR includes role/model provenance,
+validation evidence, warnings and human recovery history. Exact-head checks are represented as
+`pending`, `passed`, `failed` or `unavailable` in `human-review.json`; local `check.ps1` is never CI
+evidence. Rerunning a passed cycle safely catches up YouTrack bootstrap/PASS synchronization
+and refreshes PR/check evidence without rerunning agents.
+Give the PR URL and this deterministic handoff to a human or ChatGPT Work for independent review.
+If GitHub is unavailable during neutralization, remote cleanup requires operator reconciliation;
+the failed integration still produces no handoff and does not change the local cycle verdict.
+No browser automation, historical backfill, automatic merge, or automatic merged-event polling is
+implemented. Human review and merge remain human-owned.
+
 ### One-command Pi runner
 
 `scripts/pi_ticket_cycle.py` automates the same sequence without changing the validator's
@@ -94,13 +144,14 @@ executable, cancellation, malformed/ambiguous/wrong-SHA output, or any post-spaw
 Windows child is created suspended and joined to its Job Object before it can run, and a Job Object
 (Windows) or process group (POSIX) guarantees no Pi descendant survives the runner, on success or
 failure. Ticket files match the exact ID boundary, so `PDFTR-35` never selects `PDFTR-35A`. It never
-creates a pull request or merges. Provider, model, and tool names are configuration;
+merges. After `PASSED`, the configured harness integration creates/reuses a PR.
+Provider, model, and tool names are configuration;
 `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi, providers, or the
 network.
 
 Rerun the same command to resume `READY_FOR_REVIEW` or `READY_FOR_REVIEW_2` directly with
 its exact-SHA reviewer, or `CHANGES_REQUIRED` with the next implementation attempt and previous
-findings. `PASSED` only reports completion; `BLOCKED`, `STOPPED`, and active `IMPLEMENTING` /
+findings. `PASSED` reruns only external synchronization/PR verification, never agents; `BLOCKED`, `STOPPED`, and active `IMPLEMENTING` /
 `REVIEWING` states fail closed without launching a child. Active phases require human inspection;
 the runner does not guess whether another process is still running.
 

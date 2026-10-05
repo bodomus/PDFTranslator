@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Harness-owned YouTrack bootstrap, schema-checked agent update intents, lifecycle synchronization,
+  idempotency journals and credential-free audit artifacts (PDFTR-43). After `PASSED`, configured
+  GitHub PR creation/reuse verifies the exact reviewed head SHA, records real check status, and
+  emits a deterministic human/ChatGPT Work handoff. External failures warn without changing local
+  verdicts; historical placeholders are excluded and merge remains human-owned.
+
 - Resumable Pi ticket cycles (PDFTR-42): idle review and rework states dispatch directly to the
   required role; passed cycles report completion without rerunning agents. Explicit human recovery
   authorizes one further SHA-bound implementation/review pair after exhausted reviews, retaining
@@ -41,6 +47,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   translation providers and existing artifact schemas remain unchanged (PDFTR-39).
 
 ### Fixed
+
+- PDFTR-43 recovery: protect the selected review envelope from metadata removal and reject
+  nested/overlapping intent delimiters. Stage GitHub PR publication through neutral metadata,
+  exact-head verification and SHA-bound readiness/CI evidence; revoke claims on detected races.
 
 - Reviewer Git inspection rejects `.git/commondir` entries before any Git subprocess, preventing
   foreign common-directory redirects (PDFTR-40 P1). Linked-worktree/common-directory layouts
