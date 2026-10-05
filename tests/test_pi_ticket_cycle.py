@@ -139,6 +139,42 @@ def _provider(command: Sequence[str]) -> str:
     return command[command.index("--provider") + 1]
 
 
+def test_tracking_hooks_sequence_and_passed_resume(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Hooks:
+        data = {"warnings": []}
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            events.append("initialize")
+
+        def call(self, action: str, *args: object) -> None:
+            label = str(args[0]) if action == "lifecycle" else action
+            events.append(label)
+
+    monkeypatch.setattr(pi_runner, "TrackingHooks", Hooks)
+    executor = FakePi(git_repo)
+    outcome = run_cycle(git_repo, TICKET, executor=executor, config=_config())
+    assert outcome.passed
+    assert events == [
+        "initialize",
+        "bootstrap",
+        "role_metadata",
+        "start",
+        "handoff",
+        "role_metadata",
+        "PASS",
+        "passed",
+    ]
+    events.clear()
+    run_cycle(git_repo, TICKET, executor=executor, config=_config())
+    assert events == ["initialize", "bootstrap", "PASS", "passed"]
+    assert executor.implementer_runs == executor.reviewer_runs == 1
+
+
 def _model(command: Sequence[str]) -> str:
     return command[command.index("--model") + 1]
 

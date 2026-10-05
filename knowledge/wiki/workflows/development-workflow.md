@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-04
+updated: 2026-10-05
 tags:
 - development
 - tickets
@@ -14,6 +14,10 @@ sources:
 - ../../../scripts/check.ps1
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
+- ../../../scripts/project_tracking.py
+- ../../../scripts/tracking_hooks.py
+- ../../../project-tracking.toml
+- ../../../tests/test_project_tracking.py
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
@@ -89,7 +93,7 @@ The validator requires the recorded branch, clean tree, unchanged HEAD and repos
 `HUMAN_APPROVED_REWORK` plus strict `human_recoveries` audit entries retain approval reason,
 prior stop reason, SHA, round, next attempt and previous handoff. Review numbering is cumulative;
 old reviews and numbered implementation snapshots are immutable. MAX_REVIEW_ROUNDS remains two;
-a recovery changes-required verdict stops again. `PASSED` only reports completion; other terminal
+a recovery changes-required verdict stops again. `PASSED` reruns only configured external synchronization/PR verification; other terminal
 and active-role states never auto-resume. Approval is a human/operator action, not agent authority.
 
 The runner reports lifecycle boundaries and authoritative handoff/review results with flushed
@@ -122,6 +126,39 @@ config; pytest-cov 6 would otherwise create statement-only data alongside the pa
 data. The module's real child/grandchild diagnostic verifies isolation and unchanged parent
 measurement. This test-only exception preserves branch coverage policy and coverage for real
 package subprocesses in other test modules.
+
+## External tracking and human handoff
+
+The runner invokes `TrackingHooks` after safe local preflight. `ProjectTracking` bootstraps the
+exact Markdown ticket before implementer execution; its narrow YouTrack REST adapter verifies
+key/project/configured account before mutations, reads project field cardinality/value bundles,
+and uploads the ticket definition. Only configured schema-valid fields and lifecycle states are
+applied. Unsupported fields and outages generate agent-visible warnings without changing verdicts.
+Historical PDFTR-38…PDFTR-42 placeholders are excluded.
+
+Optional agent metadata is a separate YouTrack stdout envelope, not a change to strict handoff or
+review schemas. The runner applies it only after accepting the relevant local result. The reviewer
+keeps its fixed read-only tools. Integration tokens are removed from child environments; generic
+external error messages avoid server-body/credential disclosure. Invalid metadata is isolated from
+an otherwise valid review result. Competing/nested review envelopes cannot be hidden in metadata.
+Unavailable or partially malformed field schemas skip unsupported definitions; ticket attachments
+and review comments continue independently of custom-field availability.
+
+Runtime `youtrack.json` and JSONL events preserve identities, mutation keys, SHA, action and status.
+Mutations are journaled before sending: ambiguous create outcomes use discovery only on resume,
+while uncertain comment/attachment mutations require human reconciliation. Implementation reports
+are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
+local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
+
+After PASSED, GitHub integration uses the explicit configured repository and head/base. It creates
+or reuses one open PR, checks exact reviewed head before and after metadata updates, and includes
+local validation/report evidence, persisted role/model provenance, warnings and recovery history.
+Exact-head check rollup is classified independently from local validation. A moved head invalidates
+readiness. `human-review.json` records verified SHA, PR/YouTrack URLs, timestamp, CI status and audit
+context for independent human/ChatGPT Work review; `github-events.jsonl` records success/failure.
+No Work UI automation or automatic merge is implemented. Passed-cycle resume re-verifies external
+readiness without rerunning agents, including idempotent YouTrack bootstrap/PASS catch-up for legacy passed
+cycles. Existing committed completion summaries under `reviews/` are attached after PASS.
 
 ## Completion
 

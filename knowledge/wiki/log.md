@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-04
+updated: 2026-10-05
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-43-github-pr-chatgpt-work-youtrack.md
 - ../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../Tickets/PDFTR-41.md
 - ../../Tickets/PDFTR-40.md
@@ -27,7 +28,15 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-05
+
+- Documented PDFTR-43 interrupted-process recovery fixes: custom-field schema failures preserve
+  attachments/comments, and metadata cannot hide competing or nested reviewer results.
+
 ## 2026-10-04
+
+- Documented harness-owned YouTrack bootstrap/intents/audit and exact-SHA GitHub PR plus independent
+  CI/human handoff, preserving read-only review, non-blocking integrations and human merge (PDFTR-43).
 
 - Documented state-dispatched Pi resume and explicit one-pair human recovery, cumulative immutable
   review/implementation artifacts, audit metadata and unchanged two-round automatic limit (PDFTR-42).

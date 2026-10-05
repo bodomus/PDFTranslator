@@ -39,6 +39,12 @@ from scripts.agent_cycle import (  # noqa: E402
     stop_cycle,
     validate_ticket_id,
 )
+from scripts.project_tracking import (  # noqa: E402
+    INTENT_HELP,
+    child_environment,
+    review_without_intent,
+)
+from scripts.tracking_hooks import TrackingHooks  # noqa: E402
 
 REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
 REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
@@ -548,6 +554,7 @@ class SubprocessExecutor:
             encoding="utf-8",
             errors="replace",
             shell=False,
+            env=child_environment(),
             **_group_popen_kwargs(),
         )
         try:
@@ -1016,7 +1023,11 @@ def run_cycle(
         raise RunnerError(
             "cycle preflight failed: " + "; ".join(status["errors"]) + "; " + diagnostic
         )
+    tracking = TrackingHooks(repo_root, ticket, ticket_text, warn=progress.message)
     if status["state"] == "PASSED":
+        tracking.call("bootstrap", manifest)
+        tracking.call("lifecycle", "PASS", manifest, "reviewer")
+        tracking.call("passed", manifest, active_config)
         return _outcome(manifest, active_config)
     if status["state"] not in {
         "NEW",
@@ -1028,6 +1039,7 @@ def run_cycle(
         raise RunnerError(diagnostic)
     executor.ensure_available()
     progress.message(f"cycle ready: {status['state']}")
+    tracking.call("bootstrap", manifest)
 
     try:
         while True:
@@ -1035,6 +1047,8 @@ def run_cycle(
             if manifest["state"] in {"NEW", "CHANGES_REQUIRED", "HUMAN_APPROVED_REWORK"}:
                 begin_implementation(repo_root, ticket)
                 manifest = _read_manifest(repo_root, ticket)
+                tracking.call("role_metadata", "implementer", active_config.implementer)
+                tracking.call("lifecycle", "start", manifest)
                 attempt = manifest["review_round"] + 1
                 findings = _load_findings(repo_root, ticket, manifest["review_round"])
                 # Do not accept an input left over from an earlier attempt.
@@ -1065,7 +1079,10 @@ def run_cycle(
                     repo_root=repo_root,
                     ticket=ticket,
                     log_path=directory / f"pi-implementer-round-{attempt}.log",
-                    stdin_text=implementer_prompt,
+                    stdin_text=implementer_prompt
+                    + INTENT_HELP
+                    + "\nInclude integration warnings in your report: "
+                    + json.dumps(tracking.data["warnings"]),
                     heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
                 )
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
@@ -1082,6 +1099,13 @@ def run_cycle(
                 except RunnerError:
                     progress.message("handoff rejected")
                     raise
+                tracking.call(
+                    "lifecycle",
+                    "handoff",
+                    _read_manifest(repo_root, ticket),
+                    "implementer",
+                    implementer_result.stdout,
+                )
 
             manifest = _read_manifest(repo_root, ticket)
             reviewed_sha = manifest["current_head_sha"]
@@ -1090,6 +1114,7 @@ def run_cycle(
             manifest = _read_manifest(repo_root, ticket)
             review_round = manifest["review_round"]
 
+            tracking.call("role_metadata", "reviewer", active_config.reviewer)
             reviewer_prompt = _reviewer_prompt(
                 ticket=ticket,
                 ticket_text=ticket_text,
@@ -1110,7 +1135,10 @@ def run_cycle(
                 repo_root=repo_root,
                 ticket=ticket,
                 log_path=directory / f"pi-reviewer-round-{review_round}.log",
-                stdin_text=reviewer_prompt,
+                stdin_text=reviewer_prompt
+                + INTENT_HELP
+                + "\nIntegration evidence: "
+                + json.dumps(tracking.data["warnings"]),
                 heartbeat=lambda elapsed: progress.heartbeat("reviewer", elapsed),
             )
             progress.message(f"reviewer finished: exit {reviewer_result.returncode}")
@@ -1123,7 +1151,9 @@ def run_cycle(
 
             progress.message(f"validating review round {review_round}...")
             try:
-                document = extract_review_json(reviewer_result.stdout)
+                document = extract_review_json(
+                    review_without_intent(reviewer_result.stdout, ticket)
+                )
             except RunnerError as error:
                 progress.message("review output rejected")
                 _abort(repo_root, ticket, f"reviewer output rejected: {error}")
@@ -1138,9 +1168,13 @@ def run_cycle(
                 progress.message("review validation rejected")
                 _abort(repo_root, ticket, f"review validation failed: {error}")
             progress.message(f"review round {review_round}: {document['verdict']}")
+            tracking.call(
+                "lifecycle", document["verdict"], manifest, "reviewer", reviewer_result.stdout
+            )
 
             if manifest["state"] == "CHANGES_REQUIRED":
                 continue
+            tracking.call("passed", manifest, active_config)
             return _outcome(manifest, active_config)
     except KeyboardInterrupt:
         _abort(repo_root, ticket, "cancelled by user")

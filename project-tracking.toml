@@ -1,0 +1,23 @@
+# Credentials: YOUTRACK_URL (HTTPS), YOUTRACK_TOKEN; gh authenticated configuration.
+[youtrack]
+enabled = true
+project = "PDFTR"
+assignee = "bodomus"
+expected_login = "bodomus"
+
+# Schema names may be overridden; unavailable values produce non-blocking warnings.
+[youtrack.fields]
+due_date = "Due Date"
+
+[youtrack.states]
+start = "In Progress"
+handoff = "Ready for Review"
+CHANGES_REQUIRED = "In Progress"
+PASS = "Ready for Human Review"
+merged = "Done"
+
+[github]
+base_branch = "master"
+create_pr_on_pass = true
+repository = "bodomus/PDFTranslator"
+# Repository is explicit; no target is inferred from an untrusted remote URL.
