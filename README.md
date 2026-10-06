@@ -187,6 +187,8 @@ auth headers, OAuth codes, environment dumps or secret-bearing URLs. Summarize e
 the tool additionally rejects common credential patterns, all HTTP URLs and control characters.
 It accepts no path parameter; reviewers cannot append to the implementer journal or mutate the
 repository. This is a diagnostic exception only, not a review verdict or authoritative cycle state.
+Journal writes inspect the directory entry itself and reject symbolic links, including dangling
+links, before opening; an absent entry can be created and regular journals remain append-only.
 When enabled, both automated-runner prompt overrides explicitly authorize only this bound tool
 as a diagnostic write exception; direct journal writes remain prohibited. Disabled progress retains
 the original role write restrictions. The reviewer loads only the trusted Git-read and progress extensions.
@@ -199,6 +201,9 @@ characters. A warning appears after 30 minutes without a newly observed valid en
 when none is reported); the stale clock restarts per execution and updates at heartbeat polling.
 This is **not a timeout** and never kills or recovers a process. No model status requests or periodic
 agent-generated heartbeats are used; token overhead is limited to the short policy/tool and milestones.
+Console diagnostics preserve characters supported by the stream and replace unsupported characters
+with `?`, retaining display limits on CP1251/ASCII consoles. Invalid UTF-8 journal bytes are decoded
+with replacement. Unavailable diagnostic output cannot interrupt execution or mask its original failure.
 
 Configure via `--progress-stale-minutes 30`, `--progress-max-console-chars 180` (20–2000), or
 `--no-agent-progress` to disable journals/policy/diagnostics. Defaults need no project configuration.

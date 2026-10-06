@@ -17,3 +17,12 @@ Implementer-authored summary, not an independent review or authoritative verdict
 
 Details: [implementation report](../.implementation-reports/implementation-report-PDFTR-44.md).
 Final independent review and merge remain human decisions.
+
+## Human-approved independent-review R1/R2 repair
+
+- R1: runner console diagnostics preserve encodable text and safely replace unsupported characters
+  with `?`; heartbeat/final output cannot terminate child execution or mask the original failure.
+- R2: entry-level journal inspection rejects dangling symbolic links before opening, including
+  on Windows, while absent and regular journal paths remain functional.
+- Historical cycle review artifacts are retained; the new implementation needs exact-SHA review.
+  Validation and delivery evidence is recorded in the implementation report above.

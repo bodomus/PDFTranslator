@@ -118,6 +118,11 @@ controls and truncates activity text. Staleness is measured from valid entry cha
 heartbeat polling, restarting per execution. Defaults are enabled, 30-minute stale warnings and
 180 console characters; CLI flags can configure/disable them. Warnings never kill or auto-recover
 the child. Exit/failure/cancellation diagnostics include last activity and relative journal path.
+All runner diagnostics, including CLI errors and final reports, retain representable stream text
+and replace unsupported characters with `?`; unavailable output cannot fail a child or mask its
+original failure. Invalid UTF-8 journal bytes remain non-fatal. Journal mutation uses entry-level
+`lstat` checks, rejecting even dangling symbolic links before opening and allowing creation only
+when the entry is absent; normal files retain append-only behavior.
 
 Runtime role presets (`deepseek-codex`, `codex-deepseek`, `codex-codex`, `deepseek-deepseek`)
 select provider/model pairs. Explicit CLI fields override the corresponding preset fields.

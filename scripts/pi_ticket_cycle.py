@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, NoReturn, Protocol, TextIO
 
 if __package__ in {None, ""}:  # pragma: no cover - supports `python scripts/pi_ticket_cycle.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -118,8 +118,23 @@ ROLE_PRESETS = {
 }
 
 
-def _console_message(message: str) -> None:
-    print(message, flush=True)
+def _console_message(message: str = "", *, file: TextIO | None = None, end: str = "\n") -> None:
+    """Best-effort diagnostics must not interrupt a child or mask its original failure."""
+    output = sys.stdout if file is None else file
+    try:
+        encoding = getattr(output, "encoding", None) or "utf-8"
+        # Preserve representable text; '?' keeps existing console character bounds intact.
+        safe = message.encode(encoding, errors="replace").decode(encoding)
+        print(safe, file=output, end=end, flush=True)
+    except (OSError, UnicodeError, LookupError, ValueError):
+        # A closed/broken diagnostic stream does not change process or cycle outcomes.
+        return
+
+
+class _DiagnosticParser(argparse.ArgumentParser):
+    def _print_message(self, message: str, file: TextIO | None = None) -> None:
+        if message:
+            _console_message(message, file=file, end="")
 
 
 @dataclass(frozen=True)
@@ -1295,30 +1310,32 @@ def run_cycle(
 
 def _report(outcome: RunOutcome) -> None:
     if outcome.passed:
-        print("AGENT CYCLE PASSED")
-        print()
-        print(f"Ticket: {outcome.ticket}")
-        print(f"State: {outcome.state}")
-        print(f"Implementation SHA: {outcome.implementation_sha}")
-        print(f"Review rounds: {outcome.review_rounds}")
-        print(f"Implementer: {outcome.implementer.provider} / {outcome.implementer.model}")
-        print(f"Reviewer: {outcome.reviewer.provider} / {outcome.reviewer.model}")
-        print()
-        print("READY FOR HUMAN REVIEW")
+        _console_message("AGENT CYCLE PASSED")
+        _console_message()
+        _console_message(f"Ticket: {outcome.ticket}")
+        _console_message(f"State: {outcome.state}")
+        _console_message(f"Implementation SHA: {outcome.implementation_sha}")
+        _console_message(f"Review rounds: {outcome.review_rounds}")
+        _console_message(
+            f"Implementer: {outcome.implementer.provider} / {outcome.implementer.model}"
+        )
+        _console_message(f"Reviewer: {outcome.reviewer.provider} / {outcome.reviewer.model}")
+        _console_message()
+        _console_message("READY FOR HUMAN REVIEW")
         return
-    print(f"AGENT CYCLE STOPPED: {outcome.state}")
-    print()
-    print(f"Ticket: {outcome.ticket}")
-    print(f"Implementation SHA: {outcome.implementation_sha}")
-    print(f"Review rounds: {outcome.review_rounds}")
+    _console_message(f"AGENT CYCLE STOPPED: {outcome.state}")
+    _console_message()
+    _console_message(f"Ticket: {outcome.ticket}")
+    _console_message(f"Implementation SHA: {outcome.implementation_sha}")
+    _console_message(f"Review rounds: {outcome.review_rounds}")
     if outcome.stop_reason:
-        print(f"Stop reason: {outcome.stop_reason}")
-    print()
-    print("HUMAN REVIEW REQUIRED")
+        _console_message(f"Stop reason: {outcome.stop_reason}")
+    _console_message()
+    _console_message("HUMAN REVIEW REQUIRED")
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _DiagnosticParser(description=__doc__)
     parser.add_argument("ticket")
     parser.add_argument("--recover", action="store_true", help="explicit human approval of rework")
     parser.add_argument("--reason", help="required human recovery approval reason")
@@ -1375,7 +1392,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     try:
         config = _config_from_arguments(arguments)
     except ValueError as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        _console_message(f"ERROR: {error}", file=sys.stderr)
         return 1
     ticket_text: str | None = None
     if arguments.ticket_file is not None:
@@ -1391,7 +1408,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             reason=arguments.reason,
         )
     except (RunnerError, CycleError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        _console_message(f"ERROR: {error}", file=sys.stderr)
         return 1
     _report(outcome)
     return 0 if outcome.passed else 1

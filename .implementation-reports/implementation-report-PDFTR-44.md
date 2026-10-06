@@ -99,3 +99,47 @@ updates remain runner-owned. Completion summary is `reviews/review-PDFTR-44.md`,
 ## Delivery
 Commit/push and the designated implementer handoff follow validation. The runner derives the final
 Git SHA, clean-tree state and review ownership; no manual cycle transitions are performed.
+
+## Human-approved independent-review repair — R1/R2 (2026-10-06)
+
+- Continued from `1e31fb77183bcfb7d6c81cc8733e83c827888ac1` on the same clean ticket branch,
+  under the human's explicit authorization to implement, validate, commit and push these two fixes.
+  No automatic recovery/validator transitions or historical review artifact writes are performed.
+  Any previous PASS belongs only to its original SHA; the repaired SHA requires a new review.
+- R1: every runner diagnostic uses `_console_message`, including argparse errors, lifecycle and
+  heartbeat output, stderr failures and final reports. Representable text is preserved; unsupported
+  stream characters become `?`, keeping console character bounds. Closed/broken output is best
+  effort and cannot interrupt the child or replace the original process failure. Existing bounded
+  parser, invalid UTF-8 replacement, control sanitization and truncation remain intact.
+- R2: `appendProgress` always inspects the journal entry with `lstatSync`. Only ENOENT permits
+  creation. Symbolic links, including dangling Windows links, non-files and hard links are
+  rejected before open; other inspection failures propagate without any fallback write path.
+  Existing root/directory checks and descriptor checks remain unchanged.
+- Added deterministic strict CP1251/ASCII heartbeat, invalid-byte, normal child completion,
+  original exit/exception, CLI/final report, unavailable-console and length-bound regressions.
+  Real Windows symlink tests cover both absent and existing referents, no outside writes, and
+  normal absent/regular journal creation and append behavior.
+- Workflow Level 1: ProjectWiki search, existing Graphify neighborhood and CRG pre/post queries
+  are source-verified. No architectural refresh, dependency changes, role capabilities, hard
+  timeouts, automatic recovery, process ownership or PDFTR-35A/40/42/43 contract changes.
+- Initial regressions reproduced both defects. A sandboxed run hit Node-to-Git `spawn EPERM`;
+  the focused safety suite is rerun outside that sandbox. One test's Windows newline assertion
+  was corrected to strip CRLF. All test/cache/log artifacts stay under repository `temp/`.
+- Documentation: README, CHANGELOG, affected Wiki/log, existing plan and completion summary.
+  Operational milestones are appended only to `.agent-cycle/PDFTR-44/implementer-progress.log`.
+- YouTrack lookup returned `Issue not found: PDFTR-44`; external ticket fields/attachments could
+  not be updated through the available connector. No issue was created or historical state edited.
+- Focused progress/runner/security suite: **PASS**, **291 passed, 2 skipped**; process exit 0.
+  Evidence: `temp/pdftr44-recovery/focused.log`. Windows dangling/existing symlink and normal
+  journal-path cases executed successfully; the focused skips are existing POSIX-only checks.
+- Full `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`: **PASS**,
+  **840 passed, 3 skipped**, **89.54%** coverage; 317 files formatted, Ruff lint, mypy (98 source
+  files) and Wiki lint (15 pages / 137 links / no errors or warnings) all pass.
+  Evidence: `temp/pdftr44-recovery/full-check.log`. No models/providers or network are used by tests.
+- Post-change CRG updated and qualified caller query verified `_print_message`, `_report` and
+  `main` routing through the safe output helper. Its test-gap heuristic misses indirect mocked
+  runner/Node tests; all relevant calls and the registered progress default are source-verified.
+  Graphify reuse is sufficient for these local fixes. Ubuntu execution remains remote/unverified.
+- Historical `review-1.json` and `review-2.json` hashes remain unchanged. Commit/push on the
+  existing branch follows this validation; the final SHA and clean status are verified separately
+  and recorded in the operational progress journal, without rewriting old cycle authority.

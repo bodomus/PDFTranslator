@@ -1,5 +1,17 @@
 # PDFTR-44 investigation and implementation plan
 
+## Human-approved R1/R2 repair (2026-10-06)
+Continue from `1e31fb77183bcfb7d6c81cc8733e83c827888ac1` on the existing clean ticket branch.
+Only encoding-safe diagnostics and dangling journal-link rejection are in scope. Preserve existing
+implementation, role permissions, process cleanup, schemas and immutable cycle review history.
+1. Route console output through a bounded replacement policy; preserve original failures.
+2. Inspect journal entries with `lstat` before creation, rejecting dangling links on Windows.
+3. Add focused CP1251/ASCII, invalid-byte, process/failure, link and normal-path regressions.
+4. Update affected docs/report, run focused safety tests and the complete PowerShell gate.
+5. Commit/push the existing branch and verify clean status and historical review hashes.
+Use only concise factual milestones in the implementer diagnostic journal. The human directly
+authorized this repair; do not rewrite prior verdicts or run automatic recovery transitions.
+
 ## Preflight (Level 2)
 Clean tree on `pdftr-44-agent-progress-journal`, Python 3.12.10 with uv.
 Ticket already saved at `Tickets/PDFTR-44-agent-progress-journal.md`; external attachment is runner-owned.

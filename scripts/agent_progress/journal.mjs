@@ -25,11 +25,15 @@ export function appendProgress(root, ticket, role, params, now = new Date()) {
     }
   }
   const target = path.join(directory, `${role}-progress.log`);
-  if (fs.existsSync(target)) {
-    const stat = fs.lstatSync(target);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
-      throw new Error("Redirected progress journal is unsupported");
-    }
+  let stat;
+  try {
+    // Inspect the entry, including dangling links; existsSync follows the referent.
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)) {
+    throw new Error("Redirected progress journal is unsupported");
   }
   const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW || 0), 0o600);
   try {

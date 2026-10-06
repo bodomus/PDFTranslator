@@ -31,6 +31,9 @@ related:
 
 ## 2026-10-06
 
+- Recorded PDFTR-44 human-approved R1/R2 repair: safe CP1251/ASCII diagnostic output preserves
+  original failures and console length bounds; entry-level journal checks reject dangling links.
+
 - Clarified enabled/disabled automated-runner override permissions: only the bound progress tool
   is authorized as a diagnostic exception; direct writes and other role restrictions remain intact.
 

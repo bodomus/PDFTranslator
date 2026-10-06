@@ -56,6 +56,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- PDFTR-44 human-approved repair: encode every runner console diagnostic safely on CP1251/ASCII
+  streams without interrupting child execution or masking original failures. Reject dangling
+  symbolic journal links before opening, preserving the reviewer's fixed journal boundary.
+
 - PDFTR-43 recovery: protect the selected review envelope from metadata removal and reject
   nested/overlapping intent delimiters. Stage GitHub PR publication through neutral metadata,
   exact-head verification and SHA-bound readiness/CI evidence; revoke claims on detected races.
