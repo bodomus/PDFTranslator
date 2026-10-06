@@ -18,6 +18,11 @@ Uncertain dispatched mutation outcomes now retain the durable synchronization fe
 including unreadable responses. 159 focused tests and the full Windows gate passed
 (1012 passed, 3 skipped, 89.54% coverage). No live mutation occurred; remote CI remains unverified.
 
+Attempt 4 resolves R2: GitHub PR/readiness processing retains serialization but bypasses only the
+YouTrack write prerequisite; fenced YouTrack cross-links skip visibly. Stable/moved-head regressions
+preserve fences and verify readiness refresh/revocation without YouTrack calls. 167 focused tests and
+the full Windows gate passed (1020 passed, 3 skipped, 89.54% coverage). No live mutation occurred.
+
 This is an implementer completion record, not an independent reviewer verdict. Automated review and
 final human review/merge remain separate runner/human decisions. Ticket/report attachments await
 configured harness synchronization or an explicit operator action.

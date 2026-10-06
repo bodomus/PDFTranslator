@@ -235,14 +235,18 @@ review, never Done; only an explicit merged/finalization action may close. REST 
 timeouts bound calls; an uncertain in-flight request is never blindly retried. Socket timeouts,
 connection loss and unreadable mutation responses also retain uncertainty: terminated client transport
 does not prove server-side failure. Pending/uncertain field/definition writes durably block later
-synchronization, including after restart; operator repair
+YouTrack synchronization, including after restart; operator repair
 requires proving transport termination and reconciling remote state, not merely a GET or lock release.
 Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
 operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
 local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
 
-After PASSED, GitHub integration uses the explicit configured repository and head/base. It creates
+After PASSED, GitHub readiness processing retains the shared OS lock but is not blocked by pending
+or uncertain YouTrack writes. The YouTrack cross-link is skipped with a persisted warning; GitHub
+PR creation/reverification and stale local readiness revocation still proceed independently.
+The YouTrack fence remains intact and no remote YouTrack mutation is attempted.
+GitHub integration uses the explicit configured repository and head/base. It creates
 or reuses one open PR with neutral metadata, checks exact reviewed head, publishes SHA-bound
 readiness/review/CI evidence, checks the head again, and includes
 local validation/report evidence, persisted role/model provenance, warnings and recovery history.

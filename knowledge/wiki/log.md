@@ -34,6 +34,8 @@ related:
 
 ## 2026-10-06
 
+- PDFTR-47 attempt 4 separates GitHub readiness from the YouTrack uncertainty fence under the
+  shared lock; cross-links skip visibly while exact-SHA readiness refresh/revocation continues.
 - PDFTR-47 attempt 3 extends durable write uncertainty to socket timeouts, connection loss and
   unreadable mutation responses; client transport termination never proves server-side failure.
   Real request-wrapper regressions verify delayed writes cannot bypass restart/lifecycle fences.

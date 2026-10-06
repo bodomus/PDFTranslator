@@ -663,7 +663,7 @@ class ProjectTracking:
         }
 
     @contextmanager
-    def synchronization(self) -> Any:
+    def synchronization(self, *, require_youtrack_writes: bool = True) -> Any:
         """OS-held, non-waiting lock shared by operator validation and harness calls."""
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / "youtrack.lock"
@@ -700,7 +700,8 @@ class ProjectTracking:
                     self.data.update(fresh)
                     if self.data.get("ticket") != self.ticket:
                         raise IdentityError("tracking artifact target mismatch")
-                self.require_reconciled_writes()
+                if require_youtrack_writes:
+                    self.require_reconciled_writes()
                 yield
             finally:
                 unlock()
@@ -1312,7 +1313,7 @@ class ProjectTracking:
         if manifest["state"] != "PASSED" or not self.gconfig.get("create_pr_on_pass"):
             return
         try:
-            with self.synchronization():
+            with self.synchronization(require_youtrack_writes=False):
                 self._passed(manifest, config)
         except Exception as error:
             self.synchronization_failure(error)
@@ -1334,6 +1335,12 @@ class ProjectTracking:
             "status": "failed",
         }
         try:
+            youtrack_writes_allowed = True
+            try:
+                self.require_reconciled_writes()
+            except TrackingError:
+                youtrack_writes_allowed = False
+                self.warning("YouTrack PR cross-link skipped; operator reconciliation required")
             if not self.gh:
                 raise TrackingError("GitHub repository unavailable")
             handoff = json.loads((self.directory / "handoff.json").read_text("utf-8"))
@@ -1403,7 +1410,7 @@ class ProjectTracking:
             staging.write_text(json.dumps(document, indent=2) + "\n", "utf-8")
             staging.replace(output)
             event.update(status="success", pr_url=pr["url"], ci_status=document["ci_status"])
-            if self.issue and not self.data.get("identity_unsafe"):
+            if youtrack_writes_allowed and self.issue and not self.data.get("identity_unsafe"):
                 marker = f"[{self.ticket}:pr:{sha}]"
 
                 def crosslink() -> None:

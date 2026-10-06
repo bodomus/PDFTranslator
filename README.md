@@ -108,7 +108,7 @@ and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent
 mutation: an uncertain create is recovered by exact-key discovery, never by blind re-creation;
 uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.
 Fields/definitions are read before writing and re-verified on resume; identical values generate no
-extra update. Pending or uncertain field/definition operations durably fence further synchronization,
+extra update. Pending or uncertain field/definition operations durably fence further YouTrack synchronization,
 even across restart. There is no automatic fence reset: an operator must establish that the old
 transport has terminated and reconcile remote state before repairing its operation evidence. A GET
 or lock release alone cannot establish this. Malformed configured field values fail validation before
@@ -147,7 +147,10 @@ is recorded for human reconciliation and **no further mutation** is allowed; a r
 guessed or substituted. Do not enable creation to backfill historical keys. Live access is not needed
 for implementation/testing; live API formats/mappings must still be confirmed by an operator.
 
-After `PASSED`, the runner creates or reuses a PR with neutral metadata, verifies its head against
+After `PASSED`, GitHub readiness remains independent of the YouTrack uncertainty fence: under the
+shared synchronization lock, PR processing continues while the YouTrack cross-link is skipped with
+an explicit warning. Stale local readiness is still revoked if GitHub's head has moved.
+The runner creates or reuses a PR with neutral metadata, verifies its head against
 the reviewed SHA, publishes SHA-bound review/readiness/CI evidence, and verifies the head again.
 Detected movement or an uncertain readiness update triggers replacement with neutral metadata.
 A moved head prevents the human-review artifact; an external failure leaves the local cycle

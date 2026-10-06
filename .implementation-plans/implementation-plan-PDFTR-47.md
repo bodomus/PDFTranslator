@@ -46,6 +46,19 @@ fenced before and after delayed completion. Verify redaction and definite reject
 Update operational docs/Wiki/report; run focused suite and full Windows check.ps1, commit/push,
 prepare runner handoff only. No live access or mutation required.
 
+## Attempt 4 — reviewer R2 independent GitHub readiness
+Level 1, clean baseline. Graphify query `ProjectTracking passed synchronization` and UTF-8 CRG
+incremental preflight succeeded; source verifies TrackingHooks/runner/operator entry points.
+Root cause: synchronization applied the YouTrack reconciliation fence before `_passed`, preventing
+GitHub PR verification and stale human-review evidence removal. Keep the shared OS lock and fresh
+artifact reload, but bypass only its YouTrack-write prerequisite for `passed`. Check the fence within
+PR processing, persist a specific cross-link skip warning, and never attempt YouTrack writes while
+fenced. Preserve exact-SHA checks, local readiness revocation and all other synchronization fences.
+Add pending/uncertain field/definition regressions for stable and moved GitHub heads, persisted
+operation preservation and repeat PR idempotency. Update operational docs/Wiki/report, run focused
+suite and full quality gate, commit/push and prepare only the designated handoff input.
+No live mutations, dependencies, schema changes or reviewer capability changes.
+
 ## Impact
 Only harness tracking, its configuration, tests and documentation. No PDF, model, OCR, dependency,
 agent-cycle schema, exact-SHA or reviewer-tool changes. No live API calls during implementation.

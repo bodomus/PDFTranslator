@@ -17,7 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Pending/timed-out field and definition writes now fence subsequent synchronization across restarts
   until operator reconciliation, including socket timeouts, connection loss and unreadable mutation
   responses (client termination does not prove remote failure). Malformed configured values fail before bootstrap mutation, and
-  failed operator synchronization never claims idempotent completion.
+  failed operator synchronization never claims idempotent completion. GitHub PR synchronization and
+  exact-SHA readiness verification remain independent of YouTrack write fences; remote cross-links
+  are skipped visibly while stale local human-review evidence is still revoked.
 
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
   review-envelope protocol instead of runtime-importing a changed runner against cached validator

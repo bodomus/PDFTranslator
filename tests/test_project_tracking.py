@@ -1040,6 +1040,48 @@ def test_stale_pr_recovers_only_after_new_sha_is_reviewed(tmp_path: Path) -> Non
     assert not any(c[:2] == ("pr", "create") for c in gh.calls)
 
 
+@pytest.mark.parametrize("status", ["pending", "uncertain"])
+@pytest.mark.parametrize("action", ["field:State", "definition"])
+@pytest.mark.parametrize("moved_head", [False, True])
+def test_youtrack_write_fence_does_not_block_github_readiness(
+    tmp_path: Path, status: str, action: str, moved_head: bool
+) -> None:
+    gh = FakeGitHub(tmp_path)
+    tracking = passed_tracking(tmp_path, gh)
+    tracking.issue = tracking.verify(tracking.yt.issue)
+    tracking.data["operations"][action] = {"status": status, "conflicting_write": True}
+    tracking.save()
+    # Reload the persisted fence under the shared lock, rather than relying on instance state.
+    tracking.data["operations"].clear()
+    output = tracking.directory / "human-review.json"
+    output.write_text('{"stale":true}')
+    if moved_head:
+        gh.pr["headRefOid"] = "b" * 40
+    tracking.passed(manifest(), None)
+    assert any(call[:2] == ("pr", "create") for call in gh.calls)
+    assert tracking.yt.calls == []
+    persisted = json.loads(tracking.path.read_text())
+    assert persisted["operations"][action] == {"status": status, "conflicting_write": True}
+    assert any("YouTrack PR cross-link skipped" in w for w in persisted["warnings"])
+    assert any("PR readiness unavailable" in w for w in persisted["warnings"]) == moved_head
+    events = [
+        json.loads(line)
+        for line in (tracking.directory / "github-events.jsonl").read_text().splitlines()
+    ]
+    assert events[-1]["status"] == ("failed" if moved_head else "success")
+    if moved_head:
+        assert not output.exists()
+        assert "READY FOR HUMAN REVIEW" not in gh.body
+    else:
+        readiness = json.loads(output.read_text())
+        assert readiness["head_sha"] == SHA
+        assert any("YouTrack PR cross-link skipped" in w for w in readiness["warnings"])
+        assert f"READY FOR HUMAN REVIEW for reviewed SHA {SHA}" in gh.body
+        tracking.passed(manifest(), None)
+        assert sum(call[:2] == ("pr", "create") for call in gh.calls) == 1
+        assert tracking.yt.calls == []
+
+
 def test_uncertain_readiness_write_is_neutralized_without_handoff(tmp_path: Path) -> None:
     class LostResponse(FakeGitHub):
         def command(self, *args: str, input_text: str | None = None) -> Any:

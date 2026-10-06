@@ -1,7 +1,36 @@
 # Implementation Report
 
 ## Ticket
-PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1–3).
+PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1–4).
+
+## Attempt 4 — R2 independent GitHub synchronization
+- Level 1 scoped fix; clean baseline. `passed` formerly entered the YouTrack write fence before
+  `_passed`, blocking independent PR processing and stale human-review evidence revocation.
+  It now retains the same OS lock and fresh artifact reload without requiring YouTrack write
+  eligibility. PR processing checks that eligibility separately and persists a specific cross-link
+  skip warning. All YouTrack operations remain fenced; no uncertain operation is reset or replaced.
+  GitHub creation/reverification, exact-SHA checks and stale readiness revocation are unchanged.
+- Eight deterministic regressions cover persisted pending/uncertain field/definition writes with
+  stable/moved GitHub heads. They verify no YouTrack calls, fence preservation, visible warnings,
+  PR creation and second-run idempotency, success/failure events and local readiness refresh/removal.
+- Focused tracking/validator/uncertainty suite: **167 passed**, no coverage, repository-local temp.
+  An initial command named a nonexistent uncertainty test file and collected no tests; corrected
+  to `tests/test_youtrack_uncertainty.py` before the passing run.
+- Full Windows `scripts/check.ps1`: **PASS**, Wiki lint 0 errors/warnings, Ruff format/lint,
+  mypy 98 source files, **1020 passed, 3 skipped**, 89.54% coverage, 336.80 seconds.
+  Logs and test temporary directories stayed under repository-local `temp/`.
+- Graphify scoped query and UTF-8 CRG pre/post incremental updates succeeded. Source verification
+  confirms TrackingHooks/runner/operator reachability; no PDF/translation/model/OCR impact,
+  dependency change, schema change, reviewer capability change or cycle transition change.
+  CRG summary retains heuristic test gaps despite executable regression coverage; source/tests win.
+  No architecture refresh needed. Context7 unavailable; no external-library API change needed.
+- Updated README, CHANGELOG, affected workflow Wiki/log, plan and implementer completion summary.
+  No live operation performed in attempt 4. Credentials/account, fields/login, lifecycle, attachments
+  and cross-links remain deterministically fake-validated and **unverified live**. Missing access
+  remains non-blocking. Remote Windows/Ubuntu CI is not claimed passed by the local Windows gate.
+  Integration warning categories: ["YouTrack credentials unavailable", "YouTrack identity mismatch;
+  remote mutation refused", "YouTrack authentication failed"]. Identity/authentication failures
+  describe deterministic diagnostic coverage, not observed live failures.
 
 ## Attempt 3 — R1 socket/connection-loss remediation
 - Level 1 scoped fix from a clean baseline. `_request` previously turned socket timeouts and
