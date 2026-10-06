@@ -21,6 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   failed operator synchronization never claims idempotent completion. GitHub PR synchronization and
   exact-SHA readiness verification remain independent of YouTrack write fences; remote cross-links
   are skipped visibly while stale local human-review evidence is still revoked.
+  The post-cycle R4 correction classifies read-only overall timeouts as ordinary read failures and
+  completes field/definition read-before-write checks before journaling a mutation. A pre-write GET
+  timeout no longer fences later synchronization across restart; dispatched mutation and post-write
+  verification timeout protection is preserved.
 
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
   review-envelope protocol instead of runtime-importing a changed runner against cached validator

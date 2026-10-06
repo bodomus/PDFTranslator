@@ -23,6 +23,195 @@ from scripts.project_tracking import (
 from tests.test_project_tracking import CONFIG, TEXT, TICKET, FakeYouTrack, manifest, mutations
 
 
+@pytest.mark.parametrize("kind", ["state_identity", "state_value", "definition"])
+def test_pre_write_get_timeout_does_not_fence_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    import scripts.project_tracking as module
+
+    fake = FakeYouTrack()
+    entered, release, terminated = threading.Event(), threading.Event(), threading.Event()
+    dispatched: list[str] = []
+    delayed = False
+    snapshots: list[dict[str, Any]] = []
+
+    class Response:
+        def __init__(self, result: Any) -> None:
+            self.payload = json.dumps(result).encode()
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def read(self) -> bytes:
+            return self.payload
+
+    def open_request(request: Any, *, timeout: int) -> Response:
+        assert timeout == 5
+        method = request.get_method()
+        path = request.full_url.split("/api/", 1)[1]
+        dispatched.append(method)
+        target = (
+            "summary,description" in path
+            if kind == "definition"
+            else "customFields(name,value" in path
+            if kind == "state_value"
+            else path == "issues/" + TICKET + "?fields=id,idReadable,project(id,shortName)"
+        )
+        if delayed and method == "GET" and target:
+            snapshots.append(json.loads(tr.path.read_text()))
+            entered.set()
+            try:
+                assert release.wait(5)
+                return Response(fake.request(method, path))
+            finally:
+                terminated.set()
+        content_type = request.get_header("Content-type")
+        body = (
+            json.loads(request.data)
+            if request.data and content_type == "application/json"
+            else (request.data, content_type)
+            if request.data
+            else None
+        )
+        return Response(fake.request(method, path, body))
+
+    monkeypatch.setattr(module, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    yt = YouTrack("https://tracker.example", "fake-token")
+    yt.overall_timeout = 0.1
+
+    def tracking() -> ProjectTracking:
+        return ProjectTracking(
+            tmp_path, TICKET, TEXT, config=CONFIG, youtrack=yt, warn=lambda _: None
+        )
+
+    tr = tracking()
+    tr.bootstrap()
+    assert not tr.sync_failed
+    dispatched.clear()
+    delayed = True
+    if kind == "definition":
+        fake.issue["summary"] = "Remote divergence"
+    try:
+        if kind == "definition":
+            tr.bootstrap()
+        else:
+            tr.apply_fields({"state": "In Progress"}, "harness", manifest()["current_head_sha"], 1)
+        assert entered.is_set()
+        assert tr.sync_failed
+        assert "POST" not in dispatched
+        persisted = json.loads(tr.path.read_text())
+        for snapshot in [*snapshots, persisted]:
+            assert all(
+                op["status"] not in {"pending", "uncertain"} and not op.get("conflicting_write")
+                for op in snapshot["operations"].values()
+            )
+        events = [
+            json.loads(line)
+            for line in (tr.directory / "youtrack-events.jsonl").read_text().splitlines()
+        ]
+        assert any(
+            event["status"] == "failed" and event.get("error_class") == "ReadTimeout"
+            for event in events
+        )
+        assert any("YouTrack read overall timeout" in warning for warning in persisted["warnings"])
+    finally:
+        delayed = False
+        release.set()
+        assert terminated.wait(5)
+    resumed = tracking()
+    assert validate_live(resumed, state="start") == 0
+    assert not resumed.sync_failed
+    assert "POST" in dispatched
+    assert fake.values["State"] == {"id": "0"}
+    assert not any(op.get("conflicting_write") for op in resumed.data["operations"].values())
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS", "POST", "PATCH", "DELETE"])
+def test_overall_timeout_classification_uses_request_mutability(method: str) -> None:
+    release, terminated = threading.Event(), threading.Event()
+
+    class Delayed(YouTrack):
+        overall_timeout = 0.03
+
+        def _request(self, method: str, path: str, body: Any = None) -> Any:
+            try:
+                assert release.wait(5)
+                return {}
+            finally:
+                terminated.set()
+
+    yt = Delayed("https://tracker.example", "fake-token")
+    try:
+        with pytest.raises(TrackingError) as error:
+            yt.request(method, "issues/1-43")
+        assert isinstance(error.value, UncertainTransport) == (
+            method in {"POST", "PATCH", "DELETE"}
+        )
+    finally:
+        release.set()
+        assert terminated.wait(5)
+
+
+@pytest.mark.parametrize("kind", ["state", "definition"])
+def test_verification_get_timeout_after_write_retains_fence(tmp_path: Path, kind: str) -> None:
+    fake = FakeYouTrack()
+    entered, release, terminated = threading.Event(), threading.Event(), threading.Event()
+
+    class DelayedVerification(YouTrack):
+        overall_timeout = 0.1
+        delayed = False
+        wrote = False
+
+        def _request(self, method: str, path: str, body: Any = None) -> Any:
+            if self.delayed and method == "POST":
+                self.wrote = True
+            if self.delayed and self.wrote and method == "GET":
+                entered.set()
+                try:
+                    assert release.wait(5)
+                    return fake.request(method, path, body)
+                finally:
+                    terminated.set()
+            return fake.request(method, path, body)
+
+    yt = DelayedVerification("https://tracker.example", "fake-token")
+
+    def tracking() -> ProjectTracking:
+        return ProjectTracking(
+            tmp_path, TICKET, TEXT, config=CONFIG, youtrack=yt, warn=lambda _: None
+        )
+
+    tr = tracking()
+    tr.bootstrap()
+    before = len(mutations(fake))
+    yt.delayed = True
+    if kind == "definition":
+        fake.issue["summary"] = "Remote divergence"
+    try:
+        if kind == "definition":
+            tr.bootstrap()
+        else:
+            tr.apply_fields({"state": "In Progress"}, "harness", manifest()["current_head_sha"], 1)
+        assert entered.is_set()
+        assert tr.sync_failed
+        assert len(mutations(fake)) == before + 1
+        persisted = json.loads(tr.path.read_text())
+        assert any(
+            op["status"] == "uncertain" and op.get("conflicting_write")
+            for op in persisted["operations"].values()
+        )
+    finally:
+        yt.delayed = False
+        release.set()
+        assert terminated.wait(5)
+    resumed = tracking()
+    assert validate_live(resumed, state="handoff") == 1
+    assert len(mutations(fake)) == before + 1
+
+
 @pytest.mark.parametrize("kind", ["state", "definition"])
 def test_timed_out_write_fences_later_sync_and_restart(tmp_path: Path, kind: str) -> None:
     fake = FakeYouTrack()
@@ -43,6 +232,11 @@ def test_timed_out_write_fences_later_sync_and_restart(tmp_path: Path, kind: str
                 )
             )
             if self.delayed and should_delay:
+                persisted = json.loads(tr.path.read_text())
+                assert any(
+                    op["status"] == "pending" and op.get("conflicting_write")
+                    for op in persisted["operations"].values()
+                )
                 entered.set()
                 assert release.wait(5)
                 try:

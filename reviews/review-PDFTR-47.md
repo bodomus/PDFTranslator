@@ -32,3 +32,17 @@ gate passed (1035 passed, 3 skipped, 89.54% coverage). No live mutation occurred
 This is an implementer completion record, not an independent reviewer verdict. Automated review and
 final human review/merge remain separate runner/human decisions. Ticket/report attachments await
 configured harness synchronization or an explicit operator action.
+
+## Post-cycle human-approved corrective patch — R4
+
+Read-only overall timeouts are ordinary read failures. Field/definition preparation reads run
+before pending mutation journaling, so pre-write GET timeouts leave no pending/uncertain mutation
+or conflicting-write fence and healthy synchronization can resume after restart. Dispatched POST
+timeouts, connection loss, HTTP 408/5xx and post-write verification timeouts retain durable mutation
+protection. Definite 400/401/403 and independent GitHub readiness regressions remain unchanged.
+
+Final focused suite: 193 passed. Broader tracking/validator suite: 523 passed, 2 skipped. Full Windows
+scripts/check.ps1: 1046 passed, 3 skipped, 89.54% coverage; Wiki lint, Ruff format/lint and mypy passed.
+No `.agent-cycle` artifacts, historical verdicts or reviewer capabilities changed. No new automated
+review or live mutation was recorded. The read-only YouTrack connector could not find PDFTR-47,
+so ticket fields and attachments remain unavailable. Progress/test logs: `temp/PDFTR-47-R4-*`.

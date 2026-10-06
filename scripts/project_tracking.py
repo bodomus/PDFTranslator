@@ -54,6 +54,7 @@ STATES = {
     "PASS": "Ready for Human Review",
     "merged": "Done",
 }
+READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 class TrackingError(RuntimeError):
@@ -62,6 +63,10 @@ class TrackingError(RuntimeError):
 
 class UncertainTransport(TrackingError):
     """A terminated or timed-out client transport does not prove remote failure."""
+
+
+class ReadTimeout(TrackingError):
+    """A read timed out without dispatching a mutation."""
 
 
 class APIError(TrackingError):
@@ -222,7 +227,7 @@ class YouTrack:
 
     def request(self, method: str, path: str, body: Any = None) -> Any:
         # DNS/TLS and trickling bodies must not hold the local workflow indefinitely.
-        # A timeout is an uncertain outcome, never permission to retry a create.
+        # Only a possibly dispatched mutation has an uncertain remote write outcome.
         outcome: queue.Queue[Any] = queue.Queue(maxsize=1)
 
         def call() -> None:
@@ -235,6 +240,8 @@ class YouTrack:
         try:
             success, value = outcome.get(timeout=self.overall_timeout)
         except queue.Empty:
+            if method.upper() in READ_ONLY_METHODS:
+                raise ReadTimeout("YouTrack read overall timeout") from None
             raise UncertainTransport("YouTrack overall timeout; remote outcome uncertain") from None
         if not success:
             if isinstance(value, TrackingError):
@@ -243,6 +250,7 @@ class YouTrack:
         return value
 
     def _request(self, method: str, path: str, body: Any = None) -> Any:
+        read_only = method.upper() in READ_ONLY_METHODS
         if path.startswith(("/", "\\")) or "://" in path or ".." in path:
             raise IdentityError("YouTrack request target refused")
         headers = {
@@ -282,7 +290,7 @@ class YouTrack:
         except HTTPError as error:
             if method == "GET" and error.code == 404:
                 return None
-            if method != "GET" and (error.code == 408 or 500 <= error.code <= 599):
+            if not read_only and (error.code == 408 or 500 <= error.code <= 599):
                 # A gateway/server timeout or failure is not proof that the upstream
                 # rejected the write: it may still execute after this response.
                 raise UncertainTransport(
@@ -295,7 +303,7 @@ class YouTrack:
             # not prove it failed remotely, even after the client transport terminates.
             # Definite HTTP rejections are handled above; pre-dispatch validation is
             # outside this try block. Never expose transport/server exception text.
-            if method != "GET":
+            if not read_only:
                 raise UncertainTransport(
                     "YouTrack transport/response failure; remote outcome uncertain"
                 ) from None
@@ -554,7 +562,7 @@ class ProjectTracking:
             return f"YouTrack HTTP {error.status}"
         if isinstance(error, IdentityError):
             return "YouTrack identity mismatch; remote mutation refused"
-        if type(error) in {TrackingError, UncertainTransport}:
+        if type(error) in {TrackingError, UncertainTransport, ReadTimeout}:
             # Only our fixed diagnostics; never arbitrary fake/server exception text.
             safe = str(error)
             if safe.startswith(
@@ -581,6 +589,7 @@ class ProjectTracking:
         fn: Callable[[], Any],
         *,
         repeatable: bool = False,
+        prepare: Callable[[], bool] | None = None,
     ) -> Any:
         self.require_reconciled_writes()
         key = hashlib.sha256(f"{self.ticket}|{role}|{round_}|{sha}|{action}".encode()).hexdigest()
@@ -592,8 +601,6 @@ class ProjectTracking:
                 )
                 self.sync_failed = True
             return previous.get("result")
-        self.data["operations"][key] = {"status": "pending", "conflicting_write": repeatable}
-        self.save()  # At-most-once mutation even if response is lost or runner crashes.
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "ticket": self.ticket,
@@ -604,8 +611,18 @@ class ProjectTracking:
             "idempotency_key": key,
             "issue_id": self.data.get("issue_id"),
         }
+        mutation_started = False
         try:
-            result = fn()
+            result = None
+            # Read-before-write failures must not leave mutation evidence, even on process death.
+            if prepare is None or prepare():
+                self.data["operations"][key] = {
+                    "status": "pending",
+                    "conflicting_write": repeatable,
+                }
+                self.save()  # At-most-once mutation even if response is lost or runner crashes.
+                mutation_started = True
+                result = fn()
             event["status"] = "success"
             self.data["operations"][key] = {"status": "success", "result": result}
             return result
@@ -617,9 +634,13 @@ class ProjectTracking:
                 error_class=type(error).__name__,
                 message="external operation failed; local workflow continues",
             )
+            # A verification read timeout after POST still belongs to a possible remote write.
+            uncertain = isinstance(error, UncertainTransport) or (
+                mutation_started and isinstance(error, ReadTimeout)
+            )
             self.data["operations"][key] = {
-                "status": "uncertain" if isinstance(error, UncertainTransport) else "failed",
-                "conflicting_write": repeatable,
+                "status": "uncertain" if uncertain else "failed",
+                "conflicting_write": repeatable and uncertain,
             }
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
@@ -941,12 +962,14 @@ class ProjectTracking:
             }
             digest = hashlib.sha256(self.text.encode()).hexdigest()
 
-            def sync_definition() -> None:
-                query = "?fields=id,idReadable,project(id,shortName),summary,description"
+            query = "?fields=id,idReadable,project(id,shortName),summary,description"
+
+            def prepare_definition() -> bool:
                 remote = self.yt.request("GET", "issues/" + self.ticket + query)
                 self.verify(remote)
-                if all(remote.get(k) == v for k, v in definition.items()):
-                    return
+                return not all(remote.get(k) == v for k, v in definition.items())
+
+            def sync_definition() -> None:
                 self.yt.request("POST", "issues/" + self.issue["id"], definition)
                 remote = self.yt.request("GET", "issues/" + self.ticket + query)
                 self.verify(remote)
@@ -954,7 +977,13 @@ class ProjectTracking:
                     raise TrackingError("read-after-write mismatch: ticket definition")
 
             self.operation(
-                "harness", "definition:" + digest, local_sha, 0, sync_definition, repeatable=True
+                "harness",
+                "definition:" + digest,
+                local_sha,
+                0,
+                sync_definition,
+                repeatable=True,
+                prepare=prepare_definition,
             )
             self.attach(self.ticket + ".md", self.text, "harness", local_sha, 0)
             self.data["bootstrap_defaults"] = defaults
@@ -1096,7 +1125,11 @@ class ProjectTracking:
                 self.warning(self.diagnostic(error))
                 continue
 
-            def update(key: str = key, value: str = value) -> None:
+            field_update: dict[str, Any] = {}
+
+            def prepare_update(
+                key: str = key, value: str = value, field_update: dict[str, Any] = field_update
+            ) -> bool:
                 self.verify(
                     self.yt.request(
                         "GET",
@@ -1169,19 +1202,31 @@ class ProjectTracking:
                     mapped = {"id": matches[0]["id"]}
                     if type_.startswith("Multi"):
                         mapped = [mapped]
-                if self.same_value(self.read_field(names[key]), mapped):
-                    return
+                field_update.update({"name": names[key], "$type": type_, "value": mapped})
+                return not self.same_value(self.read_field(names[key]), mapped)
+
+            def update(
+                key: str = key, value: str = value, field_update: dict[str, Any] = field_update
+            ) -> None:
                 self.yt.request(
                     "POST",
                     "issues/" + self.issue["id"],
-                    {"customFields": [{"name": names[key], "$type": type_, "value": mapped}]},
+                    {"customFields": [field_update]},
                 )
-                if not self.same_value(self.read_field(names[key]), mapped):
+                if not self.same_value(self.read_field(names[key]), field_update["value"]):
                     raise TrackingError("read-after-write mismatch: " + names[key])
                 if key == "state":
                     self.warn(f"[{self.ticket}] YouTrack state -> {value}")
 
-            self.operation(role, "field:" + key + ":" + value, sha, round_, update, repeatable=True)
+            self.operation(
+                role,
+                "field:" + key + ":" + value,
+                sha,
+                round_,
+                update,
+                repeatable=True,
+                prepare=prepare_update,
+            )
 
     def lifecycle(
         self, action: str, manifest: dict[str, Any], role: str = "harness", stdout: str = ""

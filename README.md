@@ -116,9 +116,13 @@ bootstrap mutations; requested synchronization failures return nonzero without a
 validation dumps are not published. Warnings are passed to agent reports; the implementation report
 is attached. Synchronization is locally OS-lock serialized; conflicts/uncertain creates permit only
 exact discovery, never another creation. Each REST call has a 5-second socket timeout and 10-second
-overall bound, with no automatic mutation retry loop. Socket/overall timeouts, connection loss,
+overall bound, with no automatic mutation retry loop. Mutation socket/overall timeouts, connection loss,
 HTTP 408/5xx mutation errors (including gateway 504), and unreadable mutation responses are uncertain even if the client transport has terminated: the server
 may still complete the write. Durable create/comment and field/definition fences require reconciliation.
+Read-only request timeouts are ordinary read failures. Field/definition reads and comparisons run
+before mutation journaling, so a pre-write GET timeout leaves no pending/uncertain mutation or
+conflicting-write fence; healthy synchronization can proceed after restart. A verification GET
+timeout after a dispatched write still preserves that operation's mutation fence.
 An existing committed `reviews/review-<TICKET>.md` completion summary is attached after PASS.
 
 #### Explicit operator validation (no agent cycle)

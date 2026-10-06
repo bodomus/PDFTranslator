@@ -75,3 +75,16 @@ then write only runner-designated handoff input. No live mutation required or pe
 ## Impact
 Only harness tracking, its configuration, tests and documentation. No PDF, model, OCR, dependency,
 agent-cycle schema, exact-SHA or reviewer-tool changes. No live API calls during implementation.
+
+## Post-cycle human-approved correction — R4
+Level 1, clean baseline 9839b05942c864ab12a13090f1a20c8a14ee5d42 on the existing ticket branch.
+Graphify scoped query, successful CRG update/caller queries and ProjectWiki search were verified in
+current source. Overall request timeout incorrectly classifies GET as mutation uncertainty; operation
+also journals pending evidence before its field/definition preparation reads.
+Classify read-only timeouts as ordinary ReadTimeout; run field/definition preparation before pending
+journaling; preserve write-ahead fencing and post-write verification timeout protection. Retain
+mutation socket/connection/HTTP 408/5xx uncertainty and definite rejection behavior.
+Verify delayed preparation reads with zero POST dispatch and no transient/persisted fence, restart
+recovery, pending evidence before POST, and post-write verification fences. Run focused and broader
+tracking/validator regressions, Wiki lint and full check.ps1; append factual completion evidence,
+commit/push the existing branch and verify cleanliness. No agent-cycle artifacts or verdicts change.

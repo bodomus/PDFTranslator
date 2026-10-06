@@ -34,6 +34,8 @@ related:
 
 ## 2026-10-06
 
+- PDFTR-47 post-cycle R4 separates read-only overall timeouts from mutation uncertainty; pre-write
+  field/definition GET failures leave no fence, while dispatched mutations retain durable protection.
 - PDFTR-47 attempt 5 classifies HTTP 408/5xx mutation errors as uncertain: delayed upstream writes
   retain durable lifecycle/operator fences across restart; read errors and definite rejections remain distinct.
 - PDFTR-47 attempt 4 separates GitHub readiness from the YouTrack uncertainty fence under the

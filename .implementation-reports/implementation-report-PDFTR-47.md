@@ -228,3 +228,41 @@ README, CHANGELOG, canonical config, affected development-workflow Wiki and Wiki
 are not committed. Plan/investigation, report and implementer completion summary are ticket scoped.
 Startup snapshots mean this tracking generation activates on the next runner invocation, not by
 hot-reloading the already active cycle. No reviewer tools, state transitions or authority changed.
+
+## Post-cycle human-approved corrective patch — R4
+
+Baseline: clean `pdftr-47-youtrack-live-sync` at
+`9839b05942c864ab12a13090f1a20c8a14ee5d42`. Level 1 correction confined to tracking transport,
+field/definition preparation, deterministic regressions and their documentation. No dependencies,
+PDF/model/OCR behavior, reviewer capabilities, PDFTR-45/PDFTR-46 safety or cycle schema changed.
+
+Read-only overall timeouts now raise ordinary `ReadTimeout`. Field/definition preparation reads,
+identity checks, mapping and comparisons run before pending mutation journaling. A failed pre-write
+GET is recorded as a failed operation with `conflicting_write=false`, without pending/uncertain
+mutation evidence. Healthy synchronization can resume after restart. Actual writes retain pending
+write-ahead evidence, transport/response uncertainty and restart fences. A verification GET timeout
+after a dispatched write retains the operation's uncertainty fence; existing fences are never cleared.
+Mutation HTTP 408/5xx and definite 4xx rejection classification remains unchanged.
+
+ProjectWiki search, scoped Graphify query and successful incremental CRG updates/caller/impact
+queries were source-verified in tracking, hooks, runner and tests. CRG reports truncated/unresolved
+edges, so source and executable regressions establish the boundary. No structural Graphify rebuild
+was needed. README, CHANGELOG, affected workflow Wiki and its log were updated.
+
+Validation:
+- Final focused transport/fencing/tracking suite: **193 passed in 2.18s**.
+- Broader tracking/validator/runner/resume/reviewer suite: **523 passed, 2 skipped in 377.60s**.
+- Full `scripts/check.ps1`: **PASS** on Windows/Python 3.12.10; Wiki lint 0 errors/0 warnings,
+  Ruff format/lint, mypy (98 source files), **1046 passed, 3 skipped in 537.43s**, 89.54% coverage.
+- Regressions cover delayed real-wrapper pre-write GETs at definition, field identity and field
+  value stages: zero POSTs, no pending/fence during the read or after failure, ordinary read failure
+  diagnostics and healthy synchronization after state reload. Mutation overall timeout still
+  persists pending before POST and uncertain fences after timeout. Post-write verification timeout,
+  socket/reset/connection loss, HTTP 408/500/502/503/504, definite 400/401/403 and independent GitHub
+  readiness regressions remain covered.
+
+No `.agent-cycle` artifacts or historical verdicts were modified, and no new automated review was
+recorded. The existing implementer completion record is extended only with this corrective work.
+Read-only connector lookup returned `Issue not found: PDFTR-47`; ticket fields and ticket/report
+attachments could not be updated. No live mutation, guessed issue creation or reconciliation occurred.
+Concise factual progress and test logs are under `temp/PDFTR-47-R4-*` and are not committed.

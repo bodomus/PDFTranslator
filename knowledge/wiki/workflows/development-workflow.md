@@ -232,12 +232,16 @@ Mutations are journaled before sending: ambiguous create outcomes use discovery 
 while uncertain comment/attachment mutations require human reconciliation. Concise comments publish
 only harness-confirmed SHA/round/action evidence, not agent prose or huge logs. PASS/PASSED target human
 review, never Done; only an explicit merged/finalization action may close. REST socket and overall
-timeouts bound calls; an uncertain in-flight request is never blindly retried. Socket timeouts,
+timeouts bound calls; an uncertain in-flight request is never blindly retried. Mutation socket timeouts,
 connection loss, HTTP 408/5xx mutation errors (including gateway 504), and unreadable mutation
 responses also retain uncertainty: a gateway/server error or terminated client transport
 does not prove server-side failure. Pending/uncertain field/definition writes durably block later
 YouTrack synchronization, including after restart; operator repair
 requires proving transport termination and reconciling remote state, not merely a GET or lock release.
+Read-only overall timeouts are ordinary read failures. Field/definition preparation reads precede
+pending mutation journaling; failed pre-write GETs persist no pending/uncertain mutation or
+conflicting-write fence, permitting healthy synchronization after restart. Verification GET timeouts
+after a dispatched mutation retain its durable fence.
 Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
 operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
