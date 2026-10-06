@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-46-Self-Modifying-Runner.md
 - ../../Tickets/PDFTR-45-operational-stopped-retry.md
 - ../../Tickets/PDFTR-44-agent-progress-journal.md
 - ../../Tickets/PDFTR-43-github-pr-chatgpt-work-youtrack.md
@@ -31,6 +32,9 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-06
+
+- Recorded PDFTR-46 startup-snapshot semantics, independent review protocol and preserved
+  post-review stdout/log evidence; harness edits activate on the next invocation without hot reload.
 
 - Hardened PDFTR-45 approved operational retry loading before mutation: reject unauthorized
   numbered snapshots while retaining later accounted history, and compare approval-crash blank

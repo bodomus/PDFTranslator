@@ -18,6 +18,8 @@ sources:
 - ../../../scripts/agent_progress/journal.mjs
 - ../../../tests/test_agent_progress.py
 - ../../../scripts/project_tracking.py
+- ../../../scripts/review_protocol.py
+- ../../../tests/test_runner_snapshot.py
 - ../../../scripts/tracking_hooks.py
 - ../../../project-tracking.toml
 - ../../../tests/test_project_tracking.py
@@ -90,6 +92,15 @@ runner owns every child process tree and terminates descendants through a Window
 saved POSIX process group on success, cancellation, or any post-spawn failure. Provider, model, and
 tool names are configuration; deterministic tests replace Pi and never contact providers or the
 network.
+
+The parent startup-loads all repository harness dependencies and retains that code generation for
+its entire invocation. Implementer source edits activate only on the next process invocation, not
+by hot reload or automatic restart. The pure `review_protocol.py` owns shared envelope grammar;
+tracking does not import the runner. Before parsing/persisting a successful reviewer result, the
+runner saves original stdout to `reviewer-stdout-round-<N>.txt`. Unexpected internal post-review
+failures stop explicitly with diagnostics, retaining stdout, logs and cycle artifacts without
+rerunning the reviewer. Isolated disk-mutation tests cover both reported missing-symbol generations
+and normal PASS/CHANGES_REQUIRED accounting.
 
 Human recovery is explicit: `--recover --reason` on the runner or `agent_cycle.py reopen --reason`
 authorizes one further implementation/review pair only from exhausted `STOPPED` review states.
