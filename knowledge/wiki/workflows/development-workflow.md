@@ -232,7 +232,11 @@ Mutations are journaled before sending: ambiguous create outcomes use discovery 
 while uncertain comment/attachment mutations require human reconciliation. Concise comments publish
 only harness-confirmed SHA/round/action evidence, not agent prose or huge logs. PASS/PASSED target human
 review, never Done; only an explicit merged/finalization action may close. REST socket and overall
-timeouts bound calls; an uncertain in-flight request is never blindly retried. Implementation reports
+timeouts bound calls; an uncertain in-flight request is never blindly retried. Pending/timed-out
+field/definition writes durably block later synchronization, including after restart; operator repair
+requires proving transport termination and reconciling remote state, not merely a GET or lock release.
+Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
+operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
 local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
 

@@ -60,6 +60,10 @@ class TrackingError(RuntimeError):
     pass
 
 
+class UncertainTransport(TrackingError):
+    """A timed-out transport may still complete a remote mutation."""
+
+
 class APIError(TrackingError):
     def __init__(self, status: int) -> None:
         self.status = status
@@ -231,7 +235,7 @@ class YouTrack:
         try:
             success, value = outcome.get(timeout=self.overall_timeout)
         except queue.Empty:
-            raise TrackingError("YouTrack overall timeout; remote outcome uncertain") from None
+            raise UncertainTransport("YouTrack overall timeout; remote outcome uncertain") from None
         if not success:
             if isinstance(value, TrackingError):
                 raise value
@@ -535,7 +539,7 @@ class ProjectTracking:
             return f"YouTrack HTTP {error.status}"
         if isinstance(error, IdentityError):
             return "YouTrack identity mismatch; remote mutation refused"
-        if type(error) is TrackingError:
+        if type(error) in {TrackingError, UncertainTransport}:
             # Only our fixed diagnostics; never arbitrary fake/server exception text.
             safe = str(error)
             if safe.startswith(
@@ -563,6 +567,7 @@ class ProjectTracking:
         *,
         repeatable: bool = False,
     ) -> Any:
+        self.require_reconciled_writes()
         key = hashlib.sha256(f"{self.ticket}|{role}|{round_}|{sha}|{action}".encode()).hexdigest()
         previous = self.data["operations"].get(key)
         if previous and not repeatable:
@@ -572,7 +577,7 @@ class ProjectTracking:
                 )
                 self.sync_failed = True
             return previous.get("result")
-        self.data["operations"][key] = {"status": "pending"}
+        self.data["operations"][key] = {"status": "pending", "conflicting_write": repeatable}
         self.save()  # At-most-once mutation even if response is lost or runner crashes.
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -597,7 +602,10 @@ class ProjectTracking:
                 error_class=type(error).__name__,
                 message="external operation failed; local workflow continues",
             )
-            self.data["operations"][key] = {"status": "failed"}
+            self.data["operations"][key] = {
+                "status": "uncertain" if isinstance(error, UncertainTransport) else "failed",
+                "conflicting_write": repeatable,
+            }
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
             self.warning(f"{action}: {self.diagnostic(error)}; local workflow continues")
@@ -612,6 +620,21 @@ class ProjectTracking:
             self.save()
             with (self.directory / "youtrack-events.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(self.safe_text(json.dumps(event)) + "\n")
+
+    def require_reconciled_writes(self) -> None:
+        # Pending survives process death; uncertain survives an overall timeout. Neither
+        # lock release nor a later GET proves a detached transport cannot still write.
+        if any(
+            op.get("conflicting_write") and op.get("status") in {"pending", "uncertain"}
+            for op in self.data["operations"].values()
+        ):
+            self.sync_failed = True
+            self.data["last_sync_status"] = "failed"
+            message = (
+                "YouTrack uncertain prior field/definition write; operator reconciliation required"
+            )
+            self.warning(message)
+            raise TrackingError(message)
 
     def verify(self, issue: Any) -> dict[str, Any]:
         if not isinstance(issue, dict) or issue.get("idReadable") != self.ticket:
@@ -668,6 +691,7 @@ class ProjectTracking:
                     self.data.update(fresh)
                     if self.data.get("ticket") != self.ticket:
                         raise IdentityError("tracking artifact target mismatch")
+                self.require_reconciled_writes()
                 yield
             finally:
                 unlock()
@@ -872,6 +896,9 @@ class ProjectTracking:
                 raise IdentityError("configured project does not match ticket key")
             if not re.match(r"#\s+" + re.escape(self.ticket) + r"(?:\s|:|$)", self.text):
                 raise IdentityError("Markdown ticket identity mismatch")
+            defaults = {"assignee": self.yconfig.get("assignee", "bodomus")}
+            defaults.update(self.yconfig.get("defaults", {}))
+            self.validate_field_values(defaults)
             self.discover_mappings()
             if dry_run:
                 self.warn("Would assign: " + self.yconfig.get("assignee", "bodomus"))
@@ -914,8 +941,6 @@ class ProjectTracking:
                 "harness", "definition:" + digest, local_sha, 0, sync_definition, repeatable=True
             )
             self.attach(self.ticket + ".md", self.text, "harness", local_sha, 0)
-            defaults = {"assignee": self.yconfig.get("assignee", "bodomus")}
-            defaults.update(self.yconfig.get("defaults", {}))
             self.data["bootstrap_defaults"] = defaults
             self.save()
             self._apply_fields(defaults, "harness", local_sha, 0)
@@ -937,6 +962,7 @@ class ProjectTracking:
             )
             self.save()
         except Exception as error:
+            self.sync_failed = True
             event["error_class"] = type(error).__name__
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
@@ -1017,6 +1043,21 @@ class ProjectTracking:
         except Exception as error:
             self.synchronization_failure(error)
 
+    @staticmethod
+    def validate_field_values(proposed: dict[str, Any]) -> None:
+        for key, value in proposed.items():
+            if not isinstance(value, str):
+                raise TrackingError(f"unsupported {key}; expected string")
+            if key == "estimation" and not re.fullmatch(r"\d+[wdhm](?: \d+[wdhm])*", value):
+                raise TrackingError("unsupported estimation; expected unit-bearing period string")
+            if key == "due_date":
+                try:
+                    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                        raise ValueError
+                    date.fromisoformat(value)
+                except ValueError:
+                    raise TrackingError("unsupported due date; expected ISO YYYY-MM-DD") from None
+
     def _apply_fields(self, proposed: dict[str, str], role: str, sha: str, round_: int) -> None:
         if not self.issue or self.data.get("identity_unsafe"):
             return
@@ -1032,6 +1073,12 @@ class ProjectTracking:
         for key, value in proposed.items():
             if self.data.get("identity_unsafe"):
                 break
+            try:
+                self.validate_field_values({key: value})
+            except TrackingError as error:
+                self.sync_failed = True
+                self.warning(self.diagnostic(error))
+                continue
 
             def update(key: str = key, value: str = value) -> None:
                 self.verify(
@@ -1422,6 +1469,8 @@ def validate_live(
             return 1
         if state:
             tracking.apply_fields({"state": target}, "operator", "", 0)
+        if tracking.sync_failed:
+            return 1
         tracking.warn(
             "Idempotent second synchronization completed; inspect warnings for limitations"
         )

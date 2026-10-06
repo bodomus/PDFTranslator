@@ -9,6 +9,10 @@ Focused deterministic tests and Windows scripts/check.ps1 validate the implement
 credentials are unavailable; no live API was contacted and no remote behavior is claimed verified.
 See .implementation-reports/implementation-report-PDFTR-47.md for precise evidence and limitations.
 
+Attempt 2 addresses R1/R2 with durable pending/timed-out field/definition synchronization fences,
+pre-mutation configured-value validation, aggregate bootstrap failure and completion-claim suppression.
+151 focused tests and the full Windows gate passed (1004 passed, 3 skipped). No live mutation occurred.
+
 This is an implementer completion record, not an independent reviewer verdict. Automated review and
 final human review/merge remain separate runner/human decisions. Ticket/report attachments await
 configured harness synchronization or an explicit operator action.

@@ -19,6 +19,20 @@ no dependency or third-party SDK is introduced. REST behavior remains explicitly
 6. Expand deterministic fakes/tests, update README/CHANGELOG/Wiki, run focused tests and check.ps1.
 7. Record live limitations, commit/push, prepare runner-owned handoff input only.
 
+## Attempt 2 — reviewer findings R1/R2
+Level 1 scoped correction; clean baseline. CRG UTF-8 incremental preflight completed, Graphify queried
+`ProjectTracking synchronization operation`; source-verified callers remain TrackingHooks and operator
+validation, with tracking/validator tests. Graph translation adjacency is not an actual dependency.
+R1: daemon transport can outlive lock ownership; repeatable field/definition operations need durable
+pending/uncertain evidence that blocks all subsequent synchronization, not just identical action keys.
+No automatic reset: operator reconciliation must prove old transport termination and remote state.
+R2: ensure exceptions must set aggregate failure; validate configured types/period/date syntax before
+bootstrap mutation and suppress completion claims on either synchronization pass failure.
+Add delayed fake transport/restart, interrupted pending write, malformed-default and second-pass
+failure regressions; preserve independent valid intent fields on partial validation failures.
+Update README/CHANGELOG/affected Wiki/report; run focused suite, Wiki lint and full check.ps1;
+commit/push a new SHA and prepare only designated handoff JSON. No live mutation or new dependencies.
+
 ## Impact
 Only harness tracking, its configuration, tests and documentation. No PDF, model, OCR, dependency,
 agent-cycle schema, exact-SHA or reviewer-tool changes. No live API calls during implementation.

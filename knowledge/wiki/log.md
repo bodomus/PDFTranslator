@@ -34,6 +34,9 @@ related:
 
 ## 2026-10-06
 
+- Clarified PDFTR-47 durable field/definition uncertainty fences, operator reconciliation requirements,
+  and configured-value validation/nonzero operator failure reporting after attempt-two regressions.
+
 - Documented PDFTR-47 canonical YouTrack host/token configuration, categorized preflight,
   exact opt-in creation, discovered mappings and read-back, concise evidence, local locking
   and read-only/dry-run operator validation. Live access remains an explicit operator step.

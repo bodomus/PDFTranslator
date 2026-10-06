@@ -1,7 +1,42 @@
 # Implementation Report
 
 ## Ticket
-PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempt 1).
+PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1 and 2).
+
+## Attempt 2 — review remediation
+- R1: repeatable definition/field operations now persist a conflicting-write marker before execution.
+  An overall transport timeout records an uncertain outcome; pending crash evidence and uncertain
+  outcomes fence all later synchronization, across instances/restarts and action/SHA differences.
+  The lock cannot outlive a detached transport, so release/GET alone never reset the fence. Failure
+  remains visible; no later lifecycle update is falsely verified while the stale write can complete.
+  There is intentionally no automatic fence reset: operator repair must establish old transport
+  termination and reconcile remote state first. This conservative fence can require human repair
+  even if a pending operation crashed before sending its request.
+- R2: every exception from ensure marks aggregate bootstrap failure. Configured field types and
+  estimation/date syntax are validated before bootstrap mutation. Independent valid intent fields
+  still proceed when another intent field is malformed. Numeric estimation produces the specific
+  `unsupported estimation; expected string` warning. The live validator returns nonzero and omits
+  its completion claim for first/second synchronization or field-validation failures.
+- Level 1 scoped remediation; clean baseline inspected. Graphify query reused existing orientation;
+  CRG UTF-8 pre/post incremental updates completed. Source-verified blast radius remains tracking
+  hooks/operator/tests; no dependency, module-boundary, PDF, model, OCR or cycle-authority changes.
+  No Context7 capability is available; no external-library API changes were needed.
+- Focused deterministic suite: **151 passed** (tracking, live-validator and attempt-two regressions).
+  Regressions include delayed state and definition transports released after a subsequent attempted
+  synchronization, restart/pending-crash fences, malformed numeric/string defaults, bootstrap errors
+  after issue resolution and second-pass failure claim suppression.
+- Full Windows `scripts/check.ps1`: **PASS**; Wiki lint 0 errors/warnings, Ruff format/lint,
+  mypy 98 source files, **1004 passed, 3 skipped**, 89.54% coverage, 326.82 seconds.
+  Tests/logs used repository-local temp paths. Operator CLI --help passed without network access.
+- README, CHANGELOG, plan, affected Wiki/log and implementer completion summary updated.
+  Graph outputs/caches/logs remain ignored; no authoritative runner files were modified.
+- Integration warnings: ["YouTrack credentials unavailable"]. **No live YouTrack operation was
+  performed in attempt 2**; all remote behavior remains deterministically fake-validated, not live
+  verified. Missing credentials do not block implementation or handoff. Remote CI is separate from
+  the local quality gate and is not claimed passed before exact pushed-SHA confirmation.
+
+## Attempt 1 evidence (retained)
+
 
 ## Workflow
 - Level 2; clean initial tree on the expected task branch.
