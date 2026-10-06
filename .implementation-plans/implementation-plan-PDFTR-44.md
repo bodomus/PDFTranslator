@@ -8,6 +8,17 @@ Graphify query `pi_ticket_cycle ProgressReporter` identifies runner/test neighbo
 CRG `update --brief` updated graph but console encoding failed (cp1251); retry with UTF-8.
 Context7 capability unavailable; installed Pi extension docs/examples are the local API reference.
 
+## Attempt 2: R1 prompt permission correction (Level 1)
+Clean baseline at the first implementation SHA. Source confirms both generated overrides prohibit
+journal writes even though the appended policy requests them. `run_cycle` supplies a journal path
+only when enabled; no capability or state changes are needed. Graphify scoped query identifies
+prompt/run-cycle adjacency; CRG updated with UTF-8 output. Source remains authoritative.
+
+Plan: explicitly permit only the bound `progress_append(message)` diagnostic exception inside each
+enabled override, preserve original disabled restrictions, add enabled/disabled regression tests for
+both role overrides, update affected documentation, run focused tests and the full PowerShell gate,
+then commit/push a new SHA and write only the designated handoff input. No manual transitions.
+
 ## Investigation
 Current timed communicate emits only elapsed duration; reviewer has no mutation capability.
 Missing capability: role-bound append-only journal plus safe bounded parser and stale observation.

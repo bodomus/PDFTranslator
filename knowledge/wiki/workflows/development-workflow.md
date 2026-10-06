@@ -105,7 +105,10 @@ heartbeat every five minutes; it sends stdin once and retains the same process-t
 cleanup paths. Detailed child output stays in existing diagnostic logs.
 
 Each role receives centralized milestone-only policy and a runner-bound `progress_append` capability
-with no path parameter. Its append-only `<role>-progress.log` uses `[HH:MM]` UTC and retains prior
+with no path parameter. When enabled, each highest-precedence automated-runner override explicitly
+permits only that bound tool as a diagnostic exception, forbids direct journal writes, and preserves
+all other role restrictions. Disabled overrides retain the original write prohibitions.
+Its append-only `<role>-progress.log` uses `[HH:MM]` UTC and retains prior
 history plus attempt/round boundaries across exits, resume and recovery. The reviewer can append
 only to its own diagnostic journal, never the implementer's or tracked repository files; this narrow
 exception does not replace review JSON or relax Git/SHA gates. No reasoning, prompts or sensitive

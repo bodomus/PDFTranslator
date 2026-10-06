@@ -72,6 +72,30 @@ updates remain runner-owned. Completion summary is `reviews/review-PDFTR-44.md`,
   designated implementer input will be written under the real `.agent-cycle/PDFTR-44/` directory.
 - Integration warnings: ["YouTrack credentials unavailable"]. No direct YouTrack API was called.
 
+## Attempt 2 — reviewer finding R1
+- Workflow Level 1; clean baseline, no unrelated changes. Both generated runner overrides
+  previously conflicted with the appended progress policy. Corrected `_implementer_prompt` and
+  `_reviewer_prompt` to explicitly authorize `progress_append(message)` only for their bound
+  diagnostic journal when enabled, superseding blanket restrictions. Direct journal writes and
+  all other coordination/repository restrictions remain intact; disabled overrides retain their
+  original restrictions. No tool, schema, process, role capability or state transition changes.
+- Added enabled/disabled prompt regressions checking both highest-precedence role overrides,
+  bound paths, prohibition precedence, direct-write restrictions and disabled-mode restrictions.
+- Graphify scoped query confirmed prompt/run-cycle adjacency, source verified; CRG refreshed
+  before/after edits with UTF-8 output. No architecture refresh required for this local correction.
+  No external-library API changes or additional dependencies.
+- Focused final suite: **267 passed, 2 skipped** (`--no-cov`, harness-only tests). First focused run
+  exposed the existing explicit artifact-ban assertion and package coverage scope; retained an
+  explicit authoritative-artifact ban and reran successfully without package-only coverage.
+- Full `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`: **PASS**;
+  **816 passed, 3 skipped**, **89.54%** coverage; Ruff format/lint, mypy and Wiki lint all pass.
+  First gate found line-length errors; corrected literal formatting and reran the entire gate.
+- Updated README, CHANGELOG, affected Wiki/log, ticket plan and implementer completion summary.
+  Windows validated locally; Ubuntu CI is not run locally. No model/provider calls required.
+- Integration warnings: ["YouTrack credentials unavailable"]. No direct tracking API calls or
+  cycle transitions. This execution still obeys its supplied override: only the designated
+  handoff input is written under the real `.agent-cycle/` directory.
+
 ## Delivery
 Commit/push and the designated implementer handoff follow validation. The runner derives the final
 Git SHA, clean-tree state and review ownership; no manual cycle transitions are performed.

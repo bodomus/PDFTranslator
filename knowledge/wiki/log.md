@@ -31,6 +31,9 @@ related:
 
 ## 2026-10-06
 
+- Clarified enabled/disabled automated-runner override permissions: only the bound progress tool
+  is authorized as a diagnostic exception; direct writes and other role restrictions remain intact.
+
 - Documented role-bound UTC operational journals, local last-activity heartbeat/stale diagnostics,
   preserved execution history and the narrow reviewer append-only diagnostic exception (PDFTR-44).
   Authoritative cycle state, exact-SHA review and process cleanup remain unchanged; no timeout.

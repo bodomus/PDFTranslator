@@ -187,7 +187,9 @@ auth headers, OAuth codes, environment dumps or secret-bearing URLs. Summarize e
 the tool additionally rejects common credential patterns, all HTTP URLs and control characters.
 It accepts no path parameter; reviewers cannot append to the implementer journal or mutate the
 repository. This is a diagnostic exception only, not a review verdict or authoritative cycle state.
-The reviewer loads only the trusted Git-read and progress extensions.
+When enabled, both automated-runner prompt overrides explicitly authorize only this bound tool
+as a diagnostic write exception; direct journal writes remain prohibited. Disabled progress retains
+the original role write restrictions. The reviewer loads only the trusted Git-read and progress extensions.
 
 Heartbeats read the latest valid complete line locally, for example:
 `[PDFTR-44] implementer running... 95m - last: [19:42] Running focused tests`.

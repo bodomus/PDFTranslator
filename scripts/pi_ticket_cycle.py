@@ -787,10 +787,29 @@ def _implementer_prompt(
         "  record-review, or stop transition. The runner owns every phase transition.",
         "- You MAY create or replace only your designated handoff input file:",
         f"    {handoff_path}",
-        "- Do NOT modify manifest.json, handoff.json, review-*.json, reviewer-input-*.json, or any",
-        "  other file under .agent-cycle/. The runner and validator own all other coordination",
-        "  state.",
-        "- Only implement, test, commit, push, and prepare that handoff input, then exit.",
+        *(
+            [
+                "- Sole diagnostic exception: you MAY call progress_append(message) to append",
+                f"  factual milestones only to your runner-bound journal: {journal_path}",
+                "  This permission supersedes any blanket write prohibition below. Do NOT write",
+                "  journals directly or use this tool to mutate any other file or role journal.",
+                "- Do NOT modify manifest.json, handoff.json, review-*.json, "
+                "or reviewer-input-*.json.",
+                "- Apart from that bound tool and your handoff input, do NOT modify any file",
+                "  under .agent-cycle/. The runner and validator own all authoritative state.",
+                "- Only implement, test, commit, push, prepare the handoff input, and optionally",
+                "  append diagnostic milestones via the bound tool, then exit.",
+            ]
+            if journal_path is not None
+            else [
+                "- Do NOT modify manifest.json, handoff.json, review-*.json, "
+                "reviewer-input-*.json, or any",
+                "  other file under .agent-cycle/. The runner and validator own "
+                "all other coordination",
+                "  state.",
+                "- Only implement, test, commit, push, and prepare that handoff input, then exit.",
+            ]
+        ),
         "Any manual transition command or blanket .agent-cycle prohibition in the reference",
         "contract below is superseded by these permissions.",
         "",
@@ -877,10 +896,27 @@ def _reviewer_prompt(
             "The runner has already entered the review phase via scripts/agent_cycle.py and owns",
             "record-review. You are strictly read-only and must not run any transition.",
             "- Do NOT run scripts/agent_cycle.py or any begin-review, record-review, or stop.",
-            "- Do NOT modify, create, delete, commit, push, or run any command that writes.",
+            *(
+                [
+                    "- Sole diagnostic exception: you MAY call progress_append(message) to append",
+                    f"  factual milestones only to your runner-bound journal: {journal_path}",
+                    "  This permission supersedes any blanket write prohibition below. "
+                    "Do NOT write",
+                    "  journals directly or use this tool to mutate any other file "
+                    "or role journal.",
+                    "- Apart from that bound tool, do NOT modify, create, delete, commit, push,",
+                    "  or run any command that writes. Repository inspection remains read-only.",
+                ]
+                if journal_path is not None
+                else [
+                    "- Do NOT modify, create, delete, commit, push, or run any command that writes."
+                ]
+            ),
             "- Return only the single JSON object described below on stdout.",
             "- The runner — not you — persists that output into ignored .agent-cycle state and",
-            "  records the review. You never write a coordination file.",
+            "  records the review. You never write an authoritative coordination file."
+            if journal_path is not None
+            else "  records the review. You never write a coordination file.",
             "Any manual transition or file-writing instruction in the reference contract below is",
             "superseded.",
             "",

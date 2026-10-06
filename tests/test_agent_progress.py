@@ -154,6 +154,48 @@ def test_disabled_progress(git_repo: Path) -> None:
         assert "Operational progress" not in prompt
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_runner_override_progress_permissions(git_repo: Path, enabled: bool) -> None:
+    fake = cycle.FakePi(git_repo)
+    run_cycle(
+        git_repo,
+        cycle.TICKET,
+        executor=fake,
+        config=RunnerConfig(progress=ProgressConfig(enabled=enabled)),
+    )
+    assert len(fake.invocations) == 2
+    for role, (_, prompt) in zip(["implementer", "reviewer"], fake.invocations, strict=True):
+        override = prompt.split("## Automated runner override", 1)[1].split("\n\n", 1)[0]
+        implementer_ban = "  other file under .agent-cycle/."
+        reviewer_ban = (
+            "- Do NOT modify, create, delete, commit, push, or run any command that writes."
+        )
+        if enabled:
+            journal = git_repo / ".agent-cycle" / cycle.TICKET / f"{role}-progress.log"
+            assert "Sole diagnostic exception: you MAY call progress_append(message)" in override
+            assert f"factual milestones only to your runner-bound journal: {journal}" in override
+            assert "permission supersedes any blanket write prohibition below" in override
+            assert "Do NOT write\n  journals directly" in override
+            assert "mutate any other file or role journal" in override
+            assert implementer_ban not in override
+            assert reviewer_ban not in override
+            if role == "implementer":
+                assert "Apart from that bound tool and your handoff input" in override
+                assert "runner and validator own all authoritative state" in override
+            else:
+                assert "Apart from that bound tool, do NOT modify" in override
+                assert "Repository inspection remains read-only" in override
+                assert "never write an authoritative coordination file" in override
+        else:
+            assert "progress_append" not in override
+            assert "diagnostic exception" not in override
+            assert (implementer_ban if role == "implementer" else reviewer_ban) in override
+            if role == "reviewer":
+                assert "You never write a coordination file" in override
+        assert "Do NOT run scripts/agent_cycle.py" in override
+        assert "superseded" in override
+
+
 def test_append_capability_isolated_and_safe(work_dir: Path) -> None:
     directory = work_dir / ".agent-cycle" / "PDFTR-44"
     directory.mkdir(parents=True)
