@@ -408,8 +408,22 @@ def test_field_action_and_event_redact_token(
 def test_uncertain_prior_comment_is_visible(tmp_path: Path) -> None:
     tr = tracker(tmp_path, FakeYouTrack())
     tr.bootstrap()
-    tr.operation("harness", "comment:test", SHA, 0, lambda: (_ for _ in ()).throw(TimeoutError()))
-    tr.operation("harness", "comment:test", SHA, 0, lambda: pytest.fail("must not duplicate"))
+    tr.operation(
+        "harness",
+        "comment:test",
+        SHA,
+        0,
+        lambda: (_ for _ in ()).throw(TimeoutError()),
+        prepare=lambda: True,
+    )
+    tr.operation(
+        "harness",
+        "comment:test",
+        SHA,
+        0,
+        lambda: pytest.fail("must not duplicate"),
+        prepare=lambda: True,
+    )
     assert any("discovery/reconciliation required" in w for w in tr.data["warnings"])
 
 

@@ -88,3 +88,18 @@ Verify delayed preparation reads with zero POST dispatch and no transient/persis
 recovery, pending evidence before POST, and post-write verification fences. Run focused and broader
 tracking/validator regressions, Wiki lint and full check.ps1; append factual completion evidence,
 commit/push the existing branch and verify cleanliness. No agent-cycle artifacts or verdicts change.
+
+## Post-cycle human-approved correction — R5
+Level 1, clean baseline fd1ca03b45fa6f0bfea39ff04fca85016301b0e7, existing ticket branch.
+Address only the remaining independent finding: create/comment/attachment/PR-link callbacks still
+performed preparation GETs after pending intent. Source-verified ProjectWiki, scoped Graphify and
+CRG callers show six operation sites; field/definition preparation already uses the intended boundary.
+Require an explicit prepare callback at every operation site. Move all four remaining pre-write
+reads and payload preparation before intent; failed preparation records diagnostics without any
+mutation/idempotency entry. Preserve existing operation evidence, exact issue checks, duplicate
+checks, read-after-write verification and pending/uncertain guards. Execute starts at mutation dispatch.
+Parameterize delayed preparation reads across all four paths, verify no transient/durable mutation
+evidence or dispatch, healthy same-action restart/idempotency, and actual POST timeout guards.
+Run focused preparation tests, broader tracking/validator regressions and full scripts/check.ps1;
+update only affected docs/Wiki/completion records, then commit/push the existing branch and verify
+cleanliness. No agent-cycle artifacts, historical verdicts, reviewer permissions or PDFTR-45/46 changes.

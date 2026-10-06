@@ -119,9 +119,12 @@ exact discovery, never another creation. Each REST call has a 5-second socket ti
 overall bound, with no automatic mutation retry loop. Mutation socket/overall timeouts, connection loss,
 HTTP 408/5xx mutation errors (including gateway 504), and unreadable mutation responses are uncertain even if the client transport has terminated: the server
 may still complete the write. Durable create/comment and field/definition fences require reconciliation.
-Read-only request timeouts are ordinary read failures. Field/definition reads and comparisons run
-before mutation journaling, so a pre-write GET timeout leaves no pending/uncertain mutation or
-conflicting-write fence; healthy synchronization can proceed after restart. A verification GET
+Read-only request timeouts are ordinary read failures. Every mutation operation explicitly prepares
+identity checks, discovery, duplicate checks and payloads before mutation journaling, including issue
+creation, lifecycle comments, attachments, PR cross-links and field/definition updates. Failed
+preparation creates only diagnostic events, without reserving a non-repeatable mutation key or
+creating a pending/uncertain mutation or conflicting-write fence; the same action can retry after
+restart. Pending intent is persisted immediately before mutation execution. A verification GET
 timeout after a dispatched write still preserves that operation's mutation fence.
 An existing committed `reviews/review-<TICKET>.md` completion summary is attached after PASS.
 

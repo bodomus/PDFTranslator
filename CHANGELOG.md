@@ -25,6 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completes field/definition read-before-write checks before journaling a mutation. A pre-write GET
   timeout no longer fences later synchronization across restart; dispatched mutation and post-write
   verification timeout protection is preserved.
+  The post-cycle R5 correction extends mandatory preparation to issue creation, lifecycle comments,
+  attachments and PR cross-links. Failed pre-write reads never reserve a non-repeatable mutation key;
+  the same action can retry safely after restart. Actual mutations retain write-ahead intent and
+  uncertainty protection.
 
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
   review-envelope protocol instead of runtime-importing a changed runner against cached validator

@@ -34,6 +34,9 @@ related:
 
 ## 2026-10-06
 
+- PDFTR-47 post-cycle R5 requires preparation before intent for every mutation operation, including
+  issue creation, comments, attachments and PR cross-links. Failed preparation leaves no mutation
+  key/fence; restart retries remain idempotent and dispatched writes retain uncertainty protection.
 - PDFTR-47 post-cycle R4 separates read-only overall timeouts from mutation uncertainty; pre-write
   field/definition GET failures leave no fence, while dispatched mutations retain durable protection.
 - PDFTR-47 attempt 5 classifies HTTP 408/5xx mutation errors as uncertain: delayed upstream writes

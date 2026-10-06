@@ -586,11 +586,12 @@ class ProjectTracking:
         action: str,
         sha: str,
         round_: int,
-        fn: Callable[[], Any],
+        execute: Callable[[], Any],
         *,
+        prepare: Callable[[], bool],
         repeatable: bool = False,
-        prepare: Callable[[], bool] | None = None,
     ) -> Any:
+        """Prepare reads/payloads before intent; execution starts at possible mutation dispatch."""
         self.require_reconciled_writes()
         key = hashlib.sha256(f"{self.ticket}|{role}|{round_}|{sha}|{action}".encode()).hexdigest()
         previous = self.data["operations"].get(key)
@@ -615,14 +616,14 @@ class ProjectTracking:
         try:
             result = None
             # Read-before-write failures must not leave mutation evidence, even on process death.
-            if prepare is None or prepare():
+            if prepare():
                 self.data["operations"][key] = {
                     "status": "pending",
                     "conflicting_write": repeatable,
                 }
                 self.save()  # At-most-once mutation even if response is lost or runner crashes.
                 mutation_started = True
-                result = fn()
+                result = execute()
             event["status"] = "success"
             self.data["operations"][key] = {"status": "success", "result": result}
             return result
@@ -638,10 +639,13 @@ class ProjectTracking:
             uncertain = isinstance(error, UncertainTransport) or (
                 mutation_started and isinstance(error, ReadTimeout)
             )
-            self.data["operations"][key] = {
-                "status": "uncertain" if uncertain else "failed",
-                "conflicting_write": repeatable and uncertain,
-            }
+            if mutation_started:
+                self.data["operations"][key] = {
+                    "status": "uncertain" if uncertain else "failed",
+                    "conflicting_write": repeatable and uncertain,
+                }
+            # Preparation failures are diagnostic events, never mutation/idempotency evidence.
+            # Preserve any prior evidence; only a dispatched attempt can replace it.
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
             self.warning(f"{action}: {self.diagnostic(error)}; local workflow continues")
@@ -827,21 +831,30 @@ class ProjectTracking:
                     "exact issue absent; remote create unavailable (explicit permission required)"
                 )
 
-            def create() -> Any:
+            existing: dict[str, Any] | None = None
+            payload: dict[str, Any] = {}
+
+            def prepare_create() -> bool:
+                nonlocal existing
                 # Recheck under the synchronization lock, including a remote race before POST.
                 found = self.yt.request("GET", "issues/" + self.ticket + query)
                 if found is not None:
-                    return self.verify(found)
+                    existing = self.verify(found)
+                    return False
                 lines = self.text.strip().splitlines()
+                payload.update(
+                    project={"id": self.project["id"]},
+                    summary=lines[0].lstrip("# "),
+                    description="\n".join(lines[1:]).strip(),
+                )
+                return True
+
+            def create() -> Any:
                 try:
                     created = self.yt.request(
                         "POST",
                         "issues" + query,
-                        {
-                            "project": {"id": self.project["id"]},
-                            "summary": lines[0].lstrip("# "),
-                            "description": "\n".join(lines[1:]).strip(),
-                        },
+                        payload,
                     )
                 except Exception as error:
                     if isinstance(error, APIError) and error.status < 500 and error.status != 409:
@@ -849,7 +862,7 @@ class ProjectTracking:
                     # Lost response/conflict: only exact discovery can authorize continuation.
                     found = self.yt.request("GET", "issues/" + self.ticket + query)
                     if found is None:
-                        raise TrackingError(
+                        raise UncertainTransport(
                             "create outcome uncertain; discovery only on resume"
                         ) from None
                     return self.verify(found)
@@ -874,10 +887,17 @@ class ProjectTracking:
                 return canonical
 
             issue = self.operation(
-                "harness", "create", self.data.get("bootstrap_sha", ""), 0, create
+                "harness",
+                "create",
+                self.data.get("bootstrap_sha", ""),
+                0,
+                create,
+                prepare=prepare_create,
             )
             if issue is None:
-                raise TrackingError("create outcome uncertain; discovery only on resume")
+                issue = existing
+            if issue is None:
+                raise TrackingError("YouTrack issue creation unavailable; discovery only on resume")
         self.issue = self.verify(issue)
         self.data.update(
             issue_id=self.issue["id"],
@@ -1302,8 +1322,9 @@ class ProjectTracking:
             if action == "PASS":
                 text += "\nReady for human review"
             # Agent prose is not verified CI/PR/review evidence; do not publish it as claims.
+            comment_payload = {"text": text}
 
-            def comment() -> None:
+            def prepare_comment() -> bool:
                 self.verify(
                     self.yt.request(
                         "GET",
@@ -1316,38 +1337,48 @@ class ProjectTracking:
                     )
                     or []
                 )
-                if not any(marker in c["text"] for c in comments):
-                    self.yt.request(
-                        "POST", "issues/" + self.issue["id"] + "/comments", {"text": text}
-                    )
+                return not any(marker in c["text"] for c in comments)
 
-            self.operation(role, "comment:" + action, sha, round_, comment)
+            def comment() -> None:
+                self.yt.request("POST", "issues/" + self.issue["id"] + "/comments", comment_payload)
+
+            self.operation(role, "comment:" + action, sha, round_, comment, prepare=prepare_comment)
 
     def attach(self, filename: str, content: str, role: str, sha: str, round_: int) -> None:
         if not self.issue or self.data.get("identity_unsafe"):
             return
         digest = hashlib.sha256(content.encode()).hexdigest()
+        boundary = "pdftranslate-" + digest
+        payload = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="upload"; '
+            f'filename="{filename}"\r\nContent-Type: text/markdown\r\n\r\n'
+            + content
+            + f"\r\n--{boundary}--\r\n"
+        ).encode()
 
-        def upload() -> None:
+        def prepare_upload() -> bool:
             self.verify(
                 self.yt.request(
                     "GET", "issues/" + self.ticket + "?fields=id,idReadable,project(id,shortName)"
                 )
             )
-            boundary = "pdftranslate-" + digest
-            payload = (
-                f'--{boundary}\r\nContent-Disposition: form-data; name="upload"; '
-                f'filename="{filename}"\r\nContent-Type: text/markdown\r\n\r\n'
-                + content
-                + f"\r\n--{boundary}--\r\n"
-            ).encode()
+            return True
+
+        def upload() -> None:
             self.yt.request(
                 "POST",
                 "issues/" + self.issue["id"] + "/attachments",
                 (payload, "multipart/form-data; boundary=" + boundary),
             )
 
-        self.operation(role, "attachment:" + filename + ":" + digest, sha, round_, upload)
+        self.operation(
+            role,
+            "attachment:" + filename + ":" + digest,
+            sha,
+            round_,
+            upload,
+            prepare=prepare_upload,
+        )
 
     def role_metadata(self, role: str, config: Any) -> None:
         try:
@@ -1463,8 +1494,17 @@ class ProjectTracking:
             event.update(status="success", pr_url=pr["url"], ci_status=document["ci_status"])
             if youtrack_writes_allowed and self.issue and not self.data.get("identity_unsafe"):
                 marker = f"[{self.ticket}:pr:{sha}]"
+                crosslink_payload = {
+                    "text": marker
+                    + "\nPR: "
+                    + pr["url"]
+                    + "\nImplementation SHA: "
+                    + sha
+                    + "\nCI snapshot: "
+                    + document["ci_status"]
+                }
 
-                def crosslink() -> None:
+                def prepare_crosslink() -> bool:
                     self.verify(
                         self.yt.request(
                             "GET",
@@ -1474,22 +1514,21 @@ class ProjectTracking:
                     comments = self.yt.request(
                         "GET", "issues/" + self.issue["id"] + "/comments?fields=id,text&$top=1000"
                     )
-                    if not any(marker in c["text"] for c in comments):
-                        self.yt.request(
-                            "POST",
-                            "issues/" + self.issue["id"] + "/comments",
-                            {
-                                "text": marker
-                                + "\nPR: "
-                                + pr["url"]
-                                + "\nImplementation SHA: "
-                                + sha
-                                + "\nCI snapshot: "
-                                + document["ci_status"]
-                            },
-                        )
+                    return not any(marker in c["text"] for c in comments)
 
-                self.operation("harness", "pr-link", sha, manifest["review_round"], crosslink)
+                def crosslink() -> None:
+                    self.yt.request(
+                        "POST", "issues/" + self.issue["id"] + "/comments", crosslink_payload
+                    )
+
+                self.operation(
+                    "harness",
+                    "pr-link",
+                    sha,
+                    manifest["review_round"],
+                    crosslink,
+                    prepare=prepare_crosslink,
+                )
             self.warn("Human review PR: " + pr["url"] + "; CI: " + document["ci_status"])
         except Exception as error:
             event["error_class"] = type(error).__name__

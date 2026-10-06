@@ -238,9 +238,12 @@ responses also retain uncertainty: a gateway/server error or terminated client t
 does not prove server-side failure. Pending/uncertain field/definition writes durably block later
 YouTrack synchronization, including after restart; operator repair
 requires proving transport termination and reconciling remote state, not merely a GET or lock release.
-Read-only overall timeouts are ordinary read failures. Field/definition preparation reads precede
-pending mutation journaling; failed pre-write GETs persist no pending/uncertain mutation or
-conflicting-write fence, permitting healthy synchronization after restart. Verification GET timeouts
+Read-only overall timeouts are ordinary read failures. Every mutation has mandatory preparation:
+identity/discovery/duplicate reads and payload construction precede pending mutation journaling.
+This includes issue creation, lifecycle comments, attachments and PR cross-links as well as fields
+and definitions. Preparation failures persist diagnostic events, without mutation evidence or a
+non-repeatable mutation guard, permitting the same action to retry after restart. Existing mutation
+evidence is preserved; pending intent is persisted before execution. Verification GET timeouts
 after a dispatched mutation retain its durable fence.
 Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
 operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports

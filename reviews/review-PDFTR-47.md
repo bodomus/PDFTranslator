@@ -46,3 +46,20 @@ scripts/check.ps1: 1046 passed, 3 skipped, 89.54% coverage; Wiki lint, Ruff form
 No `.agent-cycle` artifacts, historical verdicts or reviewer capabilities changed. No new automated
 review or live mutation was recorded. The read-only YouTrack connector could not find PDFTR-47,
 so ticket fields and attachments remain unavailable. Progress/test logs: `temp/PDFTR-47-R4-*`.
+
+## Post-cycle human-approved corrective patch — R5
+
+All four remaining pre-write paths now use mandatory preparation before mutation intent:
+issue creation, lifecycle comments, attachments and PR cross-links. Failed GET preparation creates
+diagnostic events only, without reserving a non-repeatable mutation key or creating pending/uncertain
+mutation evidence. Healthy same-action retries after restart remain idempotent. Actual mutations
+retain pending intent, uncertainty guards and exact identity/read-after-write checks; existing fences
+and independent GitHub readiness remain intact.
+
+Focused boundary suite: 10 passed. Broader tracking/validator suite: 203 passed. Full Windows
+scripts/check.ps1 passed: 1056 passed, 3 skipped in 458.13s, coverage 89.54%; Wiki lint,
+Ruff format/lint and mypy passed. No reviewer permission,
+PDFTR-45/46, cycle-state or historical artifact changes; no new automated review was recorded.
+This remains an implementer completion record, not an independent review verdict. YouTrack lookup
+could not find PDFTR-47, so remote fields/attachments remain unavailable. Progress/test logs:
+`temp/PDFTR-47-R5-*`.

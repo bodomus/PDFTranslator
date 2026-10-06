@@ -266,3 +266,39 @@ recorded. The existing implementer completion record is extended only with this 
 Read-only connector lookup returned `Issue not found: PDFTR-47`; ticket fields and ticket/report
 attachments could not be updated. No live mutation, guessed issue creation or reconciliation occurred.
 Concise factual progress and test logs are under `temp/PDFTR-47-R4-*` and are not committed.
+
+## Post-cycle human-approved corrective patch — R5
+
+Baseline: clean `pdftr-47-youtrack-live-sync` at
+`fd1ca03b45fa6f0bfea39ff04fca85016301b0e7`. Correction confined to the remaining independent
+preparation finding, its regression tests and affected ticket/operational documentation.
+
+Every operation now requires an explicit preparation callback. Issue-creation rechecks,
+lifecycle identity/comment discovery, attachment identity checks and PR cross-link discovery run
+before pending mutation intent. Payloads are prepared before execution. Preparation failures
+record diagnostic events without creating or replacing mutation/idempotency evidence, so the
+same non-repeatable action can retry after state reload. Existing pending/uncertain guards remain
+unchanged; execution persists pending intent before a possible POST. Creation reconciliation that
+cannot prove the dispatched write's outcome retains uncertainty. Exact identity and post-write
+verification remain in place; GitHub readiness stays independent of YouTrack write fences.
+
+Validation:
+- Focused preparation/mutation-boundary regressions: **10 passed in 1.39s**.
+- Broader tracking/validator suite: **203 passed in 3.38s**.
+- Full `scripts/check.ps1`: **PASS**, Windows/Python 3.12.10; Wiki lint 0 errors/0 warnings,
+  Ruff format/lint (333 files), mypy (98 source files), **1056 passed, 3 skipped in 458.13s**,
+  coverage 89.54%.
+- Wiki lint: 0 errors/0 warnings; targeted Ruff format/lint passed.
+- Parameterized pre-write identity/duplicate GET timeouts cover all four paths, no mutation
+  dispatch or transient/durable mutation evidence, restart retry and subsequent idempotency.
+  Actual POST timeouts retain pending-before-dispatch evidence and non-repeatable uncertainty
+  guards across restart. Existing transport/HTTP/definite-rejection/GitHub regressions passed.
+
+ProjectWiki search, scoped existing Graphify evidence and incremental CRG caller/impact queries
+were source-verified. CRG output is truncated and has unresolved edges; source checks confirm all
+six production operation sites supply preparation and execution starts with POST, before any
+verification/reconciliation GET. No dependencies, module boundaries or cycle schema changed.
+Protected PDFTR-45/46 runner/reviewer/progress files and historical `.agent-cycle` artifacts remain
+unchanged. No new automated review was recorded. YouTrack connector lookup returned
+`Issue not found: PDFTR-47`; no ticket mutation or guessed creation occurred, and ticket/report
+attachments remain unavailable. Factual progress/test logs: `temp/PDFTR-47-R5-*` (uncommitted).

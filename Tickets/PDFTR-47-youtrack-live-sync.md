@@ -1,5 +1,17 @@
 # PDFTR-47 — YouTrack Live Synchronization Validation and Hardening
 
+## Human-approved post-cycle correction R5
+
+Address only the remaining pre-write preparation finding at reviewed baseline
+`fd1ca03b45fa6f0bfea39ff04fca85016301b0e7`. Issue creation, lifecycle comments, attachments and
+YouTrack PR cross-links must finish GETs, exact identity/duplicate checks and payload preparation
+before pending mutation intent is persisted. Preparation failures leave diagnostic events only,
+with no pending/uncertain mutation, conflicting-write fence or non-repeatable guard. Healthy retries
+after restart must execute the same action exactly once. Preserve write-ahead crash safety and
+post-dispatch timeout/connection-loss/HTTP 408/5xx uncertainty, definite rejection behavior,
+GitHub isolation and PDFTR-45/46 protections. Run focused/broader/full validation, commit and push
+the existing ticket branch. Do not modify historical agent-cycle artifacts or reviewer permissions.
+
 ## Goal
 
 Довести существующую YouTrack integration до подтверждённой end-to-end синхронизации и убрать текущий best-effort/неопределённый режим.
