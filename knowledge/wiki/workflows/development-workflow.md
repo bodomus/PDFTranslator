@@ -23,6 +23,7 @@ sources:
 - ../../../scripts/tracking_hooks.py
 - ../../../project-tracking.toml
 - ../../../tests/test_project_tracking.py
+- ../../../tests/test_youtrack_validation.py
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../tests/test_operational_retry.py
@@ -200,14 +201,26 @@ package subprocesses in other test modules.
 The runner invokes `TrackingHooks` after safe local preflight. `ProjectTracking` bootstraps the
 exact Markdown ticket before implementer execution; its narrow YouTrack REST adapter verifies
 key/project/configured account before mutations, reads project field cardinality/value bundles,
-and uploads the ticket definition. Only configured schema-valid fields and lifecycle states are
+and uploads the ticket definition. `project-tracking.toml` is canonical, with a credential-free HTTPS
+`base_url` and environment-only token. A legacy URL variable must match the configured URL exactly.
+Preflight distinguishes disabled, missing credentials, authentication, project and endpoint failures.
+Creation is opt-in (shipped `allow_create = false`); definite exact absence differs from transport/auth
+failure. Creation responses and read-back must agree with the requested key/project; a differently
+allocated YouTrack number requires human reconciliation, never fallback mutation. OS-held local
+synchronization locks serialize harness/operator access; ambiguous creates recover through exact
+discovery only. Important field/definition updates use read-before-write and semantic read-back.
+Assignee resolves an exact API login; estimates, UTC due dates and enums require explicit local values.
+The operator `validate-live` command defaults to remote read-only, supports dry-run, explicit creation,
+field/state updates and a separate finalization opt-in, and repeats opted-in synchronization to verify
+idempotency. No real credentials or remote mutations are required during implementation; deterministic
+fakes do not establish live API/mapping compatibility. Only configured schema-valid fields and lifecycle states are
 applied. Unsupported fields and outages generate agent-visible warnings without changing verdicts.
 Historical PDFTR-38…PDFTR-42 placeholders are excluded.
 
 Optional agent metadata is a separate YouTrack stdout envelope, not a change to strict handoff or
 review schemas. The runner applies it only after accepting the relevant local result. The reviewer
-keeps its fixed read-only tools. Integration tokens are removed from child environments; generic
-external error messages avoid server-body/credential disclosure. Invalid metadata is isolated from
+keeps its fixed read-only tools. Integration tokens are removed from child environments; categorized, sanitized
+external diagnostics avoid server-body/credential disclosure. Invalid metadata is isolated from
 an otherwise valid review result. The strict review envelope is selected first and never rewritten
 by metadata removal. Nested, overlapping and unmatched intent delimiters, including those inside
 fenced JSON, fail closed; metadata cannot hide competing verdicts.
@@ -216,7 +229,10 @@ and review comments continue independently of custom-field availability.
 
 Runtime `youtrack.json` and JSONL events preserve identities, mutation keys, SHA, action and status.
 Mutations are journaled before sending: ambiguous create outcomes use discovery only on resume,
-while uncertain comment/attachment mutations require human reconciliation. Implementation reports
+while uncertain comment/attachment mutations require human reconciliation. Concise comments publish
+only harness-confirmed SHA/round/action evidence, not agent prose or huge logs. PASS/PASSED target human
+review, never Done; only an explicit merged/finalization action may close. REST socket and overall
+timeouts bound calls; an uncertain in-flight request is never blindly retried. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
 local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
 

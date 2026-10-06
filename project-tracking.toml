@@ -1,6 +1,10 @@
-# Credentials: YOUTRACK_URL (HTTPS), YOUTRACK_TOKEN; gh authenticated configuration.
+# Canonical live configuration. Secrets: YOUTRACK_TOKEN environment; gh authentication.
+# Legacy YOUTRACK_URL, if set, must exactly match base_url (never overrides the host).
 [youtrack]
 enabled = true
+base_url = "https://bodomus.youtrack.cloud"
+# Only an explicit operator --allow-create may create missing issues by default.
+allow_create = false
 project = "PDFTR"
 assignee = "bodomus"
 expected_login = "bodomus"
@@ -9,7 +13,11 @@ expected_login = "bodomus"
 [youtrack.fields]
 due_date = "Due Date"
 
+# Optional [youtrack.defaults]: estimation = "4h", due_date = "2026-12-31",
+# type = "Task", priority = "Normal". No values are inferred from ticket size.
+
 [youtrack.states]
+NEW = "Open"
 start = "In Progress"
 handoff = "Ready for Review"
 CHANGES_REQUIRED = "In Progress"

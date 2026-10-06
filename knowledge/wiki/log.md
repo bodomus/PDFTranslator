@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-47-youtrack-live-sync.md
 - ../../Tickets/PDFTR-46-Self-Modifying-Runner.md
 - ../../Tickets/PDFTR-45-operational-stopped-retry.md
 - ../../Tickets/PDFTR-44-agent-progress-journal.md
@@ -32,6 +33,10 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-06
+
+- Documented PDFTR-47 canonical YouTrack host/token configuration, categorized preflight,
+  exact opt-in creation, discovered mappings and read-back, concise evidence, local locking
+  and read-only/dry-run operator validation. Live access remains an explicit operator step.
 
 - Recorded PDFTR-46 startup-snapshot semantics, independent review protocol and preserved
   post-review stdout/log evidence; harness edits activate on the next invocation without hot reload.
