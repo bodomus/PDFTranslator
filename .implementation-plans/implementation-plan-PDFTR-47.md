@@ -33,6 +33,19 @@ failure regressions; preserve independent valid intent fields on partial validat
 Update README/CHANGELOG/affected Wiki/report; run focused suite, Wiki lint and full check.ps1;
 commit/push a new SHA and prepare only designated handoff JSON. No live mutation or new dependencies.
 
+## Attempt 3 — reviewer R1 transport-failure path
+Level 1; clean baseline, existing Graphify query and UTF-8 CRG incremental preflight reused.
+Source verifies `_request` converts socket timeout/connection loss to ordinary TrackingError,
+bypassing the durable uncertain conflicting-write fence added in attempt 2.
+Classify all non-HTTP failures after entering the mutation transport as UncertainTransport;
+retain definite HTTP rejection and pre-dispatch identity validation. Include malformed response
+and response-bound failures conservatively. No automatic reconciliation/reset or retry.
+Exercise real request/_request via fake opener, dispatch delayed server-side state mutation then
+raise socket timeout/reset/URLError before overall timeout; verify lifecycle/operator/restart remain
+fenced before and after delayed completion. Verify redaction and definite rejection/read semantics.
+Update operational docs/Wiki/report; run focused suite and full Windows check.ps1, commit/push,
+prepare runner handoff only. No live access or mutation required.
+
 ## Impact
 Only harness tracking, its configuration, tests and documentation. No PDF, model, OCR, dependency,
 agent-cycle schema, exact-SHA or reviewer-tool changes. No live API calls during implementation.

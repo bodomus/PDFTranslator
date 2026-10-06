@@ -13,6 +13,11 @@ Attempt 2 addresses R1/R2 with durable pending/timed-out field/definition synchr
 pre-mutation configured-value validation, aggregate bootstrap failure and completion-claim suppression.
 151 focused tests and the full Windows gate passed (1004 passed, 3 skipped). No live mutation occurred.
 
+Attempt 3 closes R1's socket-timeout/connection-loss path through the real request wrapper.
+Uncertain dispatched mutation outcomes now retain the durable synchronization fence across restart,
+including unreadable responses. 159 focused tests and the full Windows gate passed
+(1012 passed, 3 skipped, 89.54% coverage). No live mutation occurred; remote CI remains unverified.
+
 This is an implementer completion record, not an independent reviewer verdict. Automated review and
 final human review/merge remain separate runner/human decisions. Ticket/report attachments await
 configured harness synchronization or an explicit operator action.

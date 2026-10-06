@@ -108,7 +108,7 @@ and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent
 mutation: an uncertain create is recovered by exact-key discovery, never by blind re-creation;
 uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.
 Fields/definitions are read before writing and re-verified on resume; identical values generate no
-extra update. Pending or timed-out field/definition operations durably fence further synchronization,
+extra update. Pending or uncertain field/definition operations durably fence further synchronization,
 even across restart. There is no automatic fence reset: an operator must establish that the old
 transport has terminated and reconcile remote state before repairing its operation evidence. A GET
 or lock release alone cannot establish this. Malformed configured field values fail validation before
@@ -116,8 +116,9 @@ bootstrap mutations; requested synchronization failures return nonzero without a
 validation dumps are not published. Warnings are passed to agent reports; the implementation report
 is attached. Synchronization is locally OS-lock serialized; conflicts/uncertain creates permit only
 exact discovery, never another creation. Each REST call has a 5-second socket timeout and 10-second
-overall bound, with no automatic mutation retry loop. An overall timeout can leave an in-flight
-remote request uncertain; durable create/comment and field/definition fences require reconciliation.
+overall bound, with no automatic mutation retry loop. Socket/overall timeouts, connection loss, and
+unreadable mutation responses are uncertain even if the client transport has terminated: the server
+may still complete the write. Durable create/comment and field/definition fences require reconciliation.
 An existing committed `reviews/review-<TICKET>.md` completion summary is attached after PASS.
 
 #### Explicit operator validation (no agent cycle)

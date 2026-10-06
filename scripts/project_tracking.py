@@ -61,7 +61,7 @@ class TrackingError(RuntimeError):
 
 
 class UncertainTransport(TrackingError):
-    """A timed-out transport may still complete a remote mutation."""
+    """A terminated or timed-out client transport does not prove remote failure."""
 
 
 class APIError(TrackingError):
@@ -283,7 +283,16 @@ class YouTrack:
             if method == "GET" and error.code == 404:
                 return None
             raise APIError(error.code) from None
-        except (OSError, ValueError):
+        except Exception:
+            # Once open() is entered, a mutation may have reached the server. Socket
+            # timeout/connection loss, truncated JSON, and response-limit failures do
+            # not prove it failed remotely, even after the client transport terminates.
+            # HTTP errors above remain definite responses; pre-dispatch validation is
+            # outside this try block. Never expose transport/server exception text.
+            if method != "GET":
+                raise UncertainTransport(
+                    "YouTrack transport/response failure; remote outcome uncertain"
+                ) from None
             raise TrackingError("YouTrack transport/response failure") from None
 
 
@@ -622,7 +631,7 @@ class ProjectTracking:
                 stream.write(self.safe_text(json.dumps(event)) + "\n")
 
     def require_reconciled_writes(self) -> None:
-        # Pending survives process death; uncertain survives an overall timeout. Neither
+        # Pending survives process death; uncertain survives any lost write response. Neither
         # lock release nor a later GET proves a detached transport cannot still write.
         if any(
             op.get("conflicting_write") and op.get("status") in {"pending", "uncertain"}

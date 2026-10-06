@@ -34,6 +34,10 @@ related:
 
 ## 2026-10-06
 
+- PDFTR-47 attempt 3 extends durable write uncertainty to socket timeouts, connection loss and
+  unreadable mutation responses; client transport termination never proves server-side failure.
+  Real request-wrapper regressions verify delayed writes cannot bypass restart/lifecycle fences.
+
 - Clarified PDFTR-47 durable field/definition uncertainty fences, operator reconciliation requirements,
   and configured-value validation/nonzero operator failure reporting after attempt-two regressions.
 

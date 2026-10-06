@@ -15,7 +15,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and remote failures are visible but remain non-blocking for local cycles. No inferred estimates,
   due dates, enum values or unverified agent comment claims. PASS never closes the issue.
   Pending/timed-out field and definition writes now fence subsequent synchronization across restarts
-  until operator reconciliation. Malformed configured values fail before bootstrap mutation, and
+  until operator reconciliation, including socket timeouts, connection loss and unreadable mutation
+  responses (client termination does not prove remote failure). Malformed configured values fail before bootstrap mutation, and
   failed operator synchronization never claims idempotent completion.
 
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure

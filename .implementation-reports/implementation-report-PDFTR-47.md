@@ -1,7 +1,45 @@
 # Implementation Report
 
 ## Ticket
-PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1 and 2).
+PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1–3).
+
+## Attempt 3 — R1 socket/connection-loss remediation
+- Level 1 scoped fix from a clean baseline. `_request` previously turned socket timeouts and
+  connection loss into ordinary TrackingError, permitting later repeatable writes despite a
+  dispatched POST still executing remotely. Non-HTTP exceptions after entering the mutation
+  transport now become sanitized UncertainTransport, including unreadable/truncated responses and
+  response bounds. Definite HTTP rejection and pre-dispatch identity validation remain distinct;
+  failed GET responses remain ordinary read failures, not exact issue absence.
+- Existing operation write-ahead evidence now retains `uncertain` plus `conflicting_write` for
+  these failures, fencing all later synchronization across action/SHA changes and restarts.
+  No retry, automatic fence reset, new dependency, schema or module-boundary change. Local cycles
+  continue safely; operator reconciliation must establish remote write completion and reconcile
+  state before repairing evidence. A terminated socket alone does not prove remote failure.
+- Deterministic tests exercise the real YouTrack request/_request wrapper through a fake opener:
+  delayed server-side In Progress POST dispatch followed by socket TimeoutError, connection reset,
+  or URLError before the overall deadline. Subsequent handoff/operator synchronization and restart
+  fail closed, even after releasing the delayed write; no successful newer state is claimed.
+  Additional tests cover malformed mutation responses, non-uncertain failed reads, definite
+  400/401/403 rejections, pre-dispatch identity checks and safe diagnostic/artifact redaction.
+- Focused tracking/validator/uncertainty suite: **159 passed** (`--no-cov`, repository-local basetemp).
+  Initial focused run exposed a test-fixture expectation (existing issue had no State); corrected
+  by explicitly initializing Open. Its default package coverage gate was inapplicable to script-only
+  tests; full package coverage was validated by the complete gate below.
+- Full Windows `scripts/check.ps1`: **PASS**, Wiki lint 0 errors/warnings, Ruff format/lint,
+  mypy 98 source files, **1012 passed, 3 skipped**, 89.54% coverage, 403.04 seconds.
+  Temporary files/logs were repository local. No model, CUDA, OCR or PDF manual validation needed.
+- Graphify scoped query reused existing orientation. CRG UTF-8 pre/post incremental updates
+  succeeded; source inspection verifies callers are TrackingHooks/operator validation and tests,
+  not translation code (graph adjacency is not a source dependency). No external API changes;
+  Context7 capability unavailable. Blast radius remains harness tracking and its diagnostics/tests.
+- README, CHANGELOG, affected development-workflow Wiki/log, plan and completion summary updated.
+  Wiki lint passed. No runner-owned authoritative coordination files were modified.
+- Live limitations: **no live YouTrack operation performed in attempt 3**; credentials/account,
+  fields/login, lifecycle, attachments and read-back remain fake-validated, not live verified.
+  Windows/Ubuntu remote CI is not claimed passed; local Windows gate is confirmed.
+  Required integration warning categories: ["YouTrack credentials unavailable", "YouTrack identity
+  mismatch; remote mutation refused", "YouTrack authentication failed"]. The latter two are
+  deterministic diagnostic coverage, not observed live failures. Live access is non-blocking.
 
 ## Attempt 2 — review remediation
 - R1: repeatable definition/field operations now persist a conflicting-write marker before execution.

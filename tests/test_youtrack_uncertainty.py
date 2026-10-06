@@ -1,14 +1,24 @@
-"""Attempt-two regressions for durable uncertainty and invalid configured values."""
+"""Regressions for durable transport uncertainty and invalid configured values."""
 
 from __future__ import annotations
 
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 import pytest
-from scripts.project_tracking import ProjectTracking, YouTrack, validate_live
+from scripts.project_tracking import (
+    APIError,
+    IdentityError,
+    ProjectTracking,
+    TrackingError,
+    UncertainTransport,
+    YouTrack,
+    validate_live,
+)
 
 from tests.test_project_tracking import CONFIG, TEXT, TICKET, FakeYouTrack, manifest, mutations
 
@@ -80,6 +90,151 @@ def test_timed_out_write_fences_later_sync_and_restart(tmp_path: Path, kind: str
     assert any("operator reconciliation required" in w for w in resumed.data["warnings"])
     if kind == "state":
         assert fake.values["State"] == {"id": "0"}  # No newer write was falsely verified.
+
+
+@pytest.mark.parametrize("failure", [TimeoutError, ConnectionResetError, URLError])
+def test_socket_failure_fences_dispatched_state_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    import scripts.project_tracking as module
+
+    fake = FakeYouTrack()
+    fake.values["State"] = {"id": "4"}  # Existing Open state.
+    release, terminated = threading.Event(), threading.Event()
+    dispatched = False
+    messages: list[str] = []
+
+    class Response:
+        def __init__(self, result: Any) -> None:
+            self.payload = json.dumps(result).encode()
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def read(self) -> bytes:
+            return self.payload
+
+    def open_request(request: Any, *, timeout: int) -> Response:
+        nonlocal dispatched
+        assert timeout == 5
+        method = request.get_method()
+        path = request.full_url.split("/api/", 1)[1]
+        body: Any = None
+        if request.data:
+            content_type = request.get_header("Content-type")
+            body = (
+                json.loads(request.data)
+                if content_type == "application/json"
+                else (request.data, content_type)
+            )
+        if (
+            method == "POST"
+            and isinstance(body, dict)
+            and body.get("customFields", [{}])[0].get("value") == {"id": "0"}
+        ):
+            dispatched = True
+
+            def remote_completion() -> None:
+                try:
+                    assert release.wait(5)
+                    fake.request(method, path, body)
+                finally:
+                    terminated.set()
+
+            threading.Thread(target=remote_completion, daemon=True).start()
+            # Real request/_request path: the client socket fails before the outer
+            # queue timeout, while the server continues processing the dispatched POST.
+            raise failure("fake-token private transport details")
+        return Response(fake.request(method, path, body))
+
+    monkeypatch.setattr(module, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    yt = YouTrack("https://tracker.example", "fake-token")
+
+    def tracking() -> ProjectTracking:
+        return ProjectTracking(
+            tmp_path, TICKET, TEXT, config=CONFIG, youtrack=yt, warn=messages.append
+        )
+
+    tr = tracking()
+    tr.bootstrap()
+    assert not tr.sync_failed
+    try:
+        tr.lifecycle("start", manifest())
+        assert dispatched
+        assert tr.sync_failed
+        persisted = json.loads(tr.path.read_text())
+        assert any(
+            op["status"] == "uncertain" and op.get("conflicting_write")
+            for op in persisted["operations"].values()
+        )
+        before = len(mutations(fake))
+        tr.lifecycle("handoff", manifest())
+        resumed = tracking()
+        assert validate_live(resumed, state="handoff") == 1
+        assert resumed.data["last_sync_status"] == "failed"
+        assert len(mutations(fake)) == before
+        assert fake.values["State"] == {"id": "4"}  # Still Open, no newer write.
+        assert not any("Idempotent second" in message for message in messages)
+    finally:
+        release.set()
+        assert terminated.wait(5)
+    assert fake.values["State"] == {"id": "0"}  # Delayed In Progress completed.
+    resumed = tracking()
+    resumed.lifecycle("handoff", manifest())
+    assert resumed.sync_failed
+    assert resumed.data["last_sync_status"] == "failed"
+    assert len(mutations(fake)) == before + 1  # Only the original dispatched POST.
+    evidence = tr.path.read_text() + (tr.directory / "youtrack-events.jsonl").read_text()
+    assert "fake-token" not in evidence + "".join(messages)
+    assert "private transport details" not in evidence + "".join(messages)
+
+
+@pytest.mark.parametrize("payload", [b"not json", b"{"])
+def test_lost_mutation_response_is_uncertain(
+    monkeypatch: pytest.MonkeyPatch, payload: bytes
+) -> None:
+    import scripts.project_tracking as module
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def read(self) -> bytes:
+            return payload
+
+    monkeypatch.setattr(
+        module, "build_opener", lambda *args: SimpleNamespace(open=lambda *a, **kw: Response())
+    )
+    yt = YouTrack("https://tracker.example", "fake-token")
+    with pytest.raises(UncertainTransport):
+        yt.request("POST", "issues/1-43", {})
+    with pytest.raises(TrackingError) as error:
+        yt.request("GET", "issues/1-43")
+    assert not isinstance(error.value, UncertainTransport)
+
+
+@pytest.mark.parametrize("status", [401, 403, 400])
+def test_definite_http_rejection_and_pre_dispatch_validation_are_not_uncertain(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    import scripts.project_tracking as module
+
+    def rejected(*args: Any, **kwargs: Any) -> Any:
+        raise HTTPError("https://tracker.example", status, "private", {}, None)
+
+    monkeypatch.setattr(module, "build_opener", lambda *args: SimpleNamespace(open=rejected))
+    yt = YouTrack("https://tracker.example", "fake-token")
+    with pytest.raises(APIError) as error:
+        yt.request("POST", "issues/1-43", {})
+    assert error.value.status == status
+    with pytest.raises(IdentityError):
+        yt.request("POST", "https://other.example/api/issues/1-43", {})
 
 
 @pytest.mark.parametrize(
