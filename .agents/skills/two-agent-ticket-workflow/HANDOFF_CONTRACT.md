@@ -11,6 +11,11 @@ review-2.json       immutable normalized reviewer result, when recorded
 
 The entire `.agent-cycle/` root is local runtime state and is ignored by Git.
 
+`implementer-progress.log` and `reviewer-progress.log` are append-only diagnostic evidence, not
+schema fields or authoritative state. The runner supplies each role's fixed path and
+`progress_append` capability, preserves history across exits/resume/recovery, and appends UTC
+attempt/round boundaries. Journals never replace handoff claims or SHA-bound review JSON.
+
 ## Ownership
 
 - `system`: validator-written projection of ticket, branch, merge base, current HEAD, review round,

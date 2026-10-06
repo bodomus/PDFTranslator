@@ -18,7 +18,10 @@ The reviewer is strictly read-only for ordinary post-PDFTR-33 agent-cycle ticket
 - Run only validation that cannot format, regenerate, update, or otherwise modify project files.
 - Do not edit source, tests, docs, Wiki, plans, reports, or `reviews/`.
 - Do not commit, amend, push, reset, stash, rebase, switch task branches, or resolve conflicts.
-- You never write a coordination file. Return exactly one structured JSON object on stdout, where
+- Diagnostic exception: when provided, use only `progress_append(message)` for short factual UTC
+  milestones in your runner-bound reviewer journal. No reasoning or secrets. This permits neither
+  repository mutations nor implementer-journal writes; it never replaces a verdict.
+- You never write an authoritative coordination file. Return one structured JSON object on stdout, where
   the runner specifies. The runner persists that output into the ignored `.agent-cycle/<TICKET>/`
   runtime area and passes it to the validator.
 

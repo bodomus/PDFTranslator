@@ -27,8 +27,8 @@ export default function (pi: ExtensionAPI) {
   });
   // Enforce at runtime as well as CLI, regardless of provider/model.
   pi.on("tool_call", event => {
-    if (!["read", "grep", "find", "ls", "git_readonly"].includes(event.toolName)) {
-      return { block: true, reason: "Reviewer capability is read-only; no shell or writes" };
+    if (!["read", "grep", "find", "ls", "git_readonly", "progress_append"].includes(event.toolName)) {
+      return { block: true, reason: "Reviewer capability is read-only except its bound append-only progress journal; no shell or repository writes" };
     }
   });
 }

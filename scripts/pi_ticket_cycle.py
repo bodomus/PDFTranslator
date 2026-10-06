@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, NoReturn, Protocol, TextIO
 
 if __package__ in {None, ""}:  # pragma: no cover - supports `python scripts/pi_ticket_cycle.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,6 +39,13 @@ from scripts.agent_cycle import (  # noqa: E402
     stop_cycle,
     validate_ticket_id,
 )
+from scripts.agent_progress import (  # noqa: E402
+    JournalMonitor,
+    ProgressConfig,
+    append_boundary,
+    last_activity,
+    progress_policy,
+)
 from scripts.project_tracking import (  # noqa: E402
     INTENT_HELP,
     TrackingError,
@@ -51,9 +58,10 @@ REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
 REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
 _JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```", re.DOTALL)
 
-# The reviewer is technically read-only: only these tools may ever be granted.
+# Configurable reviewer tools are read-only; the runner adds only its bound progress tool.
 READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls", "git_readonly"})
 REVIEWER_EXTENSION = Path(__file__).resolve().parent / "reviewer_git" / "extension.ts"
+PROGRESS_EXTENSION = Path(__file__).resolve().parent / "agent_progress" / "extension.ts"
 
 IMPLEMENTER_FALLBACK = (
     "The implementer is the only repository writer. Implement the ticket, add tests, run the "
@@ -110,13 +118,28 @@ ROLE_PRESETS = {
 }
 
 
-def _console_message(message: str) -> None:
-    print(message, flush=True)
+def _console_message(message: str = "", *, file: TextIO | None = None, end: str = "\n") -> None:
+    """Best-effort diagnostics must not interrupt a child or mask its original failure."""
+    output = sys.stdout if file is None else file
+    try:
+        encoding = getattr(output, "encoding", None) or "utf-8"
+        # Preserve representable text; '?' keeps existing console character bounds intact.
+        safe = message.encode(encoding, errors="replace").decode(encoding)
+        print(safe, file=output, end=end, flush=True)
+    except (OSError, UnicodeError, LookupError, ValueError):
+        # A closed/broken diagnostic stream does not change process or cycle outcomes.
+        return
+
+
+class _DiagnosticParser(argparse.ArgumentParser):
+    def _print_message(self, message: str, file: TextIO | None = None) -> None:
+        if message:
+            _console_message(message, file=file, end="")
 
 
 @dataclass(frozen=True)
 class ProgressReporter:
-    """Lifecycle only; never receives prompts or captured child output."""
+    """Lifecycle/milestone diagnostics; never receives prompts or captured child output."""
 
     ticket: str
     emit: Callable[[str], None] = _console_message
@@ -124,8 +147,12 @@ class ProgressReporter:
     def message(self, message: str) -> None:
         self.emit(f"[{self.ticket}] {message}")
 
-    def heartbeat(self, role: str, elapsed: float) -> None:
-        self.message(f"{role} running... {int(elapsed // 60)}m")
+    def heartbeat(self, role: str, elapsed: float, monitor: JournalMonitor | None = None) -> None:
+        text, stale = monitor.observe(elapsed) if monitor else (None, 0.0)
+        suffix = f" - last: {text}" if text else ""
+        self.message(f"{role} running... {int(elapsed // 60)}m{suffix}")
+        if monitor and stale >= monitor.config.stale_minutes * 60:
+            self.message(f"WARNING: no new meaningful activity for {int(stale // 60)}m")
 
 
 @dataclass(frozen=True)
@@ -134,6 +161,7 @@ class RunnerConfig:
     reviewer: RoleConfig = DEFAULT_REVIEWER
     base_branch: str = "master"
     executable: str = "pi"
+    progress: ProgressConfig = ProgressConfig()
 
 
 @dataclass(frozen=True)
@@ -762,6 +790,7 @@ def _implementer_prompt(
     attempt: int,
     findings: list[dict[str, Any]],
     handoff_path: Path,
+    journal_path: Path | None = None,
 ) -> str:
     sections = [
         f"You are the implementer for ticket {ticket} (attempt {attempt}).",
@@ -773,10 +802,29 @@ def _implementer_prompt(
         "  record-review, or stop transition. The runner owns every phase transition.",
         "- You MAY create or replace only your designated handoff input file:",
         f"    {handoff_path}",
-        "- Do NOT modify manifest.json, handoff.json, review-*.json, reviewer-input-*.json, or any",
-        "  other file under .agent-cycle/. The runner and validator own all other coordination",
-        "  state.",
-        "- Only implement, test, commit, push, and prepare that handoff input, then exit.",
+        *(
+            [
+                "- Sole diagnostic exception: you MAY call progress_append(message) to append",
+                f"  factual milestones only to your runner-bound journal: {journal_path}",
+                "  This permission supersedes any blanket write prohibition below. Do NOT write",
+                "  journals directly or use this tool to mutate any other file or role journal.",
+                "- Do NOT modify manifest.json, handoff.json, review-*.json, "
+                "or reviewer-input-*.json.",
+                "- Apart from that bound tool and your handoff input, do NOT modify any file",
+                "  under .agent-cycle/. The runner and validator own all authoritative state.",
+                "- Only implement, test, commit, push, prepare the handoff input, and optionally",
+                "  append diagnostic milestones via the bound tool, then exit.",
+            ]
+            if journal_path is not None
+            else [
+                "- Do NOT modify manifest.json, handoff.json, review-*.json, "
+                "reviewer-input-*.json, or any",
+                "  other file under .agent-cycle/. The runner and validator own "
+                "all other coordination",
+                "  state.",
+                "- Only implement, test, commit, push, and prepare that handoff input, then exit.",
+            ]
+        ),
         "Any manual transition command or blanket .agent-cycle prohibition in the reference",
         "contract below is superseded by these permissions.",
         "",
@@ -832,7 +880,7 @@ def _implementer_prompt(
                 json.dumps(findings, indent=2),
             ]
         )
-    return "\n".join(sections)
+    return "\n".join(sections) + progress_policy(journal_path)
 
 
 def _reviewer_prompt(
@@ -844,6 +892,7 @@ def _reviewer_prompt(
     review_round: int,
     expected_base: str,
     expected_branch: str,
+    journal_path: Path | None = None,
 ) -> str:
     schema = {
         "schema_version": "1.0",
@@ -862,10 +911,27 @@ def _reviewer_prompt(
             "The runner has already entered the review phase via scripts/agent_cycle.py and owns",
             "record-review. You are strictly read-only and must not run any transition.",
             "- Do NOT run scripts/agent_cycle.py or any begin-review, record-review, or stop.",
-            "- Do NOT modify, create, delete, commit, push, or run any command that writes.",
+            *(
+                [
+                    "- Sole diagnostic exception: you MAY call progress_append(message) to append",
+                    f"  factual milestones only to your runner-bound journal: {journal_path}",
+                    "  This permission supersedes any blanket write prohibition below. "
+                    "Do NOT write",
+                    "  journals directly or use this tool to mutate any other file "
+                    "or role journal.",
+                    "- Apart from that bound tool, do NOT modify, create, delete, commit, push,",
+                    "  or run any command that writes. Repository inspection remains read-only.",
+                ]
+                if journal_path is not None
+                else [
+                    "- Do NOT modify, create, delete, commit, push, or run any command that writes."
+                ]
+            ),
             "- Return only the single JSON object described below on stdout.",
             "- The runner — not you — persists that output into ignored .agent-cycle state and",
-            "  records the review. You never write a coordination file.",
+            "  records the review. You never write an authoritative coordination file."
+            if journal_path is not None
+            else "  records the review. You never write a coordination file.",
             "Any manual transition or file-writing instruction in the reference contract below is",
             "superseded.",
             "",
@@ -896,7 +962,7 @@ def _reviewer_prompt(
             "BLOCKED has a non-empty blocked_reason.",
             f"reviewed_sha must equal {reviewed_sha}.",
         ]
-    )
+    ) + progress_policy(journal_path)
 
 
 def _sanitize_reason(reason: str) -> str:
@@ -922,16 +988,53 @@ def _execute_child(
     ticket: str,
     log_path: Path,
     stdin_text: str,
-    heartbeat: Callable[[float], None],
+    role: str,
+    execution_number: int,
+    progress_config: ProgressConfig,
+    reporter: ProgressReporter,
 ) -> CommandResult:
+    journal = cycle_directory(repo_root, ticket) / f"{role}-progress.log"
+    monitor = None
+    if progress_config.enabled:
+        command = [
+            *command,
+            "--extension",
+            str(PROGRESS_EXTENSION),
+            "--progress-ticket",
+            ticket,
+            "--progress-role",
+            role,
+        ]
+        if "--tools" in command:
+            index = command.index("--tools") + 1
+            command[index] += ",progress_append"
+        try:
+            resumed = journal.exists()
+            append_boundary(
+                journal,
+                f"{'Resumed' if resumed else 'Started'} {role} execution "
+                f"(attempt/round {execution_number})",
+            )
+        except OSError:
+            reporter.message("WARNING: progress boundary unavailable")
+        monitor = JournalMonitor(journal, progress_config)
     try:
         return executor.run(
-            command, cwd=repo_root, log_path=log_path, stdin_text=stdin_text, heartbeat=heartbeat
+            command,
+            cwd=repo_root,
+            log_path=log_path,
+            stdin_text=stdin_text,
+            heartbeat=lambda elapsed: reporter.heartbeat(role, elapsed, monitor),
         )
     except RunnerCancelled:
         raise
     except Exception as error:  # noqa: BLE001 - normalize any operational failure into a clean stop
         _abort(repo_root, ticket, f"Pi process failure: {error}")
+    finally:
+        if progress_config.enabled:
+            activity = last_activity(journal, progress_config.max_console_chars)
+            reporter.message(f"Last activity: {activity.text if activity else 'none reported yet'}")
+            reporter.message(f"Progress log: {journal.relative_to(repo_root).as_posix()}")
 
 
 def _require_clean_tree(repo_root: Path, ticket: str, base_branch: str, role: str) -> None:
@@ -1068,6 +1171,9 @@ def run_cycle(
                     attempt=attempt,
                     findings=findings,
                     handoff_path=_handoff_path(directory),
+                    journal_path=(directory / "implementer-progress.log")
+                    if active_config.progress.enabled
+                    else None,
                 )
                 round_label = f" round {attempt}" if attempt > 1 else ""
                 progress.message(
@@ -1084,7 +1190,10 @@ def run_cycle(
                     + INTENT_HELP
                     + "\nInclude integration warnings in your report: "
                     + json.dumps(tracking.data["warnings"]),
-                    heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
+                    role="implementer",
+                    execution_number=attempt,
+                    progress_config=active_config.progress,
+                    reporter=progress,
                 )
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
                 if implementer_result.returncode != 0:
@@ -1124,6 +1233,9 @@ def run_cycle(
                 review_round=review_round,
                 expected_base=manifest["base_sha"],
                 expected_branch=manifest["branch"],
+                journal_path=(directory / "reviewer-progress.log")
+                if active_config.progress.enabled
+                else None,
             )
             round_label = f" round {review_round}" if review_round > 1 else ""
             progress.message(
@@ -1140,7 +1252,10 @@ def run_cycle(
                 + INTENT_HELP
                 + "\nIntegration evidence: "
                 + json.dumps(tracking.data["warnings"]),
-                heartbeat=lambda elapsed: progress.heartbeat("reviewer", elapsed),
+                role="reviewer",
+                execution_number=review_round,
+                progress_config=active_config.progress,
+                reporter=progress,
             )
             progress.message(f"reviewer finished: exit {reviewer_result.returncode}")
             if reviewer_result.returncode != 0:
@@ -1195,30 +1310,32 @@ def run_cycle(
 
 def _report(outcome: RunOutcome) -> None:
     if outcome.passed:
-        print("AGENT CYCLE PASSED")
-        print()
-        print(f"Ticket: {outcome.ticket}")
-        print(f"State: {outcome.state}")
-        print(f"Implementation SHA: {outcome.implementation_sha}")
-        print(f"Review rounds: {outcome.review_rounds}")
-        print(f"Implementer: {outcome.implementer.provider} / {outcome.implementer.model}")
-        print(f"Reviewer: {outcome.reviewer.provider} / {outcome.reviewer.model}")
-        print()
-        print("READY FOR HUMAN REVIEW")
+        _console_message("AGENT CYCLE PASSED")
+        _console_message()
+        _console_message(f"Ticket: {outcome.ticket}")
+        _console_message(f"State: {outcome.state}")
+        _console_message(f"Implementation SHA: {outcome.implementation_sha}")
+        _console_message(f"Review rounds: {outcome.review_rounds}")
+        _console_message(
+            f"Implementer: {outcome.implementer.provider} / {outcome.implementer.model}"
+        )
+        _console_message(f"Reviewer: {outcome.reviewer.provider} / {outcome.reviewer.model}")
+        _console_message()
+        _console_message("READY FOR HUMAN REVIEW")
         return
-    print(f"AGENT CYCLE STOPPED: {outcome.state}")
-    print()
-    print(f"Ticket: {outcome.ticket}")
-    print(f"Implementation SHA: {outcome.implementation_sha}")
-    print(f"Review rounds: {outcome.review_rounds}")
+    _console_message(f"AGENT CYCLE STOPPED: {outcome.state}")
+    _console_message()
+    _console_message(f"Ticket: {outcome.ticket}")
+    _console_message(f"Implementation SHA: {outcome.implementation_sha}")
+    _console_message(f"Review rounds: {outcome.review_rounds}")
     if outcome.stop_reason:
-        print(f"Stop reason: {outcome.stop_reason}")
-    print()
-    print("HUMAN REVIEW REQUIRED")
+        _console_message(f"Stop reason: {outcome.stop_reason}")
+    _console_message()
+    _console_message("HUMAN REVIEW REQUIRED")
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _DiagnosticParser(description=__doc__)
     parser.add_argument("ticket")
     parser.add_argument("--recover", action="store_true", help="explicit human approval of rework")
     parser.add_argument("--reason", help="required human recovery approval reason")
@@ -1230,6 +1347,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reviewer-provider")
     parser.add_argument("--reviewer-model")
     parser.add_argument("--reviewer-tools", default=",".join(DEFAULT_REVIEWER.tools))
+    parser.add_argument("--no-agent-progress", action="store_true")
+    parser.add_argument("--progress-stale-minutes", type=int, default=30)
+    parser.add_argument("--progress-max-console-chars", type=int, default=180)
     parser.add_argument("--ticket-file", type=Path)
     parser.add_argument("--repo-root", type=Path)
     return parser
@@ -1258,13 +1378,22 @@ def _config_from_arguments(arguments: argparse.Namespace) -> RunnerConfig:
         ),
         base_branch=arguments.base_branch,
         executable=arguments.pi_executable,
+        progress=ProgressConfig(
+            enabled=not arguments.no_agent_progress,
+            stale_minutes=arguments.progress_stale_minutes,
+            max_console_chars=arguments.progress_max_console_chars,
+        ),
     )
 
 
 def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
     arguments = _parser().parse_args(argv)
     root = (repo_root or arguments.repo_root or Path.cwd()).resolve()
-    config = _config_from_arguments(arguments)
+    try:
+        config = _config_from_arguments(arguments)
+    except ValueError as error:
+        _console_message(f"ERROR: {error}", file=sys.stderr)
+        return 1
     ticket_text: str | None = None
     if arguments.ticket_file is not None:
         ticket_text = arguments.ticket_file.read_text(encoding="utf-8")
@@ -1279,7 +1408,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             reason=arguments.reason,
         )
     except (RunnerError, CycleError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        _console_message(f"ERROR: {error}", file=sys.stderr)
         return 1
     _report(outcome)
     return 0 if outcome.passed else 1

@@ -47,12 +47,25 @@ def prepare(repo: Path, fake: FakePi, state: str) -> None:
 def test_resume_dispatch(git_repo: Path, state: str, implementations: int) -> None:
     fake = FakePi(git_repo)
     prepare(git_repo, fake, state)
+    journals = {
+        role: cycle_directory(git_repo, TICKET) / f"{role}-progress.log"
+        for role in ("implementer", "reviewer")
+    }
+    for path in journals.values():
+        path.write_text("[12:00] Previous execution\n", encoding="utf-8")
     before_impl, before_review = fake.implementer_runs, fake.reviewer_runs
     fake.verdicts = ["PASS"]
     outcome = run_cycle(git_repo, TICKET, executor=fake, config=_config())
     assert outcome.passed
     assert fake.implementer_runs - before_impl == implementations
     assert fake.reviewer_runs - before_review == 1
+    for role, path in journals.items():
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("[12:00] Previous execution\n")
+        if role == "reviewer" or implementations:
+            assert f"Resumed {role} execution" in text
+        else:
+            assert text == "[12:00] Previous execution\n"
     if state == "CHANGES_REQUIRED":
         assert '"id": "R1"' in fake.invocations[0][1]
         assert "attempt 2" in fake.invocations[0][1]
@@ -81,6 +94,9 @@ def test_human_recovery_preserves_history_and_exact_sha(git_repo: Path) -> None:
     directory = cycle_directory(git_repo, TICKET)
     before = {p.name: p.read_bytes() for p in directory.glob("review-*.json")}
     attempts = {p.name: p.read_bytes() for p in directory.glob("implementation-*.json")}
+    journals = [directory / f"{role}-progress.log" for role in ("implementer", "reviewer")]
+    for path in journals:
+        path.write_text("[12:00] Interrupted history\n", encoding="utf-8")
     old_sha = _git(git_repo, "rev-parse", "HEAD")
     fake.verdicts = ["PASS"]
     outcome = run_cycle(
@@ -93,6 +109,10 @@ def test_human_recovery_preserves_history_and_exact_sha(git_repo: Path) -> None:
     )
     assert outcome.passed and outcome.review_rounds == 3
     assert outcome.implementation_sha != old_sha
+    for path in journals:
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("[12:00] Interrupted history\n")
+        assert "attempt/round 3" in text
     for name, content in (before | attempts).items():
         assert (directory / name).read_bytes() == content
     approval = runner._read_manifest(git_repo, TICKET)["human_recoveries"][0]
