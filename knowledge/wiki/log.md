@@ -32,6 +32,10 @@ related:
 
 ## 2026-10-06
 
+- Hardened PDFTR-45 approved operational retry loading before mutation: reject unauthorized
+  numbered snapshots while retaining later accounted history, and compare approval-crash blank
+  projections by nested JSON types as well as values.
+
 - Closed the remaining PDFTR-45 pre-launch persistence gap: runner-owned resume validates the
   exact blank previous approved projection and strict prepared ownership before completing a
   manifest-only begin transition. Contradictory artifacts and unsafe Git facts reject unchanged.

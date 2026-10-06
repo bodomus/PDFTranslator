@@ -117,7 +117,11 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   retain their actual attempt. Review grants remain controlled only by `human_recoveries`.
 - `HUMAN_APPROVED_OPERATIONAL_RETRY` resumes the approved attempt via a normal runner invocation;
   duplicate approval rejects. Atomic manifest persistence is the approval commit point; a crash
-  before its blank handoff projection is refreshed is safely completed in memory during loading.
+  before its blank handoff projection is refreshed is safely completed in memory during loading
+  only for the exact previous blank projection, including nested JSON types. Boolean/float rounds
+  cannot replace integer zero. This pre-first-handoff state authorizes no numbered accepted
+  implementation/review snapshots: unexpected snapshots reject before normalization or any resume
+  mutation. Later review/rework history and failed-attempt diagnostics remain preserved.
   Three retries maximum; further operational failure records `operational_retry_limit`.
 - Runner ownership is serialized by an OS-held `.agent-cycle/<TICKET>.runner.lock`, automatically
   released on process death. An atomic `implementer-launch-attempt-<N>.json` binds an operational

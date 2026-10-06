@@ -35,6 +35,21 @@ def approve(repo: Path) -> dict[str, object]:
     return validator.retry_operational_cycle(repo, TICKET, "Limits reset; human retry approved")
 
 
+def interrupt_approval(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Persist approval's manifest while leaving its previous STOPPED handoff."""
+    write = validator._atomic_write_json
+
+    def crash(path: Path, document: dict[str, object]) -> None:
+        if path.name == "handoff.json":
+            raise CycleError("simulated crash between approval writes")
+        write(path, document)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(validator, "_atomic_write_json", crash)
+        with pytest.raises(CycleError, match="between approval writes"):
+            approve(repo)
+
+
 def test_operational_retry_end_to_end(git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     fake = FakePi(git_repo)
     directory = fail(git_repo, fake)
@@ -202,23 +217,89 @@ def test_approved_crash_resumes_same_attempt(
                     reason="operator approval",
                 )
     else:
-        write = validator._atomic_write_json
-
-        def crash(path: Path, document: dict[str, object]) -> None:
-            if path.name == "handoff.json":
-                raise CycleError("simulated crash between writes")
-            write(path, document)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(validator, "_atomic_write_json", crash)
-            with pytest.raises(CycleError, match="between writes"):
-                approve(git_repo)
+        interrupt_approval(git_repo, monkeypatch)
+        handoff = json.loads((directory / "handoff.json").read_text())
+        assert type(handoff["system"]["review_round"]) is int
+        assert handoff["system"]["review_round"] == 0
     assert fake.implementer_runs == 1
     assert cycle_status(git_repo, TICKET)["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY"
     outcome = run_cycle(git_repo, TICKET, executor=fake, config=_config())
     assert outcome.passed and outcome.implementation_attempt == 2
     assert len(runner._read_manifest(git_repo, TICKET)["operational_retries"]) == 1
     assert (directory / "pi-implementer-round-1.log").exists()
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize(
+    "unexpected",
+    ["review-1.json", "review-99.json", "implementation-1.json", "implementation-2.json"],
+)
+def test_approved_retry_rejects_unaccounted_artifacts_before_mutation(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool, unexpected: str
+) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    (directory / "implementer.json").write_text('{"partial":', encoding="utf-8")
+    if interrupted:
+        interrupt_approval(git_repo, monkeypatch)
+    else:
+        approve(git_repo)
+    (directory / unexpected).write_text("{}", encoding="utf-8")
+    before = artifacts(directory)
+    manifest = runner._read_manifest(git_repo, TICKET)
+    mutations: list[str] = []
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        mutations.append("unexpected mutation or launch")
+        raise AssertionError(mutations[-1])
+
+    for symbol in (
+        "_preserve_failed_attempt",
+        "append_boundary",
+        "begin_implementation",
+        "_execute_child",
+    ):
+        monkeypatch.setattr(runner, symbol, forbidden)
+    with pytest.raises((CycleError, RunnerError), match="contradictory"):
+        run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    with pytest.raises(CycleError, match="contradictory"):
+        validator.begin_implementation(git_repo, TICKET)
+    assert not mutations
+    assert artifacts(directory) == before
+    assert runner._read_manifest(git_repo, TICKET) == manifest
+    assert len(manifest["operational_retries"]) == 1
+    assert manifest["implementation_attempt"] == 2 and manifest["review_round"] == 0
+    assert fake.implementer_runs == 1 and fake.reviewer_runs == 0
+
+
+@pytest.mark.parametrize("review_round", [False, 0.0], ids=["boolean", "float"])
+def test_approval_crash_rejects_nested_json_type_corruption(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, review_round: bool | float
+) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    interrupt_approval(git_repo, monkeypatch)
+    path = directory / "handoff.json"
+    handoff = json.loads(path.read_text())
+    # The type mismatch is nested: shallow equality must not normalize it away.
+    handoff["system"]["review_round"] = review_round
+    runner._write_json(path, handoff)
+    before = artifacts(directory)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("type-corrupted projection mutated or launched")
+
+    for symbol in (
+        "_preserve_failed_attempt",
+        "append_boundary",
+        "begin_implementation",
+        "_execute_child",
+    ):
+        monkeypatch.setattr(runner, symbol, forbidden)
+    with pytest.raises((CycleError, RunnerError), match="handoff system"):
+        run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert artifacts(directory) == before
+    assert fake.implementer_runs == 1 and fake.reviewer_runs == 0
 
 
 class SimulatedRunnerDeath(BaseException):
@@ -621,6 +702,14 @@ def test_review_recovery_after_operational_retry(git_repo: Path) -> None:
     )
     assert outcome.state == "STOPPED" and outcome.review_rounds == 2
     assert len(runner._read_manifest(git_repo, TICKET)["operational_retries"]) == 1
+    directory = cycle_directory(git_repo, TICKET)
+    history = {
+        path.name: path.read_bytes()
+        for pattern in ("review-*.json", "implementation-*.json")
+        for path in directory.glob(pattern)
+    }
+    assert len(history) == 4
+    assert cycle_status(git_repo, TICKET)["state"] == "STOPPED"
     fake.verdicts = ["PASS"]
     outcome = run_cycle(
         git_repo,
@@ -632,6 +721,8 @@ def test_review_recovery_after_operational_retry(git_repo: Path) -> None:
     )
     assert outcome.passed and outcome.review_rounds == 3
     assert outcome.implementation_attempt == 4
+    assert cycle_status(git_repo, TICKET)["state"] == "PASSED"
+    assert all((directory / name).read_bytes() == content for name, content in history.items())
 
 
 @pytest.mark.parametrize("boundary", ["symlink", "junction"])

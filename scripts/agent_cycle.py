@@ -676,12 +676,22 @@ def _load_cycle(
             raise CycleError("cycle artifacts must not be symbolic links or junctions")
     manifest = _load_json(directory / "manifest.json")
     _validate_manifest(manifest, ticket)
+    # Operational approval requires round zero and no human review recoveries. Its
+    # audit accounts only for failed pre-handoff attempts, so no numbered accepted
+    # implementation/review snapshots are authorized. Other states keep legitimate
+    # immutable history; failed-attempt diagnostics are unaffected.
+    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+        any(directory.glob("review-*.json")) or any(directory.glob("implementation-*.json"))
+    ):
+        raise CycleError("operational retry resume has contradictory handoff/review artifacts")
     handoff = _load_json(directory / "handoff.json")
     # Approval commits the manifest first. Only the blank pre-handoff projection can
     # be completed in memory after a crash between the two atomic replacements.
     if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value:
         previous = dict(manifest, state=CycleState.STOPPED.value)
-        if handoff == _blank_handoff(previous):
+        if json.dumps(handoff, sort_keys=True) == json.dumps(
+            _blank_handoff(previous), sort_keys=True
+        ):
             handoff = _blank_handoff(manifest)
     facts = collect_git_facts(requested, manifest["base_branch"])
     if facts.repository_fingerprint != manifest["repository_fingerprint"]:

@@ -126,3 +126,46 @@ whose child ownership is uncertain. Attempt 3 below closes the remaining gap ins
 Only the exact blank approved projection backed by a matching prepared marker is repairable.
 A crash after the launching fence, corrupt manifest or contradictory artifacts still requires human
 inspection. This deliberately does not guess whether a child exists or discard dirty WIP.
+
+## Post-cycle human-approved corrective patch — R1 / R2
+- Baseline: clean `009e9f3171abb35c192c05fe3353e3d41697aa6b` on the existing ticket branch.
+  The human authorized this patch after independent exact-SHA review; historical cycle state,
+  verdicts, approvals and review artifacts are retained. Only the existing implementer diagnostic
+  journal receives new operational milestones.
+- R1: `_load_cycle` checks the numbered snapshot inventory immediately after strict manifest
+  validation, before approval handoff normalization or runner preservation/progress/transition.
+  Approved operational retry requires review round zero and cannot contain human review recoveries,
+  so no accepted implementation/review snapshot is authorized in this state. Valid later immutable
+  history and failed-attempt diagnostics remain accepted; this is not a blanket inventory rejection.
+- R2: approval-crash reconciliation now compares canonical JSON, preserving nested type distinctions
+  before normalization. False and 0.0 reject where integer zero is expected. Exact blank integer
+  projections continue to reconcile without duplicate approval/accounting.
+- Regressions cover unauthorized current/other numbered snapshots after full/interrupted approval,
+  no preservation/progress/transition/launch, byte-identical retained artifacts/accounting, nested
+  Boolean/float rejection and successful integer resume. Exhausted-review recovery after operational
+  retry additionally verifies that accepted historical snapshots remain byte-identical.
+- Source-verified call path: CLI -> locked runner -> validator load -> inventory/projection checks.
+  Existing Graphify/CRG queries identify validator and runner callers. CRG incrementally refreshed
+  after source changes without errors; source checks confirm the loader's caller boundaries.
+  The initial graph refresh was rejected using the previous read-only review constraint; after
+  verifying the current explicit patch/commit authorization, the approved refresh succeeded.
+  No external API, dependency, PDF/model/OCR, timeout, automatic retry or reviewer capability changes.
+
+### Corrective patch validation
+- Focused validator/operational-retry/runner/resume/progress/reviewer-Git/tracking suite:
+  **471 passed, 2 skipped** in 373.98 seconds, using `uv run --no-sync --offline pytest --no-cov`
+  with a repository-local pytest cache. Includes all ten new artifact/type rejection cases and
+  strengthened integer-resume/accepted-history assertions.
+- Initial sandbox operational run: 81 passed, 12 failed solely on Node-to-Git `spawn EPERM`;
+  the authorized Windows run outside the sandbox passed the complete focused suite. The user
+  uv cache was inaccessible in the sandbox; `UV_CACHE_DIR` under `temp/uv-cache` resolved that
+  boundary without dependency/environment-manager changes.
+- Windows PowerShell `scripts/check.ps1`: **PASS**, **933 passed, 3 skipped** in 429.34 seconds,
+  **89.54%** package coverage. Wiki lint: 15 pages/139 links, no errors/warnings; Ruff format/lint:
+  321 files; mypy: 98 source files, no issues. Python 3.12.10 via the existing uv workflow.
+  No model downloads or provider calls. Ubuntu CI was not run locally.
+- SHA256 verification confirmed all 20 existing ticket-cycle files other than the designated
+  implementer progress journal remain unchanged. Historical authoritative state/verdicts were
+  neither reopened nor rewritten. The new implementation SHA requires its own independent review.
+- YouTrack MCP returned `Issue not found: PDFTR-45`; ticket fields/attachments cannot be updated
+  through that connector. Local plan/report/completion documents are retained with the patch.

@@ -38,3 +38,15 @@ No module boundaries, dependencies, provider APIs or PDF pipeline changes.
 5. Commit/push and prepare only the designated handoff input. External tracking owned by runner; integration warning: YouTrack credentials unavailable.
 
 Legacy text-only failures remain unknown and cannot be automatically migrated from provider strings. The PDFTR-44 operational shape is covered with structured process-exit classification; pre-existing unclassified manifests require manual intervention.
+
+## Post-cycle human-approved corrective patch
+Baseline: clean `009e9f3171abb35c192c05fe3353e3d41697aa6b` on the existing ticket branch.
+R1: validate numbered artifact inventory during approved operational loading before handoff
+normalization or any runner mutation. This state requires round zero and no accepted handoff/review;
+its authorized snapshot inventory is empty. Keep historical failed diagnostics and later accepted
+review/rework artifacts valid. R2: use the existing canonical JSON comparison convention to distinguish
+nested Boolean/float substitutions from integer zero. Add deterministic no-mutation/no-launch tests
+for persisted and interrupted approvals and preserve successful exact-integer reconciliation.
+Run focused retry/runner/safety tests and the full PowerShell gate; append report evidence, commit
+and push without changing historical cycle verdicts. Scope is local validator loading; no new APIs,
+dependencies, role capabilities, timeouts, approval paths or module boundaries.

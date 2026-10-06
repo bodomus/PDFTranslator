@@ -106,8 +106,13 @@ Pre-handoff operational failure has a separate human boundary: `--recover-operat
 no accepted handoff/review, no active role, clean tree and unchanged exact HEAD plus existing
 branch/repository identity. `HUMAN_APPROVED_OPERATIONAL_RETRY` and strict `operational_retries`
 history authorize at most three new implementer attempts without granting reviews. Normal invocation
-resumes a persisted approval; duplicate approval rejects. Atomic manifest approval can safely recover
-its blank handoff projection after interruption between writes. The runner holds an OS ticket lock
+resumes a persisted approval; duplicate approval rejects. Approved operational attempts precede any
+accepted handoff/review, so their authorized numbered snapshot inventory is empty. Unexpected
+implementation/review snapshots reject before preservation, journal appends or transitions, including
+approval-crash normalization. Later review/rework states retain their accounted immutable history.
+Atomic manifest approval can safely recover its exact blank handoff projection after interruption
+between writes, comparing nested JSON types as well as values; false and 0.0 cannot replace integer 0.
+The runner holds an OS ticket lock
 and persists an attempt-bound `implementer-launch-attempt-<N>.json` prepared marker before begin.
 If it dies during begin's manifest/handoff writes or after begin/tracking but before the launch
 fence, normal invocation can resume the same active implementation under exclusive ownership,

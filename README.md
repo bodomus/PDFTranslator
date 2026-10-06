@@ -188,7 +188,12 @@ round zero, no accepted implementation/review, no active agent, a clean tree, un
 HEAD, and the recorded branch/repository. It never stashes, resets, cleans or rebinds HEAD.
 `HUMAN_APPROVED_OPERATIONAL_RETRY` persists one approval and resumes the same approved attempt
 if interrupted before execution. Repeating the approval command rejects without mutation; use
-normal resume after approval. For operational approvals the runner also resumes a pre-launch
+normal resume after approval. An approved operational retry still precedes any accepted handoff or
+review: unexpected numbered implementation/review snapshots reject before journal appends,
+preservation or transitions, including an interrupted approval write. Accounted history in later
+review/rework states remains valid. Approval-crash reconciliation requires equal JSON types as well
+as values; Boolean or floating-point review rounds cannot substitute for integer zero.
+For operational approvals the runner also resumes a pre-launch
 `IMPLEMENTING` phase only with a matching atomic `prepared` attempt marker, clean unchanged Git
 facts, and an exclusive OS-held ticket lock. If begin persisted the manifest but not its blank
 handoff projection, normal resume atomically completes only the exact previous approved blank

@@ -21,3 +21,21 @@ Legacy text-only operational stops remain unknown; Ubuntu CI is pending remote e
 Integration warnings: ["YouTrack credentials unavailable", "YouTrack credentials unavailable", "YouTrack credentials unavailable"].
 
 This is an implementer completion summary, not the independent exact-SHA reviewer verdict.
+
+## Post-cycle human-approved corrective patch
+
+R1 rejects unauthorized numbered implementation/review snapshots while loading an approved
+pre-first-handoff operational attempt, before normalization, preservation, journal append or
+transition. Valid later review/rework history and failed-attempt diagnostics remain accepted.
+R2 compares the exact blank approval-crash projection through canonical JSON, rejecting nested
+Boolean/float substitutions for integer zero before normalization.
+
+Focused validator/retry/runner/resume/progress/reviewer-Git/tracking suite: 471 passed, 2 skipped.
+Windows PowerShell `scripts/check.ps1`: PASS, 933 passed, 3 skipped, 89.54% coverage; Wiki lint,
+Ruff format/lint and mypy passed. An initial sandbox Node-to-Git `spawn EPERM` was resolved by
+running the authorized Windows checks outside the sandbox; no production permissions changed.
+All 20 historical cycle files other than the append-only implementer journal retain their hashes.
+The completed cycle verdict is retained as historical evidence, not approval of the new patch SHA.
+
+YouTrack MCP returned `Issue not found: PDFTR-45`; fields and attachments could not be updated.
+Ubuntu CI was not run locally. This remains an implementation summary, not a new review verdict.

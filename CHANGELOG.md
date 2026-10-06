@@ -65,6 +65,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- PDFTR-45 human-approved corrective patch: reject unexpected implementation/review snapshots
+  before approved operational retry mutations, including interrupted approval persistence, while
+  retaining legitimate later history. Require type-sensitive blank approval projections so Boolean
+  and floating-point round values cannot be normalized into an authorized integer round.
+
 - PDFTR-44 human-approved repair: encode every runner console diagnostic safely on CP1251/ASCII
   streams without interrupting child execution or masking original failures. Reject dangling
   symbolic journal links before opening, preserving the reviewer's fixed journal boundary.
