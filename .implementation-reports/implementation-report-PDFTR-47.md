@@ -1,7 +1,39 @@
 # Implementation Report
 
 ## Ticket
-PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1–4).
+PDFTR-47 — YouTrack Live Synchronization Validation and Hardening (attempts 1–5).
+
+## Attempt 5 — R3 ambiguous HTTP mutation outcomes
+- Level 1 scoped fix, clean baseline. `_request` previously classified every HTTP error as a
+  definite failure. A gateway 504 or other server error can arrive while an upstream POST still
+  executes, allowing newer repeatable writes to bypass the durable uncertainty fence.
+  Mutation HTTP 408 and all 5xx responses now raise sanitized UncertainTransport. Existing
+  operation persistence retains `uncertain`/`conflicting_write`, fencing subsequent writes
+  across restart, even after the delayed write completes. No automatic retry or fence reset.
+  GET failures remain ordinary API errors (never exact absence except 404); definite 4xx
+  rejections retain APIError handling. GitHub readiness remains independent and unchanged.
+- Extended real request/_request fake-opener delayed-state regressions to HTTP 408/500/502/503/504.
+  They verify no newer state write or success claim, persisted uncertainty, lifecycle/operator
+  fences before and after delayed completion across restart, and sanitized diagnostics/evidence.
+  Additional read regressions cover 408/500/502/503/504/599; definite mutation rejection tests
+  cover 400/401/403/404/409/422/429. Existing independent GitHub readiness tests remain green.
+- Focused tracking/validator/uncertainty suite: **182 passed**, no coverage, repository-local temp.
+  Full Windows `scripts/check.ps1`: **PASS**; Wiki lint 0 errors/warnings, Ruff format/lint,
+  mypy 98 source files, **1035 passed, 3 skipped**, 89.54% coverage, 340.68 seconds.
+  Temporary files/logs stayed under repository-local `temp/`. No models were downloaded.
+- Graphify scoped query and UTF-8 CRG pre/post incremental updates succeeded. Source verifies
+  TrackingHooks/runner/operator reachability and the unchanged operation fence/GitHub boundary.
+  Graph test-gap heuristics are superseded by executable coverage. No architecture refresh needed;
+  no dependency, schema, module-boundary, reviewer-capability, cycle transition or PDF/model/OCR
+  impact. Context7 unavailable; no external-library API usage changed.
+- README, CHANGELOG, affected workflow Wiki/log, plan and completion summary updated.
+  **No live YouTrack operation performed in attempt 5.** Credentials/account acceptance, project,
+  assignee, mappings, fields, lifecycle, attachments and cross-links remain fake-tested and unverified
+  live. Missing access does not block handoff; remote Windows/Ubuntu CI is not claimed passed.
+  Integration warning categories: ["YouTrack credentials unavailable", "YouTrack identity mismatch;
+  remote mutation refused", "YouTrack authentication failed"]. Identity/authentication categories
+  represent deterministic coverage, not observed live failures. Operator reconciliation remains
+  required for uncertain writes; an HTTP error or client termination does not prove remote completion.
 
 ## Attempt 4 — R2 independent GitHub synchronization
 - Level 1 scoped fix; clean baseline. `passed` formerly entered the YouTrack write fence before

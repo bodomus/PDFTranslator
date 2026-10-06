@@ -23,6 +23,12 @@ YouTrack write prerequisite; fenced YouTrack cross-links skip visibly. Stable/mo
 preserve fences and verify readiness refresh/revocation without YouTrack calls. 167 focused tests and
 the full Windows gate passed (1020 passed, 3 skipped, 89.54% coverage). No live mutation occurred.
 
+Attempt 5 resolves R3: HTTP 408/5xx mutation errors, including gateway 504, now retain durable
+uncertainty instead of permitting newer field writes. Real-wrapper delayed-write regressions keep
+lifecycle/operator validation fenced across restart and delayed completion. Definite 4xx rejections,
+read failures and independent GitHub readiness remain covered. 182 focused tests and the full Windows
+gate passed (1035 passed, 3 skipped, 89.54% coverage). No live mutation occurred; remote CI unverified.
+
 This is an implementer completion record, not an independent reviewer verdict. Automated review and
 final human review/merge remain separate runner/human decisions. Ticket/report attachments await
 configured harness synchronization or an explicit operator action.

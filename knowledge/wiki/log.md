@@ -34,6 +34,8 @@ related:
 
 ## 2026-10-06
 
+- PDFTR-47 attempt 5 classifies HTTP 408/5xx mutation errors as uncertain: delayed upstream writes
+  retain durable lifecycle/operator fences across restart; read errors and definite rejections remain distinct.
 - PDFTR-47 attempt 4 separates GitHub readiness from the YouTrack uncertainty fence under the
   shared lock; cross-links skip visibly while exact-SHA readiness refresh/revocation continues.
 - PDFTR-47 attempt 3 extends durable write uncertainty to socket timeouts, connection loss and

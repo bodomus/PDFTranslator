@@ -282,12 +282,18 @@ class YouTrack:
         except HTTPError as error:
             if method == "GET" and error.code == 404:
                 return None
+            if method != "GET" and (error.code == 408 or 500 <= error.code <= 599):
+                # A gateway/server timeout or failure is not proof that the upstream
+                # rejected the write: it may still execute after this response.
+                raise UncertainTransport(
+                    f"YouTrack HTTP {error.code}; remote outcome uncertain"
+                ) from None
             raise APIError(error.code) from None
         except Exception:
             # Once open() is entered, a mutation may have reached the server. Socket
             # timeout/connection loss, truncated JSON, and response-limit failures do
             # not prove it failed remotely, even after the client transport terminates.
-            # HTTP errors above remain definite responses; pre-dispatch validation is
+            # Definite HTTP rejections are handled above; pre-dispatch validation is
             # outside this try block. Never expose transport/server exception text.
             if method != "GET":
                 raise UncertainTransport(

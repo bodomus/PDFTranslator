@@ -233,7 +233,8 @@ while uncertain comment/attachment mutations require human reconciliation. Conci
 only harness-confirmed SHA/round/action evidence, not agent prose or huge logs. PASS/PASSED target human
 review, never Done; only an explicit merged/finalization action may close. REST socket and overall
 timeouts bound calls; an uncertain in-flight request is never blindly retried. Socket timeouts,
-connection loss and unreadable mutation responses also retain uncertainty: terminated client transport
+connection loss, HTTP 408/5xx mutation errors (including gateway 504), and unreadable mutation
+responses also retain uncertainty: a gateway/server error or terminated client transport
 does not prove server-side failure. Pending/uncertain field/definition writes durably block later
 YouTrack synchronization, including after restart; operator repair
 requires proving transport termination and reconciling remote state, not merely a GET or lock release.

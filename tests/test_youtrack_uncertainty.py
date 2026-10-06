@@ -92,9 +92,11 @@ def test_timed_out_write_fences_later_sync_and_restart(tmp_path: Path, kind: str
         assert fake.values["State"] == {"id": "0"}  # No newer write was falsely verified.
 
 
-@pytest.mark.parametrize("failure", [TimeoutError, ConnectionResetError, URLError])
-def test_socket_failure_fences_dispatched_state_write(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+@pytest.mark.parametrize(
+    "failure", [TimeoutError, ConnectionResetError, URLError, 408, 500, 502, 503, 504]
+)
+def test_transport_failure_fences_dispatched_state_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception] | int
 ) -> None:
     import scripts.project_tracking as module
 
@@ -145,8 +147,10 @@ def test_socket_failure_fences_dispatched_state_write(
                     terminated.set()
 
             threading.Thread(target=remote_completion, daemon=True).start()
-            # Real request/_request path: the client socket fails before the outer
-            # queue timeout, while the server continues processing the dispatched POST.
+            # Real request/_request path: the client sees a socket failure or gateway
+            # error while the upstream server continues processing the dispatched POST.
+            if isinstance(failure, int):
+                raise HTTPError(request.full_url, failure, "fake-token private details", {}, None)
             raise failure("fake-token private transport details")
         return Response(fake.request(method, path, body))
 
@@ -184,6 +188,7 @@ def test_socket_failure_fences_dispatched_state_write(
     assert fake.values["State"] == {"id": "0"}  # Delayed In Progress completed.
     resumed = tracking()
     resumed.lifecycle("handoff", manifest())
+    assert validate_live(tracking(), state="handoff") == 1
     assert resumed.sync_failed
     assert resumed.data["last_sync_status"] == "failed"
     assert len(mutations(fake)) == before + 1  # Only the original dispatched POST.
@@ -219,7 +224,7 @@ def test_lost_mutation_response_is_uncertain(
     assert not isinstance(error.value, UncertainTransport)
 
 
-@pytest.mark.parametrize("status", [401, 403, 400])
+@pytest.mark.parametrize("status", [401, 403, 400, 404, 409, 422, 429])
 def test_definite_http_rejection_and_pre_dispatch_validation_are_not_uncertain(
     monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
@@ -235,6 +240,24 @@ def test_definite_http_rejection_and_pre_dispatch_validation_are_not_uncertain(
     assert error.value.status == status
     with pytest.raises(IdentityError):
         yt.request("POST", "https://other.example/api/issues/1-43", {})
+
+
+@pytest.mark.parametrize("status", [408, 500, 502, 503, 504, 599])
+def test_ambiguous_http_read_failure_is_not_absence_or_write_uncertainty(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    import scripts.project_tracking as module
+
+    def rejected(*args: Any, **kwargs: Any) -> Any:
+        raise HTTPError("https://tracker.example", status, "fake-token private details", {}, None)
+
+    monkeypatch.setattr(module, "build_opener", lambda *args: SimpleNamespace(open=rejected))
+    yt = YouTrack("https://tracker.example", "fake-token")
+    with pytest.raises(APIError) as error:
+        yt.request("GET", "issues/1-43")
+    assert error.value.status == status
+    assert "fake-token" not in str(error.value)
+    assert "private" not in str(error.value)
 
 
 @pytest.mark.parametrize(

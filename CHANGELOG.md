@@ -15,8 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and remote failures are visible but remain non-blocking for local cycles. No inferred estimates,
   due dates, enum values or unverified agent comment claims. PASS never closes the issue.
   Pending/timed-out field and definition writes now fence subsequent synchronization across restarts
-  until operator reconciliation, including socket timeouts, connection loss and unreadable mutation
-  responses (client termination does not prove remote failure). Malformed configured values fail before bootstrap mutation, and
+  until operator reconciliation, including socket timeouts, connection loss, HTTP 408/5xx mutation
+  errors (including gateway 504) and unreadable responses (client termination or a server/gateway
+  error does not prove remote failure). Malformed configured values fail before bootstrap mutation, and
   failed operator synchronization never claims idempotent completion. GitHub PR synchronization and
   exact-SHA readiness verification remain independent of YouTrack write fences; remote cross-links
   are skipped visibly while stale local human-review evidence is still revoked.

@@ -59,6 +59,19 @@ operation preservation and repeat PR idempotency. Update operational docs/Wiki/r
 suite and full quality gate, commit/push and prepare only the designated handoff input.
 No live mutations, dependencies, schema changes or reviewer capability changes.
 
+## Attempt 5 — reviewer R3 ambiguous HTTP mutation responses
+Level 1, clean baseline. Graphify scoped query and UTF-8 CRG incremental preflight succeeded;
+source verifies `_request` treats all HTTP errors as definite failures, bypassing the durable
+conflicting-write fence when an upstream write continues after a gateway/server error.
+Classify mutation HTTP 5xx and request timeout 408 as UncertainTransport, preserving ordinary
+read errors and definite 4xx rejections. Reuse operation's durable uncertainty persistence;
+no retry/reset, schema, dependency, module-boundary or GitHub-readiness changes.
+Extend real request-wrapper delayed-state regressions to HTTP errors; verify lifecycle/operator
+validation stay fenced across restart and after delayed completion, sanitized evidence and no
+newer state claim. Retain independent GitHub regressions and definite rejection/read tests.
+Update operational docs/Wiki/report; run focused tests and full Windows check.ps1, commit/push,
+then write only runner-designated handoff input. No live mutation required or performed.
+
 ## Impact
 Only harness tracking, its configuration, tests and documentation. No PDF, model, OCR, dependency,
 agent-cycle schema, exact-SHA or reviewer-tool changes. No live API calls during implementation.
