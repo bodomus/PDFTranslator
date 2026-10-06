@@ -8,6 +8,17 @@ Progress journals already append execution boundaries and must remain append-onl
 Graphify query `reopen_cycle run_cycle stop_cycle` identifies validator, runner, resume tests and tracking callers; verified in source. CRG update parsed successfully but console encoding failed; retry with UTF-8. No Context7 tools available; no new external APIs or dependencies needed.
 No PDF, translation, OCR, model or package boundary impact.
 
+## Attempt 2 / R1 investigation and plan
+The runner records active IMPLEMENTING before tracking hooks and child launch. A crash there
+currently cannot resume. Add an OS-held per-ticket runner lock (released on process death), and
+an atomic attempt-bound prepared/launching marker for operational approvals. Only a strictly
+validated prepared marker plus exclusive ownership and unchanged clean Git facts may resume
+IMPLEMENTING without repeating begin/approval/accounting. Persist launching before executor entry;
+uncertain launch ownership, legacy active phases, corrupt markers and concurrent runners reject.
+Regression tests inject crashes after begin and tracking, check preserved diagnostics/accounting,
+and prove launch-side uncertainty and competing owners fail closed. No external library API or
+PDF/model boundary changes; source-verified Graphify and CRG preflight performed.
+
 ## Plan
 1. Add optional strict structured stop fields and operational approval history, separate retry policy/state, cumulative attempt accounting and read-only eligibility.
 2. Integrate separate runner/validator CLI, classified process failures, approval resume, preserved attempt artifacts and observable attempt diagnostics.

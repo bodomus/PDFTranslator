@@ -32,6 +32,10 @@ related:
 
 ## 2026-10-06
 
+- Recorded PDFTR-45 R1 repair: OS-held runner ownership and atomic attempt-bound pre-launch
+  markers resume the same approved implementation after begin/tracking crashes; launch uncertainty,
+  competing owners and unsafe Git facts fail closed without duplicating approval/accounting.
+
 - Documented separate human-approved operational retry, strict classification/identity gates,
   bounded attempt accounting without review grants, preserved failed diagnostics and approval
   resume. Legacy operational text remains unknown; review recovery uses immutable review evidence.

@@ -188,7 +188,11 @@ round zero, no accepted implementation/review, no active agent, a clean tree, un
 HEAD, and the recorded branch/repository. It never stashes, resets, cleans or rebinds HEAD.
 `HUMAN_APPROVED_OPERATIONAL_RETRY` persists one approval and resumes the same approved attempt
 if interrupted before execution. Repeating the approval command rejects without mutation; use
-normal resume after approval. Active phases still require inspection, not guessed process ownership.
+normal resume after approval. For operational approvals the runner also resumes a pre-launch
+`IMPLEMENTING` phase only with a matching atomic `prepared` attempt marker, clean unchanged Git
+facts, and an exclusive OS-held ticket lock. The lock is released on runner death. Before entering
+the child executor the marker becomes `launching`; crashes after this fence, missing/corrupt markers
+and other active phases require inspection. Process ownership is never guessed.
 
 At most **three** operational retries are allowed. `implementation_attempt` increases independently
 of `review_round`; approval grants no extra review budget. The strict `operational_retries` audit

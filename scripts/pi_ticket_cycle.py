@@ -17,7 +17,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol, TextIO
@@ -29,6 +29,8 @@ from scripts.agent_cycle import (  # noqa: E402
     OPERATIONAL_CODES,
     CycleError,
     StopClass,
+    _atomic_write_json,
+    _load_json,
     begin_implementation,
     begin_review,
     collect_git_facts,
@@ -1152,7 +1154,130 @@ def _outcome(manifest: dict[str, Any], config: RunnerConfig) -> RunOutcome:
     )
 
 
+@contextlib.contextmanager
+def _runner_ownership(repo_root: Path, ticket: str) -> Iterator[None]:
+    """OS ownership survives neither process death nor a second concurrent runner."""
+    directory = cycle_directory(repo_root, ticket)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    path = directory.parent / f"{ticket}.runner.lock"
+    if path.is_symlink() or path.is_junction():
+        raise RunnerError("runner lock must not be a symbolic link")
+    with path.open("a+b") as stream:
+        stream.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            # Windows byte-range locks may cover an empty file, without rewriting it.
+            def lock() -> None:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def unlock() -> None:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def lock() -> None:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def unlock() -> None:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+        try:
+            lock()
+        except OSError as error:
+            raise RunnerError("another runner owns this ticket") from error
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            unlock()
+
+
+def _launch_record(manifest: dict[str, Any], phase: str) -> dict[str, Any]:
+    return {
+        "ticket": manifest["ticket"],
+        "repository_fingerprint": manifest["repository_fingerprint"],
+        "branch": manifest["branch"],
+        "head_sha": manifest["current_head_sha"],
+        "implementation_attempt": implementation_attempt(manifest),
+        "approval": manifest["operational_retries"][-1],
+        "phase": phase,
+    }
+
+
+def _launch_path(directory: Path, manifest: dict[str, Any]) -> Path:
+    return directory / f"implementer-launch-attempt-{implementation_attempt(manifest)}.json"
+
+
+def _prepared_operational_launch(directory: Path, manifest: dict[str, Any]) -> bool:
+    """Only proof of a not-yet-entered executor permits resuming an active phase."""
+    if not (
+        manifest["state"] == "IMPLEMENTING"
+        and manifest["active_agent"] == "implementer"
+        and manifest["review_round"] == 0
+        and manifest.get("operational_retries")
+    ):
+        return False
+    path = _launch_path(directory, manifest)
+    if not path.exists():
+        return False
+    # Canonical comparison also distinguishes JSON booleans from integer fields.
+    if json.dumps(_load_json(path), sort_keys=True) != json.dumps(
+        _launch_record(manifest, "prepared"), sort_keys=True
+    ):
+        return False
+    handoff = _load_json(directory / "handoff.json")
+    if (
+        handoff["implementer"] is not None
+        or handoff["reviewer"] is not None
+        or any(directory.glob("review-*.json"))
+        or any(directory.glob("implementation-*.json"))
+    ):
+        raise RunnerError(
+            "pre-launch resume has accepted or contradictory handoff/review artifacts"
+        )
+    return True
+
+
 def run_cycle(
+    repo_root: Path,
+    ticket: str,
+    *,
+    executor: PiExecutor,
+    config: RunnerConfig | None = None,
+    ticket_text: str | None = None,
+    reporter: ProgressReporter | None = None,
+    recover: bool = False,
+    recover_operational: bool = False,
+    reason: str | None = None,
+) -> RunOutcome:
+    """Serialize runners before reading approval or launch ownership evidence."""
+    validate_reviewer_config(config or RunnerConfig())
+    directory = cycle_directory(repo_root, ticket)
+    if recover and recover_operational:
+        raise RunnerError("review recovery and operational retry are mutually exclusive")
+    if (recover or recover_operational) != (reason is not None):
+        raise RunnerError("human recovery requires a recovery flag and --reason")
+    if (recover or recover_operational) and not directory.is_dir():
+        raise RunnerError("human recovery requires an existing STOPPED cycle")
+    if not directory.is_dir():
+        # Preserve the no-artifacts contract for an unavailable initial executor.
+        executor.ensure_available()
+    with _runner_ownership(repo_root.resolve(), validate_ticket_id(ticket)):
+        return _run_cycle(
+            repo_root,
+            ticket,
+            executor=executor,
+            config=config,
+            ticket_text=ticket_text,
+            reporter=reporter,
+            recover=recover,
+            recover_operational=recover_operational,
+            reason=reason,
+        )
+
+
+def _run_cycle(
     repo_root: Path,
     ticket: str,
     *,
@@ -1178,12 +1303,6 @@ def run_cycle(
     reviewer_contract = _load_contract(repo_root, "REVIEWER_CONTRACT.md", REVIEWER_FALLBACK)
 
     directory = cycle_directory(repo_root, ticket)
-    if recover and recover_operational:
-        raise RunnerError("review recovery and operational retry are mutually exclusive")
-    if (recover or recover_operational) != (reason is not None):
-        raise RunnerError("human recovery requires a recovery flag and --reason")
-    if (recover or recover_operational) and not directory.is_dir():
-        raise RunnerError("human recovery requires an existing STOPPED cycle")
     if not directory.is_dir():
         executor.ensure_available()
         initialize_cycle(repo_root, ticket, active_config.base_branch)
@@ -1215,7 +1334,12 @@ def run_cycle(
         tracking.call("lifecycle", "PASS", manifest, "reviewer")
         tracking.call("passed", manifest, active_config)
         return _outcome(manifest, active_config)
-    if status["state"] not in {
+    prepared_launch = _prepared_operational_launch(directory, manifest)
+    if prepared_launch:
+        facts = collect_git_facts(repo_root, manifest["base_branch"])
+        if not facts.clean or facts.head_sha != manifest["current_head_sha"]:
+            raise RunnerError("pre-launch resume requires clean tree and unchanged exact HEAD")
+    if not prepared_launch and status["state"] not in {
         "NEW",
         "CHANGES_REQUIRED",
         "HUMAN_APPROVED_REWORK",
@@ -1231,7 +1355,8 @@ def run_cycle(
     try:
         while True:
             manifest = _read_manifest(repo_root, ticket)
-            if manifest["state"] in {
+            resuming_launch = _prepared_operational_launch(directory, manifest)
+            if resuming_launch or manifest["state"] in {
                 "NEW",
                 "CHANGES_REQUIRED",
                 "HUMAN_APPROVED_REWORK",
@@ -1272,10 +1397,26 @@ def run_cycle(
                     f"implementer{round_label} started: "
                     f"{active_config.implementer.provider} / {active_config.implementer.model}"
                 )
-                begin_implementation(repo_root, ticket)
+                operational_launch = bool(manifest.get("operational_retries")) and (
+                    manifest["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY" or resuming_launch
+                )
+                if operational_launch and not resuming_launch:
+                    path = _launch_path(directory, manifest)
+                    prepared = _launch_record(manifest, "prepared")
+                    if path.exists() and _load_json(path) != prepared:
+                        raise RunnerError("operational launch ownership is uncertain")
+                    _atomic_write_json(path, prepared)
+                if not resuming_launch:
+                    begin_implementation(repo_root, ticket)
                 manifest = _read_manifest(repo_root, ticket)
                 tracking.call("role_metadata", "implementer", active_config.implementer)
                 tracking.call("lifecycle", "start", manifest)
+                if operational_launch:
+                    # Irreversible launch fence: a crash from here on is ambiguous, even
+                    # if it occurs just before spawn. Never infer that no child exists.
+                    _atomic_write_json(
+                        _launch_path(directory, manifest), _launch_record(manifest, "launching")
+                    )
                 implementer_result = _execute_child(
                     executor,
                     _pi_arguments(active_config.implementer, active_config.executable),

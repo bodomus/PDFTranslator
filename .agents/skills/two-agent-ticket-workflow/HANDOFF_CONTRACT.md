@@ -119,6 +119,15 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   duplicate approval rejects. Atomic manifest persistence is the approval commit point; a crash
   before its blank handoff projection is refreshed is safely completed in memory during loading.
   Three retries maximum; further operational failure records `operational_retry_limit`.
+- Runner ownership is serialized by an OS-held `.agent-cycle/<TICKET>.runner.lock`, automatically
+  released on process death. An atomic `implementer-launch-attempt-<N>.json` binds an operational
+  approval, repository fingerprint, ticket, branch, exact HEAD and attempt to `prepared`/`launching`.
+  A matching `prepared` record permits normal resume of pre-launch IMPLEMENTING only under the
+  exclusive lock and clean unchanged Git facts; no new approval or begin transition is performed.
+  The runner persists `launching` before entering the executor. From that fence onward child
+  ownership is uncertain after a crash and active-phase resume rejects. Missing, corrupt or
+  contradictory records, legacy active phases and competing runners fail closed. These files are
+  runner-owned; neither role may mutate them. Historical attempt markers are retained.
 - Retry preserves cumulative implementer logs, append-only progress, rejected/partial input as
   `implementer-attempt-<previous>.json`, and previous report as
   `implementation-report-attempt-<previous>.md`. Nothing silently truncates old diagnostics.

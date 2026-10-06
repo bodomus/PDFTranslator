@@ -98,7 +98,8 @@ The validator requires the recorded branch, clean tree, unchanged HEAD and repos
 prior stop reason, SHA, round, next attempt and previous handoff. Review numbering is cumulative;
 old reviews and numbered implementation snapshots are immutable. MAX_REVIEW_ROUNDS remains two;
 a recovery changes-required verdict stops again. `PASSED` reruns only configured external synchronization/PR verification; other terminal
-and active-role states never auto-resume. Approval is a human/operator action, not agent authority.
+and active-role states never auto-resume except for the proven pre-launch operational case below.
+Approval is a human/operator action, not agent authority.
 
 Pre-handoff operational failure has a separate human boundary: `--recover-operational --reason`
 (or validator `retry-operational`) requires structured operational stop classification, round zero,
@@ -106,7 +107,14 @@ no accepted handoff/review, no active role, clean tree and unchanged exact HEAD 
 branch/repository identity. `HUMAN_APPROVED_OPERATIONAL_RETRY` and strict `operational_retries`
 history authorize at most three new implementer attempts without granting reviews. Normal invocation
 resumes a persisted approval; duplicate approval rejects. Atomic manifest approval can safely recover
-its blank handoff projection after interruption between writes. Attempts add operational retry count
+its blank handoff projection after interruption between writes. The runner holds an OS ticket lock
+and persists an attempt-bound `implementer-launch-attempt-<N>.json` prepared marker before begin.
+If it dies after begin/tracking but before the launch fence, normal invocation can resume the same
+active implementation under exclusive ownership, clean unchanged HEAD and matching strict marker.
+Before executor entry the atomic marker becomes launching; uncertainty after that point, concurrent
+owners, absent/corrupt/mismatched markers and legacy active states reject without guessing a child.
+Historical markers remain available; approval/attempt/round accounting is never repeated.
+Attempts add operational retry count
 to implementation numbering; accepted handoffs retain their actual number. Partial inputs and prior
 reports receive attempt-numbered snapshots, log numbers are unique, journals stay append-only.
 Status exposes class/code, count/attempt and eligibility/rejection reason. OS launch failures and

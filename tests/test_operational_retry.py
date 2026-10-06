@@ -1,6 +1,8 @@
 """Human-approved pre-review retry: deterministic local Git/adapter tests."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -217,6 +219,196 @@ def test_approved_crash_resumes_same_attempt(
     assert outcome.passed and outcome.implementation_attempt == 2
     assert len(runner._read_manifest(git_repo, TICKET)["operational_retries"]) == 1
     assert (directory / "pi-implementer-round-1.log").exists()
+
+
+class SimulatedRunnerDeath(BaseException):
+    """Bypass orderly failure handlers, as process death would."""
+
+
+def crash_after_begin(repo: Path, fake: FakePi, patch: pytest.MonkeyPatch) -> None:
+    begin = runner.begin_implementation
+
+    def crash(*args: object, **kwargs: object) -> None:
+        begin(*args, **kwargs)
+        raise SimulatedRunnerDeath
+
+    patch.setattr(runner, "begin_implementation", crash)
+    with pytest.raises(SimulatedRunnerDeath):
+        run_cycle(repo, TICKET, executor=fake, config=_config())
+
+
+@pytest.mark.parametrize("stage", ["after_begin", "tracking_before_launch"])
+def test_active_prelaunch_crash_resumes_same_approved_attempt(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    previous_log = (directory / "pi-implementer-round-1.log").read_bytes()
+    previous_progress = (directory / "implementer-progress.log").read_bytes()
+    (directory / "implementer.json").write_text('{"partial":', encoding="utf-8")
+    approval = approve(git_repo)["operational_retries"]
+    with monkeypatch.context() as patch:
+        if stage == "after_begin":
+            crash_after_begin(git_repo, fake, patch)
+        else:
+            call = runner.TrackingHooks.call
+
+            def crash(self: object, operation: str, *args: object, **kwargs: object) -> object:
+                if operation == "lifecycle" and args[0] == "start":
+                    raise SimulatedRunnerDeath
+                return call(self, operation, *args, **kwargs)
+
+            patch.setattr(runner.TrackingHooks, "call", crash)
+            with pytest.raises(SimulatedRunnerDeath):
+                run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    manifest = runner._read_manifest(git_repo, TICKET)
+    assert manifest["state"] == "IMPLEMENTING"
+    assert manifest["active_agent"] == "implementer"
+    assert manifest["implementation_attempt"] == 2 and manifest["review_round"] == 0
+    assert manifest["operational_retries"] == approval
+    assert fake.implementer_runs == 1
+    assert not (directory / "pi-implementer-round-2.log").exists()
+    assert json.loads((directory / "implementer-launch-attempt-2.json").read_text())["phase"] == (
+        "prepared"
+    )
+    before = artifacts(directory)
+    with pytest.raises(RunnerError, match="requires STOPPED"):
+        run_cycle(
+            git_repo,
+            TICKET,
+            executor=fake,
+            config=_config(),
+            recover_operational=True,
+            reason="duplicate approval",
+        )
+    assert artifacts(directory) == before
+    outcome = run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert outcome.passed and outcome.implementation_attempt == 2
+    assert outcome.operational_retries == 1 and outcome.review_rounds == 1
+    assert fake.implementer_runs == 2
+    assert runner._read_manifest(git_repo, TICKET)["operational_retries"] == approval
+    assert (directory / "implementer-attempt-1.json").read_text() == '{"partial":'
+    assert (directory / "pi-implementer-round-1.log").read_bytes() == previous_log
+    assert (directory / "implementer-progress.log").read_bytes().startswith(previous_progress)
+    assert (
+        json.loads((directory / "implementation-2.json").read_text())["implementation_attempt"] == 2
+    )
+
+
+@pytest.mark.parametrize(
+    "violation",
+    [
+        "dirty",
+        "head",
+        "branch",
+        "missing",
+        "corrupt",
+        "duplicate",
+        "mismatch",
+        "launching",
+        "review_artifact",
+        "implementation_artifact",
+    ],
+)
+def test_active_prelaunch_resume_fails_closed(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, violation: str
+) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    approve(git_repo)
+    with monkeypatch.context() as patch:
+        crash_after_begin(git_repo, fake, patch)
+    path = directory / "implementer-launch-attempt-2.json"
+    if violation == "dirty":
+        (git_repo / "tracked.txt").write_text("WIP")
+    elif violation == "head":
+        _git(git_repo, "commit", "--allow-empty", "-m", "outside cycle")
+    elif violation == "branch":
+        _git(git_repo, "switch", "-c", "unexpected-branch")
+    elif violation in {"review_artifact", "implementation_artifact"}:
+        name = "review-1.json" if violation == "review_artifact" else "implementation-2.json"
+        (directory / name).write_text("{}")
+    elif violation == "missing":
+        path.unlink()
+    elif violation == "corrupt":
+        path.write_text("{")
+    elif violation == "duplicate":
+        path.write_text(path.read_text().replace('"phase":', '"phase": "prepared", "phase":'))
+    else:
+        record = json.loads(path.read_text())
+        record["phase" if violation == "launching" else "head_sha"] = (
+            "launching" if violation == "launching" else "0" * 40
+        )
+        runner._write_json(path, record)
+    before = artifacts(directory)
+    with pytest.raises((RunnerError, CycleError)):
+        run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert artifacts(directory) == before
+    assert fake.implementer_runs == 1
+
+
+def test_launch_fence_rejects_uncertain_ownership(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    approve(git_repo)
+
+    def crash(*args: object, **kwargs: object) -> None:
+        raise SimulatedRunnerDeath
+
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "_execute_child", crash)
+        with pytest.raises(SimulatedRunnerDeath):
+            run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert (
+        json.loads((directory / "implementer-launch-attempt-2.json").read_text())["phase"]
+        == "launching"
+    )
+    before = artifacts(directory)
+    with pytest.raises(RunnerError, match="IMPLEMENTING"):
+        run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert artifacts(directory) == before
+
+
+def test_live_runner_ownership_prevents_resume(git_repo: Path) -> None:
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    approve(git_repo)
+    before = artifacts(directory)
+    with (
+        runner._runner_ownership(git_repo, TICKET),
+        pytest.raises(RunnerError, match="another runner owns"),
+    ):
+        run_cycle(git_repo, TICKET, executor=fake, config=_config())
+    assert artifacts(directory) == before
+    assert run_cycle(git_repo, TICKET, executor=fake, config=_config()).passed
+
+
+def test_runner_lock_cross_process_and_process_death(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cycle_tests._disable_child_coverage(monkeypatch)
+    code = (
+        "import os, sys; from pathlib import Path; "
+        "from scripts.pi_ticket_cycle import _runner_ownership; "
+        "owner = _runner_ownership(Path(sys.argv[1]), sys.argv[2]); "
+        "owner.__enter__(); os._exit(0)"
+    )
+    command = [sys.executable, "-c", code, str(git_repo), TICKET]
+    with runner._runner_ownership(git_repo, TICKET):
+        result = subprocess.run(
+            command, cwd=cycle_tests.REPOSITORY_ROOT, capture_output=True, timeout=30
+        )
+        assert result.returncode != 0
+        assert b"another runner owns this ticket" in result.stderr
+    result = subprocess.run(
+        command, cwd=cycle_tests.REPOSITORY_ROOT, capture_output=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    # The child used os._exit, so no Python context/finally unlocked this file.
+    with runner._runner_ownership(git_repo, TICKET):
+        pass
 
 
 def test_retry_bound_never_spends_review_budget(git_repo: Path) -> None:
