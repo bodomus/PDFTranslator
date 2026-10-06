@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Human-approved pre-review operational retry (PDFTR-45) with `--recover-operational`, structured
+  stop codes, clean-tree/exact-HEAD/branch/repository gates, separate approval state and strict audit
+  history. Up to three retries increment implementation attempts without spending review budget;
+  previous logs, journals, partial handoffs and reports survive. Status reports retry eligibility;
+  approval resumes without duplicate counting. Locked, attempt-bound pre-launch ownership also
+  resumes a crash during either persistence step of the implementation transition or afterward,
+  before the launch fence; only the exact blank previous projection can be completed, and uncertain
+  launch ownership fails closed. Legacy text-only operational stops remain unknown.
+
 - Role-bound append-only operational progress journals for Pi cycles (PDFTR-44), UTC milestones,
   safe last-activity heartbeat display, configurable diagnostic stale warnings, and preserved
   resume/recovery boundaries and failure/cancellation evidence. Reviewer access is limited to its
@@ -55,6 +64,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   translation providers and existing artifact schemas remain unchanged (PDFTR-39).
 
 ### Fixed
+
+- PDFTR-45 human-approved corrective patch: reject unexpected implementation/review snapshots
+  before approved operational retry mutations, including interrupted approval persistence, while
+  retaining legitimate later history. Require type-sensitive blank approval projections so Boolean
+  and floating-point round values cannot be normalized into an authorized integer round.
 
 - PDFTR-44 human-approved repair: encode every runner console diagnostic safely on CP1251/ASCII
   streams without interrupting child execution or masking original failures. Reject dangling

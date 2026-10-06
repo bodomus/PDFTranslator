@@ -102,5 +102,44 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   last handoffs are also captured in the approval audit. No historical reviews are superseded or
   considered valid for the new SHA. Recovery still requires a new implementation SHA.
 
+- Separate operational retry: `pi_ticket_cycle.py <TICKET> --recover-operational --reason <APPROVAL>`
+  or `agent_cycle.py retry-operational <TICKET> --reason <APPROVAL>` is human/operator-only.
+  Eligibility requires STOPPED with structured operational class/recognized code, round zero,
+  no accepted implementation or review, no active agent, clean tree, unchanged exact HEAD and
+  existing ticket/repository/branch bindings. Unknown/safety failures and legacy text-only
+  operational stops cannot be inferred from free text. No WIP cleanup or reviewer powers are added.
+- Optional strict manifest fields: positive integer `implementation_attempt`,
+  `stop_class` (operational, review_exhausted, safety, unknown),
+  `stop_code` (stable string or null), and `operational_retries` (list). Each approval entry has
+  exactly `type=operational_retry`, `reason`, `previous_stop_code`, `previous_stop_reason`,
+  `head_sha`, `branch`, `review_round=0`, and `implementation_attempt`. Attempts are
+  `review_round + 1 + len(operational_retries)` during implementation. Existing accepted handoffs
+  retain their actual attempt. Review grants remain controlled only by `human_recoveries`.
+- `HUMAN_APPROVED_OPERATIONAL_RETRY` resumes the approved attempt via a normal runner invocation;
+  duplicate approval rejects. Atomic manifest persistence is the approval commit point; a crash
+  before its blank handoff projection is refreshed is safely completed in memory during loading
+  only for the exact previous blank projection, including nested JSON types. Boolean/float rounds
+  cannot replace integer zero. This pre-first-handoff state authorizes no numbered accepted
+  implementation/review snapshots: unexpected snapshots reject before normalization or any resume
+  mutation. Later review/rework history and failed-attempt diagnostics remain preserved.
+  Three retries maximum; further operational failure records `operational_retry_limit`.
+- Runner ownership is serialized by an OS-held `.agent-cycle/<TICKET>.runner.lock`, automatically
+  released on process death. An atomic `implementer-launch-attempt-<N>.json` binds an operational
+  approval, repository fingerprint, ticket, branch, exact HEAD and attempt to `prepared`/`launching`.
+  A matching `prepared` record permits normal resume of pre-launch IMPLEMENTING only under the
+  exclusive lock and clean unchanged Git facts; no new approval or begin transition is performed.
+  If begin crashed between replacing manifest and handoff, the runner validates identity, approval,
+  strict prepared marker and absence of accepted artifacts before atomically completing only the
+  exact blank prior HUMAN_APPROVED_OPERATIONAL_RETRY projection. Nonblank/other contradictory
+  handoffs reject before mutation. Ordinary validator loading remains strict.
+  The runner persists `launching` before entering the executor. From that fence onward child
+  ownership is uncertain after a crash and active-phase resume rejects. Missing, corrupt or
+  contradictory records, legacy active phases and competing runners fail closed. These files are
+  runner-owned; neither role may mutate them. Historical attempt markers are retained.
+- Retry preserves cumulative implementer logs, append-only progress, rejected/partial input as
+  `implementer-attempt-<previous>.json`, and previous report as
+  `implementation-report-attempt-<previous>.md`. Nothing silently truncates old diagnostics.
+  Legacy exhausted-review recovery is classified from validated immutable reviews, not stop text.
+
 Do not delete or rewrite immutable review artifacts as recovery. Human final review and merge remain
 outside the state machine.

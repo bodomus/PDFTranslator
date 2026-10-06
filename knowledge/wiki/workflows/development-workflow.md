@@ -23,6 +23,7 @@ sources:
 - ../../../tests/test_project_tracking.py
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
+- ../../../tests/test_operational_retry.py
 - ../../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../../scripts/reviewer_git/inspector.mjs
 - ../../../.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md
@@ -97,7 +98,39 @@ The validator requires the recorded branch, clean tree, unchanged HEAD and repos
 prior stop reason, SHA, round, next attempt and previous handoff. Review numbering is cumulative;
 old reviews and numbered implementation snapshots are immutable. MAX_REVIEW_ROUNDS remains two;
 a recovery changes-required verdict stops again. `PASSED` reruns only configured external synchronization/PR verification; other terminal
-and active-role states never auto-resume. Approval is a human/operator action, not agent authority.
+and active-role states never auto-resume except for the proven pre-launch operational case below.
+Approval is a human/operator action, not agent authority.
+
+Pre-handoff operational failure has a separate human boundary: `--recover-operational --reason`
+(or validator `retry-operational`) requires structured operational stop classification, round zero,
+no accepted handoff/review, no active role, clean tree and unchanged exact HEAD plus existing
+branch/repository identity. `HUMAN_APPROVED_OPERATIONAL_RETRY` and strict `operational_retries`
+history authorize at most three new implementer attempts without granting reviews. Normal invocation
+resumes a persisted approval; duplicate approval rejects. Approved operational attempts precede any
+accepted handoff/review, so their authorized numbered snapshot inventory is empty. Unexpected
+implementation/review snapshots reject before preservation, journal appends or transitions, including
+approval-crash normalization. Later review/rework states retain their accounted immutable history.
+Atomic manifest approval can safely recover its exact blank handoff projection after interruption
+between writes, comparing nested JSON types as well as values; false and 0.0 cannot replace integer 0.
+The runner holds an OS ticket lock
+and persists an attempt-bound `implementer-launch-attempt-<N>.json` prepared marker before begin.
+If it dies during begin's manifest/handoff writes or after begin/tracking but before the launch
+fence, normal invocation can resume the same active implementation under exclusive ownership,
+clean unchanged HEAD and matching strict approval-bound marker. Before status loading, the runner
+atomically completes only the exact blank prior approved handoff projection after validating all
+identity/Git bindings and absence of immutable accepted artifacts. Nonblank or other mismatched
+projections reject; this does not relax ordinary validator loading or repeat begin/accounting.
+Before executor entry the atomic marker becomes launching; uncertainty after that point, concurrent
+owners, absent/corrupt/mismatched markers and legacy active states reject without guessing a child.
+Historical markers remain available; approval/attempt/round accounting is never repeated.
+Attempts add operational retry count
+to implementation numbering; accepted handoffs retain their actual number. Partial inputs and prior
+reports receive attempt-numbered snapshots, log numbers are unique, journals stay append-only.
+Status exposes class/code, count/attempt and eligibility/rejection reason. OS launch failures and
+nonzero implementer exits have stable codes; trusted adapters can supply provider codes, but text
+messages are never parsed. Legacy text-only operational stops remain unknown; legacy exhausted
+review recovery derives classification from validated immutable reviews. No WIP cleanup, automatic
+retry, process-ownership guessing or new reviewer authority is introduced.
 
 The runner reports lifecycle boundaries and authoritative handoff/review results with flushed
 plain console output. `SubprocessExecutor` retries timed communication and emits an elapsed-time

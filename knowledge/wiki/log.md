@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-45-operational-stopped-retry.md
 - ../../Tickets/PDFTR-44-agent-progress-journal.md
 - ../../Tickets/PDFTR-43-github-pr-chatgpt-work-youtrack.md
 - ../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
@@ -30,6 +31,22 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-06
+
+- Hardened PDFTR-45 approved operational retry loading before mutation: reject unauthorized
+  numbered snapshots while retaining later accounted history, and compare approval-crash blank
+  projections by nested JSON types as well as values.
+
+- Closed the remaining PDFTR-45 pre-launch persistence gap: runner-owned resume validates the
+  exact blank previous approved projection and strict prepared ownership before completing a
+  manifest-only begin transition. Contradictory artifacts and unsafe Git facts reject unchanged.
+
+- Recorded PDFTR-45 R1 repair: OS-held runner ownership and atomic attempt-bound pre-launch
+  markers resume the same approved implementation after begin/tracking crashes; launch uncertainty,
+  competing owners and unsafe Git facts fail closed without duplicating approval/accounting.
+
+- Documented separate human-approved operational retry, strict classification/identity gates,
+  bounded attempt accounting without review grants, preserved failed diagnostics and approval
+  resume. Legacy operational text remains unknown; review recovery uses immutable review evidence.
 
 - Recorded PDFTR-44 human-approved R1/R2 repair: safe CP1251/ASCII diagnostic output preserves
   original failures and console length bounds; entry-level journal checks reject dangling links.
