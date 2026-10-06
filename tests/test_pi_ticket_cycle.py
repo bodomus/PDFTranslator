@@ -391,7 +391,7 @@ def test_reviewer_invocation_is_read_only_and_configured(git_repo: Path) -> None
     reviewer_command = next(c for c in fake.commands if _provider(c) == "openai-codex")
     assert _model(reviewer_command) == "gpt-6.1-sol"
     tools = reviewer_command[reviewer_command.index("--tools") + 1].split(",")
-    assert tools == ["read", "grep", "find", "ls", "git_readonly"]
+    assert tools == ["read", "grep", "find", "ls", "git_readonly", "progress_append"]
     assert "--no-extensions" in reviewer_command
     assert reviewer_command[reviewer_command.index("--extension") + 1] == str(
         pi_runner.REVIEWER_EXTENSION
@@ -1005,10 +1005,10 @@ def test_presets_launch_independent_roles_with_read_only_reviewer(
     assert _model(first) == expected_models[implementer]
     assert _model(second) == expected_models[reviewer]
     assert "--tools" not in first
-    assert second[second.index("--tools") + 1] == "read,grep,find,ls,git_readonly"
+    assert second[second.index("--tools") + 1] == "read,grep,find,ls,git_readonly,progress_append"
     assert "--no-extensions" in second
     assert "--extension" in second
-    assert "--extension" not in first
+    assert first[first.index("--extension") + 1] == str(pi_runner.PROGRESS_EXTENSION)
     assert "--no-extensions" not in first
     assert fake.invocations[0][1].startswith("You are the implementer")
     assert fake.invocations[1][1].startswith("You are the read-only reviewer")

@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-05
+updated: 2026-10-06
 tags:
 - development
 - tickets
@@ -14,6 +14,9 @@ sources:
 - ../../../scripts/check.ps1
 - ../../../scripts/agent_cycle.py
 - ../../../scripts/pi_ticket_cycle.py
+- ../../../scripts/agent_progress.py
+- ../../../scripts/agent_progress/journal.mjs
+- ../../../tests/test_agent_progress.py
 - ../../../scripts/project_tracking.py
 - ../../../scripts/tracking_hooks.py
 - ../../../project-tracking.toml
@@ -80,7 +83,7 @@ technically read-only Pi reviewer on that SHA, and records the reviewer JSON thr
 a dirty tree, or malformed/wrong-SHA output, and returns control to the human after `PASS`,
 `BLOCKED`, or the two-round limit. Ownership is explicit: the implementer writes project files and
 only its role-owned handoff input, the reviewer returns one structured JSON object on stdout and
-never writes a coordination file, and the runner persists that result into ignored `.agent-cycle`
+never writes an authoritative coordination file, and the runner persists that result into ignored `.agent-cycle`
 state. The parser accepts exactly one supported review envelope and fails closed otherwise. The
 runner owns every child process tree and terminates descendants through a Windows Job Object or a
 saved POSIX process group on success, cancellation, or any post-spawn failure. Provider, model, and
@@ -101,12 +104,25 @@ plain console output. `SubprocessExecutor` retries timed communication and emits
 heartbeat every five minutes; it sends stdin once and retains the same process-tree owner and
 cleanup paths. Detailed child output stays in existing diagnostic logs.
 
+Each role receives centralized milestone-only policy and a runner-bound `progress_append` capability
+with no path parameter. Its append-only `<role>-progress.log` uses `[HH:MM]` UTC and retains prior
+history plus attempt/round boundaries across exits, resume and recovery. The reviewer can append
+only to its own diagnostic journal, never the implementer's or tracked repository files; this narrow
+exception does not replace review JSON or relax Git/SHA gates. No reasoning, prompts or sensitive
+content is permitted; tool validation additionally rejects controls, URLs and common credential
+patterns. The heartbeat reads a bounded 64-KiB tail locally, skips malformed/partial lines, sanitizes
+controls and truncates activity text. Staleness is measured from valid entry changes observed by
+heartbeat polling, restarting per execution. Defaults are enabled, 30-minute stale warnings and
+180 console characters; CLI flags can configure/disable them. Warnings never kill or auto-recover
+the child. Exit/failure/cancellation diagnostics include last activity and relative journal path.
+
 Runtime role presets (`deepseek-codex`, `codex-deepseek`, `codex-codex`, `deepseek-deepseek`)
 select provider/model pairs. Explicit CLI fields override the corresponding preset fields.
 Reviewer tools remain limited to `read,grep,find,ls,git_readonly`, and every role uses a separate process and
 context even when provider/model are identical. Presets do not alter the validator state machine.
 
-The reviewer-only Git-read adapter loads explicitly with other extension discovery disabled.
+The reviewer-only Git-read adapter and optional progress tool load explicitly with other extension
+discovery disabled.
 Its fixed-operation inspector verifies HEAD/status/SHA/branch/diff/show/merge-base/history using
 runner-bound cwd, full commit IDs or HEAD, bounded output/time and no shell. It disables executable
 Git helper/filter/pager paths, optional index locks and network/submodule traversal. Unsupported

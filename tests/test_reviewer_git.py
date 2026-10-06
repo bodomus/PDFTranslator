@@ -302,7 +302,7 @@ factory(pi);
 for (const name of ['write','edit','bash','powershell','cmd','python']) {
   if (!handlers.tool_call({toolName: name}).block) throw new Error('write/shell allowed');
 }
-for (const name of ['read','grep','find','ls','git_readonly']) {
+for (const name of ['read','grep','find','ls','git_readonly','progress_append']) {
   if (handlers.tool_call({toolName: name})) throw new Error('read blocked');
 }
 let failed = false;

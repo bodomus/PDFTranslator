@@ -179,6 +179,31 @@ verdicts, and the validator's terminal state. A running child produces a heartbe
 minutes. Prompts, reasoning, and child stdout/stderr stay out of lifecycle output; existing
 `.agent-cycle/<TICKET>/pi-*-round-*.log` files remain the detailed diagnostic source.
 
+Each role receives a harness-bound `progress_append(message)` tool and its own append-only
+`.agent-cycle/<TICKET>/<role>-progress.log`. Entries use `[HH:MM]` in **UTC** and contain only
+short factual milestones (major steps, tests/results, blockers, commit/push/completion), usually
+5–20 per execution; reviewer logs are shorter. Never log reasoning, prompts, secrets, credentials,
+auth headers, OAuth codes, environment dumps or secret-bearing URLs. Summarize external failures;
+the tool additionally rejects common credential patterns, all HTTP URLs and control characters.
+It accepts no path parameter; reviewers cannot append to the implementer journal or mutate the
+repository. This is a diagnostic exception only, not a review verdict or authoritative cycle state.
+The reviewer loads only the trusted Git-read and progress extensions.
+
+Heartbeats read the latest valid complete line locally, for example:
+`[PDFTR-44] implementer running... 95m - last: [19:42] Running focused tests`.
+Missing/empty/unreadable journals keep the old heartbeat format. Parsing reads at most the last
+64 KiB, skips malformed/partial lines, sanitizes controls and truncates console activity to 180
+characters. A warning appears after 30 minutes without a newly observed valid entry (including
+when none is reported); the stale clock restarts per execution and updates at heartbeat polling.
+This is **not a timeout** and never kills or recovers a process. No model status requests or periodic
+agent-generated heartbeats are used; token overhead is limited to the short policy/tool and milestones.
+
+Configure via `--progress-stale-minutes 30`, `--progress-max-console-chars 180` (20–2000), or
+`--no-agent-progress` to disable journals/policy/diagnostics. Defaults need no project configuration.
+Existing journals survive success, failure, cancellation, STOPPED, resume and human recovery;
+the runner appends UTC attempt/round boundaries instead of truncating. At role exit, including
+cancellation or failure, it prints `Last activity:` and the relative `Progress log:` path.
+
 Use a preset to change the provider/model assigned to each role:
 
 | Preset | Implementer | Reviewer |
@@ -202,7 +227,8 @@ Pi child processes and separate role prompts/contexts.
 Reviewer-only `git_readonly` exposes explicit status, HEAD/SHA resolution, branch, endpoint diff,
 working/index diff, commit show, merge-base and bounded history operations. It is not shell access
 or arbitrary Git argv and cannot mutate the repository. The runner fixes the repository root and
-loads only its trusted reviewer extension; helpers, filters, pagers and network transports are
+loads its trusted Git-read adapter (plus the bound progress tool when enabled); helpers, filters,
+pagers and network transports are
 neutralized. Only HEAD/full commit IDs are accepted; each subprocess is capped at 30 seconds and
 4 MiB (errors fail closed rather than truncate evidence). Reviewers independently verify Git
 state and base relationships; `agent_cycle.py` still owns exact-SHA binding and all state.

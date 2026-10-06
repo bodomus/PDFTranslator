@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-05
+updated: 2026-10-06
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-44-agent-progress-journal.md
 - ../../Tickets/PDFTR-43-github-pr-chatgpt-work-youtrack.md
 - ../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../Tickets/PDFTR-41.md
@@ -27,6 +28,12 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-06
+
+- Documented role-bound UTC operational journals, local last-activity heartbeat/stale diagnostics,
+  preserved execution history and the narrow reviewer append-only diagnostic exception (PDFTR-44).
+  Authoritative cycle state, exact-SHA review and process cleanup remain unchanged; no timeout.
 
 ## 2026-10-05
 

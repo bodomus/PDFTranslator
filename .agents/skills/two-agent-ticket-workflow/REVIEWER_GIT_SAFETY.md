@@ -4,7 +4,11 @@ The Pi runner grants reviewers `read,grep,find,ls,git_readonly` for every role/m
 Implementer permissions are unchanged. Git-read is **not shell access** and cannot mutate the
 working tree, index, refs, branches, tags, remotes, commits, stash or configuration.
 
-The runner disables extension discovery and explicitly loads only its trusted Git-read adapter.
+The runner disables extension discovery and explicitly loads its trusted Git-read adapter plus,
+when progress is enabled, the trusted `progress_append` extension. This diagnostic-only tool accepts
+one short milestone, no paths, and appends only to the runner-bound reviewer journal. It rejects
+redirected/hard-linked journals, controls and common credential patterns. It grants no repository
+writes or shell access; operational policy forbids reasoning and sensitive content.
 The adapter also blocks non-allowlisted tool calls. Pi still runs as its OS user: this is a
 model-callable capability boundary, not a sandbox against compromised Pi/Node/Git binaries or
 concurrent external writers. Existing file-reading tools are not a repository filesystem sandbox.

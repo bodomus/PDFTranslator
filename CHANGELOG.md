@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Role-bound append-only operational progress journals for Pi cycles (PDFTR-44), UTC milestones,
+  safe last-activity heartbeat display, configurable diagnostic stale warnings, and preserved
+  resume/recovery boundaries and failure/cancellation evidence. Reviewer access is limited to its
+  own journal through `progress_append`; cycle authority and process cleanup remain unchanged.
+  No hard execution timeout or automatic stale-run recovery is introduced.
+
 - Harness-owned YouTrack bootstrap, schema-checked agent update intents, lifecycle synchronization,
   idempotency journals and credential-free audit artifacts (PDFTR-43). After `PASSED`, configured
   GitHub PR creation/reuse verifies the exact reviewed head SHA, records real check status, and

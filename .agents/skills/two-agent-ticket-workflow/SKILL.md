@@ -14,7 +14,8 @@ rules to the normal repository investigation and validation workflow; it does no
 - The implementer is the only role permitted to modify project files, commit, or push.
 - The reviewer checks exactly one explicit immutable SHA and does not modify project files. When a
   runner drives the cycle it persists the reviewer's structured stdout into ignored `.agent-cycle`
-  state and records the review; the reviewer never writes a file.
+  state and records the review; the reviewer never writes an authoritative artifact. The only
+  diagnostic exception is the runner-bound append-only `progress_append` tool for its own journal.
 - The roles run sequentially in one ticket branch and one working directory.
 - A new implementation SHA invalidates every earlier review result.
 - At most two automated review rounds are allowed.

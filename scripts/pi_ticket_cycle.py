@@ -39,6 +39,13 @@ from scripts.agent_cycle import (  # noqa: E402
     stop_cycle,
     validate_ticket_id,
 )
+from scripts.agent_progress import (  # noqa: E402
+    JournalMonitor,
+    ProgressConfig,
+    append_boundary,
+    last_activity,
+    progress_policy,
+)
 from scripts.project_tracking import (  # noqa: E402
     INTENT_HELP,
     TrackingError,
@@ -51,9 +58,10 @@ REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
 REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
 _JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```", re.DOTALL)
 
-# The reviewer is technically read-only: only these tools may ever be granted.
+# Configurable reviewer tools are read-only; the runner adds only its bound progress tool.
 READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls", "git_readonly"})
 REVIEWER_EXTENSION = Path(__file__).resolve().parent / "reviewer_git" / "extension.ts"
+PROGRESS_EXTENSION = Path(__file__).resolve().parent / "agent_progress" / "extension.ts"
 
 IMPLEMENTER_FALLBACK = (
     "The implementer is the only repository writer. Implement the ticket, add tests, run the "
@@ -116,7 +124,7 @@ def _console_message(message: str) -> None:
 
 @dataclass(frozen=True)
 class ProgressReporter:
-    """Lifecycle only; never receives prompts or captured child output."""
+    """Lifecycle/milestone diagnostics; never receives prompts or captured child output."""
 
     ticket: str
     emit: Callable[[str], None] = _console_message
@@ -124,8 +132,12 @@ class ProgressReporter:
     def message(self, message: str) -> None:
         self.emit(f"[{self.ticket}] {message}")
 
-    def heartbeat(self, role: str, elapsed: float) -> None:
-        self.message(f"{role} running... {int(elapsed // 60)}m")
+    def heartbeat(self, role: str, elapsed: float, monitor: JournalMonitor | None = None) -> None:
+        text, stale = monitor.observe(elapsed) if monitor else (None, 0.0)
+        suffix = f" - last: {text}" if text else ""
+        self.message(f"{role} running... {int(elapsed // 60)}m{suffix}")
+        if monitor and stale >= monitor.config.stale_minutes * 60:
+            self.message(f"WARNING: no new meaningful activity for {int(stale // 60)}m")
 
 
 @dataclass(frozen=True)
@@ -134,6 +146,7 @@ class RunnerConfig:
     reviewer: RoleConfig = DEFAULT_REVIEWER
     base_branch: str = "master"
     executable: str = "pi"
+    progress: ProgressConfig = ProgressConfig()
 
 
 @dataclass(frozen=True)
@@ -762,6 +775,7 @@ def _implementer_prompt(
     attempt: int,
     findings: list[dict[str, Any]],
     handoff_path: Path,
+    journal_path: Path | None = None,
 ) -> str:
     sections = [
         f"You are the implementer for ticket {ticket} (attempt {attempt}).",
@@ -832,7 +846,7 @@ def _implementer_prompt(
                 json.dumps(findings, indent=2),
             ]
         )
-    return "\n".join(sections)
+    return "\n".join(sections) + progress_policy(journal_path)
 
 
 def _reviewer_prompt(
@@ -844,6 +858,7 @@ def _reviewer_prompt(
     review_round: int,
     expected_base: str,
     expected_branch: str,
+    journal_path: Path | None = None,
 ) -> str:
     schema = {
         "schema_version": "1.0",
@@ -896,7 +911,7 @@ def _reviewer_prompt(
             "BLOCKED has a non-empty blocked_reason.",
             f"reviewed_sha must equal {reviewed_sha}.",
         ]
-    )
+    ) + progress_policy(journal_path)
 
 
 def _sanitize_reason(reason: str) -> str:
@@ -922,16 +937,53 @@ def _execute_child(
     ticket: str,
     log_path: Path,
     stdin_text: str,
-    heartbeat: Callable[[float], None],
+    role: str,
+    execution_number: int,
+    progress_config: ProgressConfig,
+    reporter: ProgressReporter,
 ) -> CommandResult:
+    journal = cycle_directory(repo_root, ticket) / f"{role}-progress.log"
+    monitor = None
+    if progress_config.enabled:
+        command = [
+            *command,
+            "--extension",
+            str(PROGRESS_EXTENSION),
+            "--progress-ticket",
+            ticket,
+            "--progress-role",
+            role,
+        ]
+        if "--tools" in command:
+            index = command.index("--tools") + 1
+            command[index] += ",progress_append"
+        try:
+            resumed = journal.exists()
+            append_boundary(
+                journal,
+                f"{'Resumed' if resumed else 'Started'} {role} execution "
+                f"(attempt/round {execution_number})",
+            )
+        except OSError:
+            reporter.message("WARNING: progress boundary unavailable")
+        monitor = JournalMonitor(journal, progress_config)
     try:
         return executor.run(
-            command, cwd=repo_root, log_path=log_path, stdin_text=stdin_text, heartbeat=heartbeat
+            command,
+            cwd=repo_root,
+            log_path=log_path,
+            stdin_text=stdin_text,
+            heartbeat=lambda elapsed: reporter.heartbeat(role, elapsed, monitor),
         )
     except RunnerCancelled:
         raise
     except Exception as error:  # noqa: BLE001 - normalize any operational failure into a clean stop
         _abort(repo_root, ticket, f"Pi process failure: {error}")
+    finally:
+        if progress_config.enabled:
+            activity = last_activity(journal, progress_config.max_console_chars)
+            reporter.message(f"Last activity: {activity.text if activity else 'none reported yet'}")
+            reporter.message(f"Progress log: {journal.relative_to(repo_root).as_posix()}")
 
 
 def _require_clean_tree(repo_root: Path, ticket: str, base_branch: str, role: str) -> None:
@@ -1068,6 +1120,9 @@ def run_cycle(
                     attempt=attempt,
                     findings=findings,
                     handoff_path=_handoff_path(directory),
+                    journal_path=(directory / "implementer-progress.log")
+                    if active_config.progress.enabled
+                    else None,
                 )
                 round_label = f" round {attempt}" if attempt > 1 else ""
                 progress.message(
@@ -1084,7 +1139,10 @@ def run_cycle(
                     + INTENT_HELP
                     + "\nInclude integration warnings in your report: "
                     + json.dumps(tracking.data["warnings"]),
-                    heartbeat=lambda elapsed: progress.heartbeat("implementer", elapsed),
+                    role="implementer",
+                    execution_number=attempt,
+                    progress_config=active_config.progress,
+                    reporter=progress,
                 )
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
                 if implementer_result.returncode != 0:
@@ -1124,6 +1182,9 @@ def run_cycle(
                 review_round=review_round,
                 expected_base=manifest["base_sha"],
                 expected_branch=manifest["branch"],
+                journal_path=(directory / "reviewer-progress.log")
+                if active_config.progress.enabled
+                else None,
             )
             round_label = f" round {review_round}" if review_round > 1 else ""
             progress.message(
@@ -1140,7 +1201,10 @@ def run_cycle(
                 + INTENT_HELP
                 + "\nIntegration evidence: "
                 + json.dumps(tracking.data["warnings"]),
-                heartbeat=lambda elapsed: progress.heartbeat("reviewer", elapsed),
+                role="reviewer",
+                execution_number=review_round,
+                progress_config=active_config.progress,
+                reporter=progress,
             )
             progress.message(f"reviewer finished: exit {reviewer_result.returncode}")
             if reviewer_result.returncode != 0:
@@ -1230,6 +1294,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reviewer-provider")
     parser.add_argument("--reviewer-model")
     parser.add_argument("--reviewer-tools", default=",".join(DEFAULT_REVIEWER.tools))
+    parser.add_argument("--no-agent-progress", action="store_true")
+    parser.add_argument("--progress-stale-minutes", type=int, default=30)
+    parser.add_argument("--progress-max-console-chars", type=int, default=180)
     parser.add_argument("--ticket-file", type=Path)
     parser.add_argument("--repo-root", type=Path)
     return parser
@@ -1258,13 +1325,22 @@ def _config_from_arguments(arguments: argparse.Namespace) -> RunnerConfig:
         ),
         base_branch=arguments.base_branch,
         executable=arguments.pi_executable,
+        progress=ProgressConfig(
+            enabled=not arguments.no_agent_progress,
+            stale_minutes=arguments.progress_stale_minutes,
+            max_console_chars=arguments.progress_max_console_chars,
+        ),
     )
 
 
 def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
     arguments = _parser().parse_args(argv)
     root = (repo_root or arguments.repo_root or Path.cwd()).resolve()
-    config = _config_from_arguments(arguments)
+    try:
+        config = _config_from_arguments(arguments)
+    except ValueError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
     ticket_text: str | None = None
     if arguments.ticket_file is not None:
         ticket_text = arguments.ticket_file.read_text(encoding="utf-8")
