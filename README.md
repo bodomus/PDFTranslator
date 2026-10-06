@@ -172,7 +172,38 @@ earlier artifacts are never overwritten. Numbered `implementation-<attempt>.json
 accepted handoffs. A new implementation SHA and independent exact-SHA review remain mandatory.
 Any recovery review requesting changes stops again and needs another explicit human approval.
 Agents must never request their own recovery; this command is a human/operator approval boundary,
-not an authenticated identity service. Corrupt state and arbitrary operational stops cannot be reopened.
+not an authenticated identity service. Corrupt state and unclassified stops cannot be reopened.
+
+For a **pre-handoff operational failure**, a human can approve a separate implementer retry:
+
+```powershell
+uv run python scripts/pi_ticket_cycle.py PDFTR-45 --preset codex-codex `
+  --recover-operational --reason "Usage limits reset; retry approved"
+# Or persist approval now and resume with the normal runner command:
+uv run python scripts/agent_cycle.py retry-operational PDFTR-45 --reason "Retry approved"
+```
+
+This requires `STOPPED`, structured `stop_class=operational` and a recognized `stop_code`,
+round zero, no accepted implementation/review, no active agent, a clean tree, unchanged exact
+HEAD, and the recorded branch/repository. It never stashes, resets, cleans or rebinds HEAD.
+`HUMAN_APPROVED_OPERATIONAL_RETRY` persists one approval and resumes the same approved attempt
+if interrupted before execution. Repeating the approval command rejects without mutation; use
+normal resume after approval. Active phases still require inspection, not guessed process ownership.
+
+At most **three** operational retries are allowed. `implementation_attempt` increases independently
+of `review_round`; approval grants no extra review budget. The strict `operational_retries` audit
+retains each human reason, prior stop code/reason, HEAD, branch and attempt. Previous logs keep
+unique cumulative implementer numbers (`pi-implementer-round-2.log` is attempt 2), progress journals
+remain append-only, partial inputs are archived as `implementer-attempt-1.json`, and previous
+reports as `implementation-report-attempt-1.md`. `status` shows classification, attempt/count and
+eligibility/rejection reason. Retry exhaustion records `operational_retry_limit`.
+
+Nonzero implementer exits, termination and OS launch/runtime errors have structured classification.
+Trusted adapters may explicitly supply quota, unavailable-provider or network/auth codes; provider
+message text is never parsed for safety decisions. Uncertain errors, safety violations and legacy
+text-only operational manifests (including an already-created PDFTR-44 stop) remain **unknown** and
+require manual intervention: they cannot be safely auto-migrated from `stop_reason`. Legacy exhausted
+review recovery instead uses validated immutable review evidence. Reviewer permissions are unchanged.
 
 The runner prints flushed lifecycle messages for phase starts/exits, handoff validation, review
 verdicts, and the validator's terminal state. A running child produces a heartbeat every five
@@ -194,7 +225,7 @@ as a diagnostic write exception; direct journal writes remain prohibited. Disabl
 the original role write restrictions. The reviewer loads only the trusted Git-read and progress extensions.
 
 Heartbeats read the latest valid complete line locally, for example:
-`[PDFTR-44] implementer running... 95m - last: [19:42] Running focused tests`.
+`[PDFTR-45] implementer attempt 2 running... 95m - last: [19:42] Running focused tests`.
 Missing/empty/unreadable journals keep the old heartbeat format. Parsing reads at most the last
 64 KiB, skips malformed/partial lines, sanitizes controls and truncates console activity to 180
 characters. A warning appears after 30 minutes without a newly observed valid entry (including

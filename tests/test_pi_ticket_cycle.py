@@ -1139,7 +1139,7 @@ def test_lifecycle_heartbeat_contains_only_role_and_elapsed(
     fake.heartbeat_elapsed = 300
     _run(git_repo, fake)
     output = capsys.readouterr().out
-    assert f"[{TICKET}] implementer running... 5m" in output
+    assert f"[{TICKET}] implementer attempt 1 running... 5m" in output
     assert f"[{TICKET}] reviewer running... 5m" in output
 
 

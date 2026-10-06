@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-45-operational-stopped-retry.md
 - ../../Tickets/PDFTR-44-agent-progress-journal.md
 - ../../Tickets/PDFTR-43-github-pr-chatgpt-work-youtrack.md
 - ../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
@@ -30,6 +31,10 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-06
+
+- Documented separate human-approved operational retry, strict classification/identity gates,
+  bounded attempt accounting without review grants, preserved failed diagnostics and approval
+  resume. Legacy operational text remains unknown; review recovery uses immutable review evidence.
 
 - Recorded PDFTR-44 human-approved R1/R2 repair: safe CP1251/ASCII diagnostic output preserves
   original failures and console length bounds; entry-level journal checks reject dangling links.

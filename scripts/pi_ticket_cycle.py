@@ -26,16 +26,20 @@ if __package__ in {None, ""}:  # pragma: no cover - supports `python scripts/pi_
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.agent_cycle import (  # noqa: E402
+    OPERATIONAL_CODES,
     CycleError,
+    StopClass,
     begin_implementation,
     begin_review,
     collect_git_facts,
     cycle_directory,
     cycle_status,
+    implementation_attempt,
     initialize_cycle,
     record_handoff,
     record_review,
     reopen_cycle,
+    retry_operational_cycle,
     stop_cycle,
     validate_ticket_id,
 )
@@ -169,6 +173,8 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+    # Optional trusted adapter classification; never inferred from provider text.
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +187,8 @@ class RunOutcome:
     implementer: RoleConfig
     reviewer: RoleConfig
     stop_reason: str | None = None
+    implementation_attempt: int = 1
+    operational_retries: int = 0
 
     @property
     def passed(self) -> bool:
@@ -971,10 +979,17 @@ def _sanitize_reason(reason: str) -> str:
     return (collapsed or "runner stopped")[:200]
 
 
-def _abort(repo_root: Path, ticket: str, reason: str) -> NoReturn:
+def _abort(
+    repo_root: Path,
+    ticket: str,
+    reason: str,
+    *,
+    stop_class: StopClass = StopClass.UNKNOWN,
+    stop_code: str | None = None,
+) -> NoReturn:
     message = _sanitize_reason(reason)
     try:
-        stop_cycle(repo_root, ticket, message)
+        stop_cycle(repo_root, ticket, message, stop_class=stop_class, stop_code=stop_code)
     except CycleError as error:
         raise RunnerError(f"{message} (failed to record stop: {error})") from error
     raise RunnerError(message)
@@ -1024,12 +1039,36 @@ def _execute_child(
             cwd=repo_root,
             log_path=log_path,
             stdin_text=stdin_text,
-            heartbeat=lambda elapsed: reporter.heartbeat(role, elapsed, monitor),
+            heartbeat=lambda elapsed: reporter.heartbeat(
+                f"implementer attempt {execution_number}" if role == "implementer" else role,
+                elapsed,
+                monitor,
+            ),
         )
-    except RunnerCancelled:
-        raise
-    except Exception as error:  # noqa: BLE001 - normalize any operational failure into a clean stop
-        _abort(repo_root, ticket, f"Pi process failure: {error}")
+    except (RunnerCancelled, KeyboardInterrupt) as error:
+        _abort(
+            repo_root,
+            ticket,
+            f"cancelled: {error}",
+            stop_class=StopClass.OPERATIONAL if role == "implementer" else StopClass.UNKNOWN,
+            stop_code="implementer_terminated" if role == "implementer" else None,
+        )
+    except Exception as error:  # noqa: BLE001 - uncertain failures must fail closed
+        _abort(
+            repo_root,
+            ticket,
+            f"Pi process failure: {error}",
+            stop_class=(
+                StopClass.OPERATIONAL
+                if role == "implementer" and isinstance(error, OSError)
+                else StopClass.UNKNOWN
+            ),
+            stop_code=(
+                "implementer_runtime_failed"
+                if role == "implementer" and isinstance(error, OSError)
+                else None
+            ),
+        )
     finally:
         if progress_config.enabled:
             activity = last_activity(journal, progress_config.max_console_chars)
@@ -1064,6 +1103,33 @@ def _write_json(path: Path, document: dict[str, Any]) -> None:
     path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _preserve_failed_attempt(
+    repo_root: Path,
+    ticket: str,
+    directory: Path,
+    manifest: dict[str, Any],
+) -> None:
+    """Preserve partial input and the prior report before granting the new writer."""
+    previous = implementation_attempt(manifest) - 1
+    source = _handoff_path(directory)
+    target = directory / f"implementer-attempt-{previous}.json"
+    if source.exists():
+        if target.exists():
+            raise RunnerError("historical implementer input already exists; inspect artifacts")
+        source.rename(target)
+    report = repo_root / f".implementation-reports/implementation-report-{ticket}.md"
+    snapshot = directory / f"implementation-report-attempt-{previous}.md"
+    if report.is_file():
+        content = report.read_bytes()
+        if snapshot.exists():
+            if snapshot.read_bytes() != content:
+                raise RunnerError("historical implementation report differs; inspect artifacts")
+        else:
+            temporary = directory / f".implementation-report-attempt-{previous}.tmp"
+            temporary.write_bytes(content)
+            temporary.replace(snapshot)
+
+
 def _outcome(manifest: dict[str, Any], config: RunnerConfig) -> RunOutcome:
     return RunOutcome(
         ticket=manifest["ticket"],
@@ -1074,6 +1140,15 @@ def _outcome(manifest: dict[str, Any], config: RunnerConfig) -> RunOutcome:
         implementer=config.implementer,
         reviewer=config.reviewer,
         stop_reason=manifest.get("stop_reason"),
+        implementation_attempt=manifest.get(
+            "implementation_attempt",
+            (
+                manifest["review_round"] + len(manifest.get("operational_retries", []))
+                if manifest["review_round"]
+                else implementation_attempt(manifest)
+            ),
+        ),
+        operational_retries=len(manifest.get("operational_retries", [])),
     )
 
 
@@ -1086,6 +1161,7 @@ def run_cycle(
     ticket_text: str | None = None,
     reporter: ProgressReporter | None = None,
     recover: bool = False,
+    recover_operational: bool = False,
     reason: str | None = None,
 ) -> RunOutcome:
     """Drive the sequential Pi cycle for one ticket; return the terminal outcome."""
@@ -1102,17 +1178,23 @@ def run_cycle(
     reviewer_contract = _load_contract(repo_root, "REVIEWER_CONTRACT.md", REVIEWER_FALLBACK)
 
     directory = cycle_directory(repo_root, ticket)
-    if recover != (reason is not None):
-        raise RunnerError("human recovery requires both --recover and --reason")
-    if recover and not directory.is_dir():
+    if recover and recover_operational:
+        raise RunnerError("review recovery and operational retry are mutually exclusive")
+    if (recover or recover_operational) != (reason is not None):
+        raise RunnerError("human recovery requires a recovery flag and --reason")
+    if (recover or recover_operational) and not directory.is_dir():
         raise RunnerError("human recovery requires an existing STOPPED cycle")
     if not directory.is_dir():
         executor.ensure_available()
         initialize_cycle(repo_root, ticket, active_config.base_branch)
         progress.message("cycle initialized")
-    if recover:
+    if recover or recover_operational:
         try:
-            reopen_cycle(repo_root, ticket, reason or "")
+            if recover_operational:
+                retry_operational_cycle(repo_root, ticket, reason or "")
+                progress.message("Recovery type: operational implementer retry")
+            else:
+                reopen_cycle(repo_root, ticket, reason or "")
         except CycleError as error:
             raise RunnerError(f"human recovery rejected: {error}") from error
     status = cycle_status(repo_root, ticket)
@@ -1137,6 +1219,7 @@ def run_cycle(
         "NEW",
         "CHANGES_REQUIRED",
         "HUMAN_APPROVED_REWORK",
+        "HUMAN_APPROVED_OPERATIONAL_RETRY",
         "READY_FOR_REVIEW",
         "READY_FOR_REVIEW_2",
     }:
@@ -1148,12 +1231,21 @@ def run_cycle(
     try:
         while True:
             manifest = _read_manifest(repo_root, ticket)
-            if manifest["state"] in {"NEW", "CHANGES_REQUIRED", "HUMAN_APPROVED_REWORK"}:
-                begin_implementation(repo_root, ticket)
-                manifest = _read_manifest(repo_root, ticket)
-                tracking.call("role_metadata", "implementer", active_config.implementer)
-                tracking.call("lifecycle", "start", manifest)
-                attempt = manifest["review_round"] + 1
+            if manifest["state"] in {
+                "NEW",
+                "CHANGES_REQUIRED",
+                "HUMAN_APPROVED_REWORK",
+                "HUMAN_APPROVED_OPERATIONAL_RETRY",
+            }:
+                if manifest["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY":
+                    _preserve_failed_attempt(repo_root, ticket, directory, manifest)
+                    if active_config.progress.enabled:
+                        append_boundary(
+                            directory / "implementer-progress.log",
+                            "Human-approved operational retry started "
+                            "after previous implementer failure",
+                        )
+                attempt = implementation_attempt(manifest)
                 findings = _load_findings(repo_root, ticket, manifest["review_round"])
                 # Do not accept an input left over from an earlier attempt.
                 _handoff_path(directory).unlink(missing_ok=True)
@@ -1180,6 +1272,10 @@ def run_cycle(
                     f"implementer{round_label} started: "
                     f"{active_config.implementer.provider} / {active_config.implementer.model}"
                 )
+                begin_implementation(repo_root, ticket)
+                manifest = _read_manifest(repo_root, ticket)
+                tracking.call("role_metadata", "implementer", active_config.implementer)
+                tracking.call("lifecycle", "start", manifest)
                 implementer_result = _execute_child(
                     executor,
                     _pi_arguments(active_config.implementer, active_config.executable),
@@ -1196,11 +1292,22 @@ def run_cycle(
                     reporter=progress,
                 )
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
-                if implementer_result.returncode != 0:
+                if implementer_result.returncode != 0 or implementer_result.failure_code:
+                    code = implementer_result.failure_code or (
+                        "implementer_terminated"
+                        if implementer_result.returncode < 0
+                        else "implementer_process_failed"
+                    )
                     _abort(
                         repo_root,
                         ticket,
                         f"implementer exited with code {implementer_result.returncode}",
+                        stop_class=(
+                            StopClass.OPERATIONAL
+                            if code in OPERATIONAL_CODES
+                            else StopClass.UNKNOWN
+                        ),
+                        stop_code=code if code in OPERATIONAL_CODES else None,
                     )
                 _require_clean_tree(repo_root, ticket, manifest["base_branch"], "implementer")
                 progress.message("validating implementer handoff...")
@@ -1303,12 +1410,20 @@ def run_cycle(
     finally:
         # Observe the validator's terminal state; logging does not decide transitions.
         with contextlib.suppress(OSError, json.JSONDecodeError):
-            terminal = _read_manifest(repo_root, ticket)["state"]
+            final_manifest = _read_manifest(repo_root, ticket)
+            terminal = final_manifest["state"]
             if terminal in {"PASSED", "STOPPED"}:
+                final_outcome = _outcome(final_manifest, active_config)
+                progress.message(f"Implementation attempt: {final_outcome.implementation_attempt}")
+                progress.message(
+                    f"Previous operational retries: {final_outcome.operational_retries}"
+                )
                 progress.message(f"cycle {terminal}")
 
 
 def _report(outcome: RunOutcome) -> None:
+    _console_message(f"Implementation attempt: {outcome.implementation_attempt}")
+    _console_message(f"Previous operational retries: {outcome.operational_retries}")
     if outcome.passed:
         _console_message("AGENT CYCLE PASSED")
         _console_message()
@@ -1338,6 +1453,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = _DiagnosticParser(description=__doc__)
     parser.add_argument("ticket")
     parser.add_argument("--recover", action="store_true", help="explicit human approval of rework")
+    parser.add_argument(
+        "--recover-operational",
+        action="store_true",
+        help="human-approved pre-handoff implementer retry",
+    )
     parser.add_argument("--reason", help="required human recovery approval reason")
     parser.add_argument("--base-branch", default="master")
     parser.add_argument("--pi-executable", default="pi")
@@ -1405,6 +1525,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             config=config,
             ticket_text=ticket_text,
             recover=arguments.recover,
+            recover_operational=arguments.recover_operational,
             reason=arguments.reason,
         )
     except (RunnerError, CycleError) as error:

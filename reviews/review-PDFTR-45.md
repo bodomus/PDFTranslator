@@ -1,0 +1,14 @@
+# PDFTR-45 implementation completion summary
+
+Implemented separate human-approved pre-handoff operational retry with structured stop policy,
+strict identity/clean-tree/exact-HEAD gates, independent attempt accounting, a three-retry bound,
+audited approval resume and retained failed-attempt diagnostics. Reviewer permissions and exhausted
+review recovery remain unchanged.
+
+Validation: 314 focused tests passed (2 skipped); final Windows PowerShell quality gate passed,
+885 tests passed (3 skipped), 89.54% coverage. README, CHANGELOG, contract and affected Wiki updated.
+See `.implementation-reports/implementation-report-PDFTR-45.md` for scope and compatibility limits.
+Legacy text-only operational stops remain unknown; Ubuntu CI is pending remote execution.
+Integration warning: YouTrack credentials unavailable.
+
+This is an implementer completion summary, not the independent exact-SHA reviewer verdict.

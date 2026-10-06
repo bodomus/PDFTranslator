@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Human-approved pre-review operational retry (PDFTR-45) with `--recover-operational`, structured
+  stop codes, clean-tree/exact-HEAD/branch/repository gates, separate approval state and strict audit
+  history. Up to three retries increment implementation attempts without spending review budget;
+  previous logs, journals, partial handoffs and reports survive. Status reports retry eligibility;
+  approval resumes without duplicate counting. Legacy text-only operational stops remain unknown.
+
 - Role-bound append-only operational progress journals for Pi cycles (PDFTR-44), UTC milestones,
   safe last-activity heartbeat display, configurable diagnostic stale warnings, and preserved
   resume/recovery boundaries and failure/cancellation evidence. Reviewer access is limited to its

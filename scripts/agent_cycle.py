@@ -15,6 +15,24 @@ from typing import Any, NoReturn
 
 SCHEMA_VERSION = "1.0"
 MAX_REVIEW_ROUNDS = 2
+MAX_OPERATIONAL_RETRIES = 3
+OPERATIONAL_CODES = {
+    "implementer_process_failed",
+    "implementer_terminated",
+    "provider_usage_limit",
+    "provider_unavailable",
+    "implementer_runtime_failed",
+    "network_auth_failed",
+}
+
+
+class StopClass(StrEnum):
+    OPERATIONAL = "operational"
+    REVIEW_EXHAUSTED = "review_exhausted"
+    SAFETY = "safety"
+    UNKNOWN = "unknown"
+
+
 TICKET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-[1-9][0-9]*[A-Z]*$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 COORDINATION_DIRECTORY = ".agent-cycle"
@@ -27,6 +45,7 @@ class CycleError(RuntimeError):
 class CycleState(StrEnum):
     NEW = "NEW"
     HUMAN_APPROVED_REWORK = "HUMAN_APPROVED_REWORK"
+    HUMAN_APPROVED_OPERATIONAL_RETRY = "HUMAN_APPROVED_OPERATIONAL_RETRY"
     IMPLEMENTING = "IMPLEMENTING"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     REVIEWING = "REVIEWING"
@@ -158,8 +177,17 @@ def validate_ticket_id(ticket: str) -> str:
 
 def cycle_directory(repo_root: Path, ticket: str) -> Path:
     ticket = validate_ticket_id(ticket)
-    coordination_root = (repo_root.resolve() / COORDINATION_DIRECTORY).resolve()
-    candidate = (coordination_root / ticket).resolve()
+    root_entry = repo_root.resolve() / COORDINATION_DIRECTORY
+    ticket_entry = root_entry / ticket
+    if (
+        root_entry.is_symlink()
+        or ticket_entry.is_symlink()
+        or root_entry.is_junction()
+        or ticket_entry.is_junction()
+    ):
+        raise CycleError("coordination directory must not be a symbolic link")
+    coordination_root = root_entry.resolve()
+    candidate = ticket_entry.resolve()
     if candidate.parent != coordination_root:
         raise CycleError("ticket coordination path escapes .agent-cycle")
     return candidate
@@ -225,6 +253,10 @@ def initialize_cycle(repo_root: Path, ticket: str, base_branch: str = "master") 
         "review_started_head": None,
         "review_started_status": None,
         "stop_reason": None,
+        "stop_class": StopClass.UNKNOWN.value,
+        "stop_code": None,
+        "operational_retries": [],
+        "implementation_attempt": 1,
     }
     handoff = _blank_handoff(manifest)
     _atomic_write_json(directory / "manifest.json", manifest)
@@ -239,8 +271,14 @@ def begin_implementation(repo_root: Path, ticket: str) -> dict[str, Any]:
     if facts.head_sha != manifest["current_head_sha"]:
         raise CycleError("Git HEAD changed outside a validated implementation phase")
     state = CycleState(manifest["state"])
-    if state not in {CycleState.NEW, CycleState.CHANGES_REQUIRED, CycleState.HUMAN_APPROVED_REWORK}:
+    if state not in {
+        CycleState.NEW,
+        CycleState.CHANGES_REQUIRED,
+        CycleState.HUMAN_APPROVED_REWORK,
+        CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY,
+    }:
         raise CycleError(f"cannot begin implementation from {state.value}")
+    manifest["implementation_attempt"] = implementation_attempt(manifest)
     manifest["state"] = CycleState.IMPLEMENTING.value
     manifest["active_agent"] = ActiveAgent.IMPLEMENTER.value
     manifest["current_head_sha"] = facts.head_sha
@@ -344,6 +382,14 @@ def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, A
     manifest["active_agent"] = None
     manifest["working_tree_clean"] = True
     manifest["stop_reason"] = stop_reason
+    manifest["stop_class"] = (
+        StopClass.REVIEW_EXHAUSTED.value
+        if stop_reason in {"repeated_finding", "review_round_limit"}
+        else StopClass.UNKNOWN.value
+    )
+    manifest["stop_code"] = (
+        stop_reason if manifest["stop_class"] == StopClass.REVIEW_EXHAUSTED.value else None
+    )
     manifest["review_started_head"] = None
     manifest["review_started_status"] = None
     handoff["reviewer"] = review_document
@@ -373,9 +419,28 @@ def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
         or any(ord(character) < 32 for character in reason)
     ):
         raise CycleError(f"recovery reason must be 1-200 printable characters; {diagnostic}")
+    # Legacy review recovery is reconstructed only from validated immutable review
+    # evidence, never from free-text stop reasons. Legacy operational stops stay unknown.
+    if "stop_class" not in manifest and manifest["review_round"] == _authorized_review_limit(
+        manifest
+    ):
+        previous_review = _validate_review_input(
+            _load_json(directory / f"review-{manifest['review_round']}.json"),
+            ticket,
+            manifest,
+            persisted=True,
+        )
+        if previous_review.verdict == ReviewVerdict.CHANGES_REQUIRED:
+            manifest["stop_class"] = StopClass.REVIEW_EXHAUSTED.value
+            manifest["stop_code"] = (
+                "repeated_finding"
+                if _repeated_finding_keys(directory, previous_review)
+                else "review_round_limit"
+            )
     if (
         manifest["state"] != CycleState.STOPPED.value
-        or manifest["stop_reason"] not in {"repeated_finding", "review_round_limit"}
+        or manifest.get("stop_class") != StopClass.REVIEW_EXHAUSTED.value
+        or manifest.get("stop_code") not in {"repeated_finding", "review_round_limit"}
         or manifest["review_round"] != _authorized_review_limit(manifest)
     ):
         raise CycleError(f"recovery requires STOPPED after exhausted review rounds; {diagnostic}")
@@ -389,16 +454,19 @@ def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
     recoveries.append(
         {
             "reason": reason.strip(),
-            "stop_reason": manifest["stop_reason"],
+            "stop_reason": manifest["stop_code"],
             "review_round": manifest["review_round"],
             "reviewed_sha": manifest["current_head_sha"],
-            "implementation_attempt": manifest["review_round"] + 1,
+            "implementation_attempt": implementation_attempt(manifest),
             "previous_handoff": handoff,
         }
     )
     manifest["human_recoveries"] = recoveries
+    manifest["implementation_attempt"] = implementation_attempt(manifest)
     manifest["state"] = CycleState.HUMAN_APPROVED_REWORK.value
     manifest["stop_reason"] = None
+    manifest["stop_class"] = StopClass.UNKNOWN.value
+    manifest["stop_code"] = None
     # Snapshot must not alias the mutable current handoff.
     handoff = json.loads(json.dumps(handoff))
     _sync_system(handoff, manifest)
@@ -406,7 +474,89 @@ def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
     return manifest
 
 
-def stop_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
+def implementation_attempt(manifest: dict[str, Any]) -> int:
+    """Implementation numbering is independent of the review budget."""
+    return manifest["review_round"] + 1 + len(manifest.get("operational_retries", []))
+
+
+def _operational_rejection(
+    manifest: dict[str, Any],
+    handoff: dict[str, Any],
+    facts: GitFacts,
+    directory: Path,
+) -> str | None:
+    if manifest["state"] != CycleState.STOPPED.value:
+        return "operational retry requires STOPPED"
+    if manifest.get("stop_code") == "operational_retry_limit":
+        return "operational_retry_limit"
+    if manifest.get("stop_class", "unknown") != StopClass.OPERATIONAL.value:
+        return "stop class is not operational"
+    if manifest.get("stop_code") not in OPERATIONAL_CODES:
+        return "stop code is not a recognized operational failure"
+    if manifest["active_agent"] is not None:
+        return "an agent is active"
+    if not facts.clean:
+        return "working tree is dirty"
+    if facts.head_sha != manifest["current_head_sha"]:
+        return "operational retry requires unchanged exact HEAD"
+    if not manifest["working_tree_clean"]:
+        return "repository safety error: recorded working tree is dirty"
+    if manifest["review_round"] != 0 or handoff["implementer"] is not None:
+        return "an implementation handoff or review was already accepted"
+    if handoff["reviewer"] is not None or any(directory.glob("review-*.json")):
+        return "accepted or contradictory review artifacts exist"
+    if any(directory.glob("implementation-*.json")):
+        return "accepted or contradictory implementation artifacts exist"
+    if len(manifest.get("operational_retries", [])) >= MAX_OPERATIONAL_RETRIES:
+        return "operational_retry_limit"
+    return None
+
+
+def retry_operational_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
+    """Human approval of one pre-handoff implementer attempt, never a review grant."""
+    directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
+    if (
+        not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason) > 200
+        or any(ord(character) < 32 for character in reason)
+    ):
+        raise CycleError("recovery reason must be 1-200 printable characters")
+    rejection = _operational_rejection(manifest, handoff, facts, directory)
+    if rejection:
+        raise CycleError(rejection)
+    approvals = list(manifest.get("operational_retries", []))
+    approvals.append(
+        {
+            "type": "operational_retry",
+            "reason": reason.strip(),
+            "previous_stop_code": manifest["stop_code"],
+            "previous_stop_reason": manifest["stop_reason"],
+            "head_sha": facts.head_sha,
+            "branch": facts.branch,
+            "review_round": 0,
+            "implementation_attempt": implementation_attempt(manifest) + 1,
+        }
+    )
+    manifest["operational_retries"] = approvals
+    manifest["implementation_attempt"] = implementation_attempt(manifest)
+    manifest["state"] = CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value
+    manifest["stop_reason"] = None
+    manifest["stop_class"] = StopClass.UNKNOWN.value
+    manifest["stop_code"] = None
+    _sync_system(handoff, manifest)
+    _write_cycle(directory, manifest, handoff)
+    return manifest
+
+
+def stop_cycle(
+    repo_root: Path,
+    ticket: str,
+    reason: str,
+    *,
+    stop_class: StopClass = StopClass.UNKNOWN,
+    stop_code: str | None = None,
+) -> dict[str, Any]:
     reason = reason.strip()
     if not reason or any(ord(character) < 32 for character in reason) or len(reason) > 200:
         raise CycleError("stop reason must be 1-200 printable characters")
@@ -415,7 +565,17 @@ def stop_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
         raise CycleError(f"cannot stop terminal state {manifest['state']}")
     manifest["state"] = CycleState.STOPPED.value
     manifest["active_agent"] = None
+    if stop_class == StopClass.OPERATIONAL and stop_code not in OPERATIONAL_CODES:
+        raise CycleError("unrecognized operational stop code")
+    if (
+        stop_class == StopClass.OPERATIONAL
+        and len(manifest.get("operational_retries", [])) >= MAX_OPERATIONAL_RETRIES
+    ):
+        stop_class = StopClass.UNKNOWN
+        stop_code = "operational_retry_limit"
     manifest["stop_reason"] = reason
+    manifest["stop_class"] = stop_class.value
+    manifest["stop_code"] = stop_code
     manifest["review_started_head"] = None
     manifest["review_started_status"] = None
     _sync_system(handoff, manifest)
@@ -427,6 +587,7 @@ def cycle_status(
     repo_root: Path, ticket: str, *, verify_remote: str | None = None
 ) -> dict[str, Any]:
     _directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
+    rejection = _operational_rejection(manifest, handoff, facts, _directory)
     errors: list[str] = []
     if facts.head_sha != manifest["current_head_sha"]:
         errors.append("Git HEAD differs from manifest current_head_sha")
@@ -465,6 +626,19 @@ def cycle_status(
         "authorized_review_limit": _authorized_review_limit(manifest),
         "human_recovery_count": len(manifest.get("human_recoveries", [])),
         "stop_reason": manifest["stop_reason"],
+        "stop_class": manifest.get("stop_class", "unknown"),
+        "stop_code": manifest.get("stop_code"),
+        "implementation_attempt": manifest.get(
+            "implementation_attempt",
+            (
+                handoff["implementer"]["implementation_attempt"]
+                if handoff["implementer"] is not None
+                else implementation_attempt(manifest)
+            ),
+        ),
+        "operational_retry_count": len(manifest.get("operational_retries", [])),
+        "operational_retry_eligible": rejection is None,
+        "operational_retry_rejection": rejection,
         "active_agent": manifest["active_agent"],
         "working_tree_clean": facts.clean,
         "working_tree_dirty_expected": expected_dirty,
@@ -485,10 +659,23 @@ def _load_cycle(
     directory = cycle_directory(requested, ticket)
     if not directory.is_dir():
         raise CycleError(f"ticket cycle does not exist: {ticket}")
+    for entry in directory.iterdir():
+        if entry.is_symlink() or entry.is_junction():
+            raise CycleError("cycle artifacts must not be symbolic links or junctions")
     manifest = _load_json(directory / "manifest.json")
     _validate_manifest(manifest, ticket)
     handoff = _load_json(directory / "handoff.json")
+    # Approval commits the manifest first. Only the blank pre-handoff projection can
+    # be completed in memory after a crash between the two atomic replacements.
+    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value:
+        previous = dict(manifest, state=CycleState.STOPPED.value)
+        if handoff == _blank_handoff(previous):
+            handoff = _blank_handoff(manifest)
     _validate_handoff(handoff, manifest)
+    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+        handoff["implementer"] is not None or handoff["reviewer"] is not None
+    ):
+        raise CycleError("operational approval cannot contain an accepted handoff/review")
     facts = collect_git_facts(requested, manifest["base_branch"])
     if facts.repository_fingerprint != manifest["repository_fingerprint"]:
         raise CycleError("cycle belongs to a different Git repository")
@@ -505,9 +692,78 @@ def _load_cycle(
     return directory, manifest, handoff, facts
 
 
+def _validate_operational_fields(document: dict[str, Any]) -> None:
+    classification = document.get("stop_class", "unknown")
+    if not isinstance(classification, str) or classification not in set(StopClass):
+        raise CycleError("invalid stop_class")
+    code = document.get("stop_code")
+    if code is not None and (not isinstance(code, str) or not re.fullmatch(r"[a-z_]+", code)):
+        raise CycleError("invalid stop_code")
+    if classification == StopClass.OPERATIONAL.value and code not in OPERATIONAL_CODES:
+        raise CycleError("invalid operational stop code")
+    approvals = document.get("operational_retries", [])
+    if not isinstance(approvals, list) or len(approvals) > MAX_OPERATIONAL_RETRIES:
+        raise CycleError("invalid operational retry history")
+    for index, entry in enumerate(approvals):
+        if not isinstance(entry, dict):
+            raise CycleError("operational approval must be an object")
+        _require_exact_keys(
+            entry,
+            {
+                "type",
+                "reason",
+                "previous_stop_code",
+                "previous_stop_reason",
+                "head_sha",
+                "branch",
+                "review_round",
+                "implementation_attempt",
+            },
+            "operational approval",
+        )
+        for field in ("reason", "previous_stop_reason", "branch"):
+            value = entry[field]
+            if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+                raise CycleError(f"invalid operational approval {field}")
+        if len(entry["reason"]) > 200 or len(entry["previous_stop_reason"]) > 200:
+            raise CycleError("invalid operational approval reason length")
+        if (
+            entry["type"] != "operational_retry"
+            or not isinstance(entry["previous_stop_code"], str)
+            or entry["previous_stop_code"] not in OPERATIONAL_CODES
+            or type(entry["review_round"]) is not int
+            or entry["review_round"] != 0
+            or type(entry["implementation_attempt"]) is not int
+            or entry["implementation_attempt"] != index + 2
+            or entry["branch"] != document["branch"]
+        ):
+            raise CycleError("contradictory operational approval")
+        _validated_sha(entry["head_sha"], "operational approval HEAD")
+        if index and entry["head_sha"] != approvals[0]["head_sha"]:
+            raise CycleError("operational approval HEAD changed")
+    if document["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+        not approvals
+        or document["review_round"] != 0
+        or document["active_agent"] is not None
+        or document["current_head_sha"] != approvals[-1]["head_sha"]
+        or document.get("stop_class", "unknown") != StopClass.UNKNOWN.value
+        or document.get("stop_code") is not None
+        or document["stop_reason"] is not None
+    ):
+        raise CycleError("operational retry state requires an unused approval")
+
+
 def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
-    expected = MANIFEST_KEYS | ({"human_recoveries"} if "human_recoveries" in document else set())
+    optional = {
+        "human_recoveries",
+        "stop_class",
+        "stop_code",
+        "operational_retries",
+        "implementation_attempt",
+    }
+    expected = MANIFEST_KEYS | (optional & document.keys())
     _require_exact_keys(document, expected, "manifest")
+    _validate_operational_fields(document)
     recoveries = document.get("human_recoveries", [])
     if not isinstance(recoveries, list):
         raise CycleError("manifest human_recoveries must be a list")
@@ -543,7 +799,8 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
             type(recovery["review_round"]) is not int
             or recovery["review_round"] != expected_round
             or type(recovery["implementation_attempt"]) is not int
-            or recovery["implementation_attempt"] != expected_round + 1
+            or recovery["implementation_attempt"]
+            != expected_round + 1 + len(document.get("operational_retries", []))
         ):
             raise CycleError("invalid human recovery round/attempt")
         _validated_sha(recovery["reviewed_sha"], "human recovery reviewed_sha")
@@ -582,7 +839,10 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
         CycleState(document["state"])
     except (TypeError, ValueError) as error:
         raise CycleError(f"invalid manifest state: {document['state']!r}") from error
-    if document["active_agent"] not in {None, *(agent.value for agent in ActiveAgent)}:
+    if document["active_agent"] is not None and (
+        not isinstance(document["active_agent"], str)
+        or document["active_agent"] not in {agent.value for agent in ActiveAgent}
+    ):
         raise CycleError(f"invalid active_agent: {document['active_agent']!r}")
     if not isinstance(document["working_tree_clean"], bool):
         raise CycleError("manifest working_tree_clean must be boolean")
@@ -592,6 +852,14 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
     started_status = document["review_started_status"]
     if started_status is not None and not _is_string_list(started_status):
         raise CycleError("manifest review_started_status must be null or a string list")
+    attempt = document.get("implementation_attempt")
+    if "implementation_attempt" in document and (
+        type(attempt) is not int
+        or not max(1, document["review_round"] + len(document.get("operational_retries", [])))
+        <= attempt
+        <= implementation_attempt(document)
+    ):
+        raise CycleError("invalid manifest implementation_attempt")
     stop_reason = document["stop_reason"]
     if stop_reason is not None and not isinstance(stop_reason, str):
         raise CycleError("manifest stop_reason must be null or a string")
@@ -630,7 +898,7 @@ def _validate_implementer_input(
     _require_schema(document, "implementer handoff")
     if document["ticket"] != ticket:
         raise CycleError("implementer handoff belongs to a different ticket")
-    expected_attempt = manifest["review_round"] + 1
+    expected_attempt = implementation_attempt(manifest)
     if (
         type(document["implementation_attempt"]) is not int
         or document["implementation_attempt"] < 1
@@ -789,9 +1057,18 @@ def _atomic_write_json(path: Path, document: dict[str, Any]) -> None:
         raise CycleError(f"cannot write {path.name}: {error}") from error
 
 
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CycleError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_strict_object)
     except FileNotFoundError as error:
         raise CycleError(f"required JSON file is missing: {path}") from error
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -852,6 +1129,13 @@ def _print_status(status: dict[str, Any]) -> None:
         f"Review round: {status['review_round']} (automatic limit: {status['max_review_rounds']})"
     )
     print(f"Human approvals: {status['human_recovery_count']}")
+    print(f"Implementation attempt: {status['implementation_attempt']}")
+    print(f"Operational retries: {status['operational_retry_count']}")
+    print(f"Stop class: {status['stop_class']}")
+    print(f"Stop code: {status['stop_code'] or 'none'}")
+    print(f"Operational retry eligible: {'yes' if status['operational_retry_eligible'] else 'no'}")
+    if status["operational_retry_rejection"]:
+        print(f"Reason: {status['operational_retry_rejection']}")
     if status["stop_reason"]:
         print(f"Stop reason: {status['stop_reason']}")
     print(f"Active agent: {active}")
@@ -885,6 +1169,9 @@ def _parser() -> argparse.ArgumentParser:
     reopen = subparsers.add_parser("reopen", help="human approval of one follow-up review pair")
     reopen.add_argument("ticket")
     reopen.add_argument("--reason", required=True)
+    retry = subparsers.add_parser("retry-operational", help="human approval of pre-handoff retry")
+    retry.add_argument("ticket")
+    retry.add_argument("--reason", required=True)
     stop = subparsers.add_parser("stop", help="record an external/manual stop")
     stop.add_argument("ticket")
     stop.add_argument("--reason", required=True)
@@ -907,6 +1194,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             record_review(root, arguments.ticket, arguments.file)
         elif arguments.command == "reopen":
             reopen_cycle(root, arguments.ticket, arguments.reason)
+        elif arguments.command == "retry-operational":
+            retry_operational_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "stop":
             stop_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "status":

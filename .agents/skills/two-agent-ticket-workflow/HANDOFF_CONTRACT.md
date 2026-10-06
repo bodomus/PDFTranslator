@@ -102,5 +102,27 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   last handoffs are also captured in the approval audit. No historical reviews are superseded or
   considered valid for the new SHA. Recovery still requires a new implementation SHA.
 
+- Separate operational retry: `pi_ticket_cycle.py <TICKET> --recover-operational --reason <APPROVAL>`
+  or `agent_cycle.py retry-operational <TICKET> --reason <APPROVAL>` is human/operator-only.
+  Eligibility requires STOPPED with structured operational class/recognized code, round zero,
+  no accepted implementation or review, no active agent, clean tree, unchanged exact HEAD and
+  existing ticket/repository/branch bindings. Unknown/safety failures and legacy text-only
+  operational stops cannot be inferred from free text. No WIP cleanup or reviewer powers are added.
+- Optional strict manifest fields: positive integer `implementation_attempt`,
+  `stop_class` (operational, review_exhausted, safety, unknown),
+  `stop_code` (stable string or null), and `operational_retries` (list). Each approval entry has
+  exactly `type=operational_retry`, `reason`, `previous_stop_code`, `previous_stop_reason`,
+  `head_sha`, `branch`, `review_round=0`, and `implementation_attempt`. Attempts are
+  `review_round + 1 + len(operational_retries)` during implementation. Existing accepted handoffs
+  retain their actual attempt. Review grants remain controlled only by `human_recoveries`.
+- `HUMAN_APPROVED_OPERATIONAL_RETRY` resumes the approved attempt via a normal runner invocation;
+  duplicate approval rejects. Atomic manifest persistence is the approval commit point; a crash
+  before its blank handoff projection is refreshed is safely completed in memory during loading.
+  Three retries maximum; further operational failure records `operational_retry_limit`.
+- Retry preserves cumulative implementer logs, append-only progress, rejected/partial input as
+  `implementer-attempt-<previous>.json`, and previous report as
+  `implementation-report-attempt-<previous>.md`. Nothing silently truncates old diagnostics.
+  Legacy exhausted-review recovery is classified from validated immutable reviews, not stop text.
+
 Do not delete or rewrite immutable review artifacts as recovery. Human final review and merge remain
 outside the state machine.
