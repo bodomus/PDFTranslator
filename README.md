@@ -149,6 +149,14 @@ Provider, model, and tool names are configuration;
 `agent_cycle.py` remains the workflow authority, and the tests never invoke Pi, providers, or the
 network.
 
+The parent runner uses the harness modules loaded at process startup for the entire invocation.
+Implementer edits to orchestration source take effect only on the next invocation; no hot reload or
+automatic restart is performed. Runner and tracking share the pure `scripts/review_protocol.py`
+envelope grammar, with no tracking import back into the runner. Original reviewer stdout is saved
+as `reviewer-stdout-round-<N>.txt` before validation, alongside the existing reviewer log. Unexpected
+post-review internal failures stop with diagnostics and retain evidence; they never imply PASS or
+automatically repeat the reviewer.
+
 Rerun the same command to resume `READY_FOR_REVIEW` or `READY_FOR_REVIEW_2` directly with
 its exact-SHA reviewer, or `CHANGES_REQUIRED` with the next implementation attempt and previous
 findings. `PASSED` reruns only external synchronization/PR verification, never agents; `BLOCKED`, `STOPPED`, and active `IMPLEMENTING` /

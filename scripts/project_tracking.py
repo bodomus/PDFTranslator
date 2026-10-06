@@ -16,6 +16,14 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from scripts.review_protocol import (
+    JSON_FENCE,
+    REVIEW_SENTINEL_BEGIN,
+    REVIEW_SENTINEL_END,
+    ReviewProtocolError,
+    single_envelope,
+)
+
 INTENT_BEGIN = "<<<YOUTRACK_UPDATE_JSON>>>"
 INTENT_END = "<<<END_YOUTRACK_UPDATE_JSON>>>"
 INTENT_HELP = f"""
@@ -100,20 +108,9 @@ def parse_intent(stdout: str, ticket: str, role: str) -> dict[str, Any] | None:
 
 def review_without_intent(stdout: str, ticket: str) -> str:
     """Select the strict review envelope before removing separate external metadata."""
-    # Runtime import reuses the runner's exact grammar without an import-time cycle.
-    from scripts.pi_ticket_cycle import (
-        _JSON_FENCE,
-        REVIEW_SENTINEL_BEGIN,
-        REVIEW_SENTINEL_END,
-        RunnerError,
-        _single_envelope,
-    )
-
     try:
-        _single_envelope(stdout)  # Reject ambiguous review envelopes before any stripping.
-    except RunnerError as error:
-        # A CLI launched as __main__ has a distinct RunnerError class. Keep errors
-        # in this adapter's type so both CLI and imported runner handle them identically.
+        single_envelope(stdout)  # Reject ambiguous review envelopes before any stripping.
+    except ReviewProtocolError as error:
         raise TrackingError(str(error)) from error
     protected: tuple[int, int] | None = None
     if REVIEW_SENTINEL_BEGIN in stdout:
@@ -121,7 +118,7 @@ def review_without_intent(stdout: str, ticket: str) -> str:
             stdout.index(REVIEW_SENTINEL_BEGIN),
             stdout.index(REVIEW_SENTINEL_END) + len(REVIEW_SENTINEL_END),
         )
-    elif match := _JSON_FENCE.search(stdout):
+    elif match := JSON_FENCE.search(stdout):
         protected = match.span()
 
     spans: list[tuple[int, int]] = []

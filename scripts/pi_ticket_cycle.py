@@ -11,7 +11,6 @@ import argparse
 import contextlib
 import json
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -59,11 +58,13 @@ from scripts.project_tracking import (  # noqa: E402
     child_environment,
     review_without_intent,
 )
+from scripts.review_protocol import (  # noqa: E402
+    REVIEW_SENTINEL_BEGIN,
+    REVIEW_SENTINEL_END,
+    ReviewProtocolError,
+    single_envelope,
+)
 from scripts.tracking_hooks import TrackingHooks  # noqa: E402
-
-REVIEW_SENTINEL_BEGIN = "<<<AGENT_CYCLE_REVIEW_JSON>>>"
-REVIEW_SENTINEL_END = "<<<END_AGENT_CYCLE_REVIEW_JSON>>>"
-_JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```", re.DOTALL)
 
 # Configurable reviewer tools are read-only; the runner adds only its bound progress tool.
 READ_ONLY_TOOLS = frozenset({"read", "grep", "find", "ls", "git_readonly"})
@@ -703,7 +704,10 @@ def extract_review_json(stdout: str) -> dict[str, Any]:
     delimiter, array, duplicate key, malformed or truncated body fails closed. `agent_cycle`
     remains the authority for validating the object.
     """
-    body, outside = _single_envelope(stdout)
+    try:
+        body, outside = single_envelope(stdout)
+    except ReviewProtocolError as error:
+        raise RunnerError(str(error)) from error
     if "{" in outside:
         raise RunnerError("reviewer output contains JSON text outside the result envelope")
     body = body.strip()
@@ -725,30 +729,6 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise RunnerError(f"reviewer result contains duplicate JSON key: {key!r}")
         result[key] = value
     return result
-
-
-def _single_envelope(stdout: str) -> tuple[str, str]:
-    begin_count = stdout.count(REVIEW_SENTINEL_BEGIN)
-    end_count = stdout.count(REVIEW_SENTINEL_END)
-    if begin_count or end_count:
-        if begin_count != 1 or end_count != 1:
-            raise RunnerError("reviewer output has duplicate or unmatched review delimiters")
-        begin = stdout.find(REVIEW_SENTINEL_BEGIN)
-        end = stdout.find(REVIEW_SENTINEL_END)
-        if end < begin:
-            raise RunnerError("reviewer output has reversed review delimiters")
-        body = stdout[begin + len(REVIEW_SENTINEL_BEGIN) : end]
-        outside = stdout[:begin] + stdout[end + len(REVIEW_SENTINEL_END) :]
-        return body, outside
-    matches = list(_JSON_FENCE.finditer(stdout))
-    if matches:
-        if len(matches) != 1:
-            raise RunnerError("reviewer output has multiple fenced results")
-        match = matches[0]
-        body = match.group(1)
-        outside = stdout[: match.start()] + stdout[match.end() :]
-        return body, outside
-    return stdout, ""
 
 
 def _load_ticket_text(repo_root: Path, ticket: str) -> str:
@@ -1519,22 +1499,31 @@ def _run_cycle(
 
             progress.message(f"validating review round {review_round}...")
             try:
+                # Preserve original evidence before any parser/state-machine processing.
+                (directory / f"reviewer-stdout-round-{review_round}.txt").write_text(
+                    reviewer_result.stdout, encoding="utf-8"
+                )
                 document = extract_review_json(
                     review_without_intent(reviewer_result.stdout, ticket)
                 )
+                review_input = directory / f"reviewer-input-round-{review_round}.json"
+                _write_json(review_input, document)
+                manifest = record_review(repo_root, ticket, review_input)
             except (RunnerError, TrackingError) as error:
                 progress.message("review output rejected")
                 _abort(repo_root, ticket, f"reviewer output rejected: {error}")
-            review_input = directory / f"reviewer-input-round-{review_round}.json"
-            try:
-                _write_json(review_input, document)
             except OSError as error:
                 _abort(repo_root, ticket, f"failed to persist reviewer result: {error}")
-            try:
-                manifest = record_review(repo_root, ticket, review_input)
             except CycleError as error:
                 progress.message("review validation rejected")
                 _abort(repo_root, ticket, f"review validation failed: {error}")
+            except Exception as error:  # noqa: BLE001 - retain evidence, never retry a reviewer
+                _abort(
+                    repo_root,
+                    ticket,
+                    f"internal runner failure during post-review processing "
+                    f"({type(error).__name__}): {error}",
+                )
             progress.message(f"review round {review_round}: {document['verdict']}")
             tracking.call(
                 "lifecycle", document["verdict"], manifest, "reviewer", reviewer_result.stdout

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
+  review-envelope protocol instead of runtime-importing a changed runner against cached validator
+  code. Harness edits activate on the next invocation. Strict review validation is unchanged;
+  unexpected post-review failures preserve raw stdout/logs and stop without repeating the reviewer.
+
 ### Added
 
 - Human-approved pre-review operational retry (PDFTR-45) with `--recover-operational`, structured
