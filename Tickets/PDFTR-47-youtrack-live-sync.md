@@ -34,6 +34,55 @@ PDFTR-47 должен:
 
 ---
 
+
+## Clarification — Live YouTrack behavior during implementation
+
+Absence of live YouTrack credentials **MUST NOT block implementation or handoff**.
+
+PDFTR-47 implementation must be completed using deterministic mocks/fakes and explicit operator-invoked live-validation commands.
+
+During the normal PDFTR-47 implementation run:
+
+- do not require real YouTrack credentials;
+- do not require successful live mutation;
+- do not stop and wait for operator confirmation;
+- do not create or update remote YouTrack issues automatically merely to prove the implementation works;
+- missing credentials must be reported as a non-blocking integration limitation;
+- unknown field/state mappings must be reported and remain non-blocking;
+- deterministic fake/mock tests are sufficient for implementation acceptance;
+- the implementation report must clearly separate:
+  - behavior validated deterministically in tests;
+  - behavior still unverified live because credentials or live access are unavailable.
+
+Live mutation is permitted only through an explicit operator action, for example:
+
+```powershell
+uv run python scripts/project_tracking.py validate-live PDFTR-47 --allow-create
+```
+
+Exact-key creation policy:
+
+- issue creation is permitted only when explicitly enabled by the operator;
+- a definite exact-key `not found` result may proceed to create when `--allow-create` is supplied;
+- ambiguous lookup failures caused by network/auth/server errors must **never** trigger create;
+- after create, the returned issue must be re-read and exact identity verified before any further mutation;
+- no guessed issue, project, assignee, field value, or state is allowed.
+
+Implementer completion requirement:
+
+Even if live YouTrack access is unavailable, the implementer must still:
+
+1. finish the code;
+2. run focused tests;
+3. run the full quality gate;
+4. commit and push;
+5. produce the normal `implementer.json` handoff;
+6. record live-access limitations in the implementation report instead of stopping the cycle.
+
+This clarification overrides any interpretation of the acceptance criteria that would require live credentials or live remote mutation during the normal agent implementation run.
+
+---
+
 ## 1. Source of truth
 
 Authoritative execution state остаётся локальным:
