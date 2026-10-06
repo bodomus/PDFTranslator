@@ -70,6 +70,10 @@ class IdentityError(TrackingError):
     pass
 
 
+class SynchronizationBusy(TrackingError):
+    pass
+
+
 def child_environment() -> dict[str, str]:
     """Integration secrets belong to the parent harness, not agent processes."""
     return {
@@ -511,14 +515,22 @@ class ProjectTracking:
         staging.write_text(self.safe_text(json.dumps(self.data, indent=2)) + "\n", "utf-8")
         staging.replace(self.path)
 
-    def warning(self, message: str) -> None:
+    def warning(self, message: str, *, persist: bool = True) -> None:
         message = self.safe_text(message)
         if message not in self.data["warnings"]:
             self.data["warnings"].append(message)
         self.warn(f"[{self.ticket}] Integration warning: " + message)
-        self.save()
+        if persist:
+            self.save()
+
+    def synchronization_failure(self, error: Exception) -> None:
+        self.sync_failed = True
+        # Never replace another owner's write-ahead fence with this instance's stale snapshot.
+        self.warning(self.diagnostic(error), persist=False)
 
     def diagnostic(self, error: Exception) -> str:
+        if isinstance(error, SynchronizationBusy):
+            return "YouTrack synchronization busy; local workflow continues"
         if isinstance(error, APIError):
             return f"YouTrack HTTP {error.status}"
         if isinstance(error, IdentityError):
@@ -646,7 +658,7 @@ class ProjectTracking:
             try:
                 lock()
             except OSError:
-                raise TrackingError(
+                raise SynchronizationBusy(
                     "YouTrack synchronization busy; local workflow continues"
                 ) from None
             try:
@@ -827,7 +839,7 @@ class ProjectTracking:
             with self.synchronization():
                 self._bootstrap(manifest, allow_create=allow_create, mutate=mutate, dry_run=dry_run)
         except Exception as error:
-            self.warning(self.diagnostic(error))
+            self.synchronization_failure(error)
 
     def _bootstrap(
         self,
@@ -1003,7 +1015,7 @@ class ProjectTracking:
             with self.synchronization():
                 self._apply_fields(proposed, role, sha, round_)
         except Exception as error:
-            self.warning(self.diagnostic(error))
+            self.synchronization_failure(error)
 
     def _apply_fields(self, proposed: dict[str, str], role: str, sha: str, round_: int) -> None:
         if not self.issue or self.data.get("identity_unsafe"):
@@ -1126,7 +1138,7 @@ class ProjectTracking:
                     )
                     self.save()
         except Exception as error:
-            self.warning(self.diagnostic(error))
+            self.synchronization_failure(error)
 
     def _lifecycle(self, action: str, manifest: dict[str, Any], role: str, stdout: str) -> None:
         sha, round_ = manifest["current_head_sha"], manifest["review_round"]
@@ -1230,13 +1242,26 @@ class ProjectTracking:
         self.operation(role, "attachment:" + filename + ":" + digest, sha, round_, upload)
 
     def role_metadata(self, role: str, config: Any) -> None:
-        self.data.setdefault("roles", {})[role] = {
-            "provider": config.provider,
-            "model": config.model,
-        }
-        self.save()
+        try:
+            with self.synchronization():
+                self.data.setdefault("roles", {})[role] = {
+                    "provider": config.provider,
+                    "model": config.model,
+                }
+                self.save()
+        except Exception as error:
+            self.synchronization_failure(error)
 
     def passed(self, manifest: dict[str, Any], config: Any) -> None:
+        if manifest["state"] != "PASSED" or not self.gconfig.get("create_pr_on_pass"):
+            return
+        try:
+            with self.synchronization():
+                self._passed(manifest, config)
+        except Exception as error:
+            self.synchronization_failure(error)
+
+    def _passed(self, manifest: dict[str, Any], config: Any) -> None:
         if manifest["state"] != "PASSED" or not self.gconfig.get("create_pr_on_pass"):
             return
         sha = manifest["current_head_sha"]
@@ -1393,6 +1418,8 @@ def validate_live(
             if tracking.sync_failed:
                 return 1
         tracking.bootstrap(allow_create=allow_create, mutate=True)
+        if tracking.sync_failed:
+            return 1
         if state:
             tracking.apply_fields({"state": target}, "operator", "", 0)
         tracking.warn(
@@ -1400,7 +1427,6 @@ def validate_live(
         )
     else:
         tracking.warn("Read-only validation: no remote mutation")
-    tracking.save()
     return (
         0
         if (

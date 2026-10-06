@@ -31,8 +31,11 @@ actual dependants remain the hooks, operator entry point and tracking/runner tes
 - Exact find/reuse or explicitly allowed create, exact re-read by ID/key, conflict/lost-response
   discovery and durable identity/operation evidence. A different allocated issue number stops
   subsequent mutations and is recorded for operator reconciliation.
-- Locally OS-held, non-waiting synchronization lock shared by bootstrap/lifecycle/operator updates.
-  Contention returns safely, reloads current operation evidence and never duplicates local creation.
+- Locally OS-held, non-waiting synchronization lock shared by bootstrap/lifecycle/operator updates,
+  role metadata and PR synchronization. Contention returns safely without replacing another owner's
+  pending write-ahead fence. Contention/acquisition diagnostics are console/in-memory only (captured
+  by runner logs); they must not save a stale snapshot outside lock ownership. Owned synchronization
+  reloads current operation evidence and never blindly duplicates local creation.
 - Field/state introspection, exact API login resolution checked against allowed project users,
   strict semantic field types, no invented estimation/date/type/priority. Period units are preserved;
   ISO dates are encoded as UTC midnight milliseconds.
@@ -54,10 +57,11 @@ actual dependants remain the hooks, operator entry point and tracking/runner tes
   contention, secret redaction, host/target security, hung transport, dry-run/operator CLI and journals.
 - Broader focused runner regressions passed: operational retry, startup module coherence, exact-SHA
   review, reviewer isolation, containment, resume and progress journals (platform skips retained).
-- Final narrow tracking/validator suite: 135 tests passed.
+- Final narrow tracking/validator suite: 140 tests passed, including five contended-writer fence
+  preservation regressions added during the final concurrency audit.
 - Full scripts/check.ps1: PASS on Windows/Python 3.12, including Wiki lint (0 errors/warnings),
-  Ruff format/lint, mypy (98 source files) and pytest: **988 passed, 3 skipped**, 90% coverage.
-  The final gate completed in 329.20 seconds. Temporary test/log paths were repository local.
+  Ruff format/lint, mypy (98 source files) and pytest: **993 passed, 3 skipped**, 90% coverage.
+  The final gate completed in 328.73 seconds. Temporary test/log paths were repository local.
 - Operator CLI --help smoke test passed without contacting YouTrack.
 - No real model, GPU, OCR or manual PDF validation is applicable to this harness-only change.
 
@@ -81,7 +85,8 @@ may leave a daemon transport call in flight, fenced as uncertain, with no duplic
 Historical backfill and broad remote concurrency queues remain out of scope.
 
 GitHub Windows/Ubuntu CI is independent of local checks; no CI success is claimed before verified
-remote results. Live limitations do not block implementation, push or runner handoff.
+remote results. GitHub CLI authentication is unavailable; public read-only Actions API access is
+available. Final pushed-SHA CI evidence is recorded in the implementer handoff notes after push. Live limitations do not block implementation, push or runner handoff.
 
 ## Documentation / post-change impact
 README, CHANGELOG, canonical config, affected development-workflow Wiki and Wiki log updated.

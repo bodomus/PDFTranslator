@@ -432,3 +432,34 @@ def test_lifecycle_comment_success_does_not_hide_field_failure(tmp_path: Path) -
     assert yt.comments
     assert tr.data["last_sync_status"] == "partial"
     assert tr.data["last_sync_action"] == "PASS"
+
+
+@pytest.mark.parametrize("action", ["bootstrap", "validate", "metadata", "lifecycle", "passed"])
+def test_contended_writer_never_clobbers_pending_fence(tmp_path: Path, action: str) -> None:
+    from types import SimpleNamespace
+
+    yt = FakeYouTrack(False)
+    owner, contender = tracker(tmp_path, yt), tracker(tmp_path, yt)
+    import hashlib
+
+    fence = hashlib.sha256(f"{TICKET}|harness|0||create".encode()).hexdigest()
+    with owner.synchronization():
+        owner.data["operations"][fence] = {"status": "pending"}
+        owner.save()
+        before = owner.path.read_bytes()
+        if action == "bootstrap":
+            contender.bootstrap(allow_create=True)
+        elif action == "validate":
+            assert validate_live(contender, allow_create=True) == 1
+        elif action == "metadata":
+            contender.role_metadata("implementer", SimpleNamespace(provider="fake", model="fake"))
+        elif action == "lifecycle":
+            contender.lifecycle("start", manifest())
+        else:
+            contender.passed(manifest(), None)
+        assert owner.path.read_bytes() == before
+        assert not mutations(yt)
+        assert any("synchronization busy" in w for w in contender.data["warnings"])
+    contender.bootstrap(allow_create=True)
+    assert contender.data["operations"][fence]["status"] == "pending"
+    assert not mutations(yt)
