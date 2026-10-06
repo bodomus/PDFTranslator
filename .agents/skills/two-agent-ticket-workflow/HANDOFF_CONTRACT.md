@@ -124,6 +124,10 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   approval, repository fingerprint, ticket, branch, exact HEAD and attempt to `prepared`/`launching`.
   A matching `prepared` record permits normal resume of pre-launch IMPLEMENTING only under the
   exclusive lock and clean unchanged Git facts; no new approval or begin transition is performed.
+  If begin crashed between replacing manifest and handoff, the runner validates identity, approval,
+  strict prepared marker and absence of accepted artifacts before atomically completing only the
+  exact blank prior HUMAN_APPROVED_OPERATIONAL_RETRY projection. Nonblank/other contradictory
+  handoffs reject before mutation. Ordinary validator loading remains strict.
   The runner persists `launching` before entering the executor. From that fence onward child
   ownership is uncertain after a crash and active-phase resume rejects. Missing, corrupt or
   contradictory records, legacy active phases and competing runners fail closed. These files are

@@ -14,8 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   history. Up to three retries increment implementation attempts without spending review budget;
   previous logs, journals, partial handoffs and reports survive. Status reports retry eligibility;
   approval resumes without duplicate counting. Locked, attempt-bound pre-launch ownership also
-  resumes a crash after the implementation transition but before the launch fence; uncertain launch
-  ownership fails closed. Legacy text-only operational stops remain unknown.
+  resumes a crash during either persistence step of the implementation transition or afterward,
+  before the launch fence; only the exact blank previous projection can be completed, and uncertain
+  launch ownership fails closed. Legacy text-only operational stops remain unknown.
 
 - Role-bound append-only operational progress journals for Pi cycles (PDFTR-44), UTC milestones,
   safe last-activity heartbeat display, configurable diagnostic stale warnings, and preserved

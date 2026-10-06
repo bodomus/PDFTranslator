@@ -19,6 +19,17 @@ Regression tests inject crashes after begin and tracking, check preserved diagno
 and prove launch-side uncertainty and competing owners fail closed. No external library API or
 PDF/model boundary changes; source-verified Graphify and CRG preflight performed.
 
+## Attempt 3 / R1 investigation and plan
+Source verification confirms `begin_implementation` replaces manifest and handoff separately.
+The prepared marker exists before either write, but strict status loading rejects the old blank
+approved projection before the runner examines ownership. Add a runner-lock-only projection
+completion before status: validate strict manifest, repository/branch/base/clean/exact HEAD,
+approval-bound prepared marker and exact blank previous projection; reject nonblank handoffs,
+review/implementation artifacts and uncertain launch records before mutation. Complete only the
+handoff projection atomically, leaving approval/attempt/review accounting unchanged. Extend crash
+injection to death between begin's writes, and exercise the safety rejection matrix in that gap.
+No module boundaries, dependencies, provider APIs or PDF pipeline changes.
+
 ## Plan
 1. Add optional strict structured stop fields and operational approval history, separate retry policy/state, cumulative attempt accounting and read-only eligibility.
 2. Integrate separate runner/validator CLI, classified process failures, approval resume, preserved attempt artifacts and observable attempt diagnostics.

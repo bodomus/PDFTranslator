@@ -34,6 +34,7 @@ from scripts.agent_cycle import (  # noqa: E402
     begin_implementation,
     begin_review,
     collect_git_facts,
+    complete_operational_prelaunch,
     cycle_directory,
     cycle_status,
     implementation_attempt,
@@ -1316,6 +1317,9 @@ def _run_cycle(
                 reopen_cycle(repo_root, ticket, reason or "")
         except CycleError as error:
             raise RunnerError(f"human recovery rejected: {error}") from error
+    # Under the exclusive runner lock, finish a proven interrupted begin projection
+    # before strict status loading. No recovery flag can grant launch ownership.
+    complete_operational_prelaunch(repo_root, ticket)
     status = cycle_status(repo_root, ticket)
     manifest = _read_manifest(repo_root, ticket)
     diagnostic = (

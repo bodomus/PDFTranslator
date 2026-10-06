@@ -32,6 +32,10 @@ related:
 
 ## 2026-10-06
 
+- Closed the remaining PDFTR-45 pre-launch persistence gap: runner-owned resume validates the
+  exact blank previous approved projection and strict prepared ownership before completing a
+  manifest-only begin transition. Contradictory artifacts and unsafe Git facts reject unchanged.
+
 - Recorded PDFTR-45 R1 repair: OS-held runner ownership and atomic attempt-bound pre-launch
   markers resume the same approved implementation after begin/tracking crashes; launch uncertainty,
   competing owners and unsafe Git facts fail closed without duplicating approval/accounting.

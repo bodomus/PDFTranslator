@@ -190,7 +190,10 @@ HEAD, and the recorded branch/repository. It never stashes, resets, cleans or re
 if interrupted before execution. Repeating the approval command rejects without mutation; use
 normal resume after approval. For operational approvals the runner also resumes a pre-launch
 `IMPLEMENTING` phase only with a matching atomic `prepared` attempt marker, clean unchanged Git
-facts, and an exclusive OS-held ticket lock. The lock is released on runner death. Before entering
+facts, and an exclusive OS-held ticket lock. If begin persisted the manifest but not its blank
+handoff projection, normal resume atomically completes only the exact previous approved blank
+projection after validating that same ownership and Git evidence. Contradictory handoffs reject.
+The lock is released on runner death. Before entering
 the child executor the marker becomes `launching`; crashes after this fence, missing/corrupt markers
 and other active phases require inspection. Process ownership is never guessed.
 

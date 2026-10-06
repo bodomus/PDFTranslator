@@ -648,8 +648,20 @@ def cycle_status(
     }
 
 
+def complete_operational_prelaunch(repo_root: Path, ticket: str) -> None:
+    """Complete only a proven blank begin projection; caller must hold runner ownership."""
+    directory, manifest, handoff, _facts = _load_cycle(
+        repo_root, ticket, prepared_operational_resume=True
+    )
+    if (
+        manifest["state"] == CycleState.IMPLEMENTING.value
+        and _load_json(directory / "handoff.json") != handoff
+    ):
+        _atomic_write_json(directory / "handoff.json", handoff)
+
+
 def _load_cycle(
-    repo_root: Path, ticket: str
+    repo_root: Path, ticket: str, *, prepared_operational_resume: bool = False
 ) -> tuple[Path, dict[str, Any], dict[str, Any], GitFacts]:
     ticket = validate_ticket_id(ticket)
     requested = repo_root.resolve()
@@ -671,11 +683,6 @@ def _load_cycle(
         previous = dict(manifest, state=CycleState.STOPPED.value)
         if handoff == _blank_handoff(previous):
             handoff = _blank_handoff(manifest)
-    _validate_handoff(handoff, manifest)
-    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
-        handoff["implementer"] is not None or handoff["reviewer"] is not None
-    ):
-        raise CycleError("operational approval cannot contain an accepted handoff/review")
     facts = collect_git_facts(requested, manifest["base_branch"])
     if facts.repository_fingerprint != manifest["repository_fingerprint"]:
         raise CycleError("cycle belongs to a different Git repository")
@@ -689,6 +696,41 @@ def _load_cycle(
         )
     if facts.base_sha != manifest["base_sha"]:
         raise CycleError("merge base differs from the initialized ticket cycle")
+    if (
+        prepared_operational_resume
+        and manifest["state"] == CycleState.IMPLEMENTING.value
+        and manifest["active_agent"] == ActiveAgent.IMPLEMENTER.value
+        and manifest["review_round"] == 0
+        and manifest.get("operational_retries")
+        and json.dumps(handoff, sort_keys=True)
+        == json.dumps(
+            _blank_handoff(dict(manifest, state=CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value)),
+            sort_keys=True,
+        )
+    ):
+        expected = {
+            "ticket": manifest["ticket"],
+            "repository_fingerprint": manifest["repository_fingerprint"],
+            "branch": manifest["branch"],
+            "head_sha": manifest["current_head_sha"],
+            "implementation_attempt": implementation_attempt(manifest),
+            "approval": manifest["operational_retries"][-1],
+            "phase": "prepared",
+        }
+        marker = directory / f"implementer-launch-attempt-{implementation_attempt(manifest)}.json"
+        if json.dumps(_load_json(marker), sort_keys=True) != json.dumps(expected, sort_keys=True):
+            raise CycleError("operational launch ownership is uncertain")
+        _require_clean(facts, "pre-launch resume")
+        if facts.head_sha != manifest["current_head_sha"]:
+            raise CycleError("pre-launch resume requires unchanged exact HEAD")
+        if any(directory.glob("review-*.json")) or any(directory.glob("implementation-*.json")):
+            raise CycleError("pre-launch resume has contradictory handoff/review artifacts")
+        handoff = _blank_handoff(manifest)
+    _validate_handoff(handoff, manifest)
+    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+        handoff["implementer"] is not None or handoff["reviewer"] is not None
+    ):
+        raise CycleError("operational approval cannot contain an accepted handoff/review")
     return directory, manifest, handoff, facts
 
 
@@ -875,7 +917,7 @@ def _validate_handoff(document: dict[str, Any], manifest: dict[str, Any]) -> Non
         raise CycleError("handoff system section must be an object")
     _require_exact_keys(system, SYSTEM_KEYS, "handoff system")
     expected_system = _system_from_manifest(manifest)
-    if system != expected_system:
+    if json.dumps(system, sort_keys=True) != json.dumps(expected_system, sort_keys=True):
         raise CycleError("handoff system section does not match authoritative manifest state")
     implementer = document["implementer"]
     if implementer is not None:

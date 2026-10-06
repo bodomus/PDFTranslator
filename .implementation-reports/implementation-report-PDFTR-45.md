@@ -31,7 +31,7 @@ Blast radius is local cycle validation/orchestration and diagnostic output. Trac
 - Approval persisted before implementation transition resumes the same attempt. Attempt 2 additionally resumes proven pre-launch active implementation under exclusive runner ownership; once the launch fence is crossed, process ownership remains uncertain and requires human inspection.
 - Real provider classifications require a trusted adapter; current subprocess adapter does not parse provider message text.
 - Final merge and remote CI approval remain human/CI decisions.
-- Integration warnings: ["YouTrack credentials unavailable", "YouTrack credentials unavailable"]. Ticket attachments/tracking are runner-owned; no direct YouTrack API calls were made.
+- Integration warnings: ["YouTrack credentials unavailable", "YouTrack credentials unavailable", "YouTrack credentials unavailable"]. Ticket attachments/tracking are runner-owned; no direct YouTrack API calls were made.
 
 ## Attempt 2 — reviewer R1
 ### Investigation and changes
@@ -78,4 +78,51 @@ Blast radius is local cycle validation/orchestration and diagnostic output. Trac
 ### Remaining boundary
 A crash after the durable launch fence (even just before spawn), or contradictory/corrupt authoritative
 artifacts, requires manual inspection. This deliberate conservative boundary avoids reopening a phase
-whose child ownership is uncertain. The R1 begin-to-tracking-to-pre-launch gap is now resumable.
+whose child ownership is uncertain. Attempt 3 below closes the remaining gap inside begin's two writes.
+
+## Attempt 3 — reviewer R1 persistence gap
+### Investigation and changes
+- Clean baseline at `fae3183fc6a8c01104942dd0eec86b98ad3d3d71`. Source verified that
+  begin replaces manifest first, then handoff: death between them leaves a blank approved
+  projection that strict status loading rejected before checking prepared ownership.
+- Added validator-owned `complete_operational_prelaunch`, called only from runner-owned preflight
+  under the exclusive ticket lock before status. It validates strict manifest/approval, repository
+  fingerprint, ticket, branch, merge base, clean tree, unchanged exact HEAD, exact prepared marker
+  and absence of immutable implementation/review artifacts before mutation. Only the exact blank
+  previous approved projection is completed via atomic handoff replacement. Approval, attempt,
+  review round and diagnostics are unchanged; normal validator loading remains strict.
+- Canonical JSON comparison rejects Boolean/integer projection substitutions. Nonblank handoffs,
+  other stale states, missing/corrupt/duplicate/mismatched markers and launching ownership still
+  fail closed without mutation. Ordinary review recovery and reviewer authority are unchanged.
+- Regression injection now raises process-death-equivalent `BaseException` before handoff replacement
+  after begin has replaced the manifest. Normal invocation completes the same approved attempt;
+  duplicate approval does not change history. The rejection matrix runs both after begin and between
+  begin writes, including dirty/HEAD/branch, marker approval/attempt/repository mismatches, nonblank
+  handoffs, wrong/Boolean projections, immutable artifacts and uncertain launching.
+
+### Source/graph validation and impact
+- Graphify query `run_cycle begin_implementation operational retry` identified runner, validator,
+  retry/resume/tracking tests; current source confirmed those boundaries.
+- CRG updated before and after the change with UTF-8 console output. Reported test gaps were
+  source-checked against deterministic runner tests (dynamic monkeypatch relationships are not
+  fully represented). Call path remains CLI -> locked run_cycle -> _run_cycle -> validated
+  projection completion -> strict cycle_status. No new package boundaries, dependencies or
+  PDF/model/OCR effects; no Graphify rebuild needed for this local repair.
+- Standard-library-only implementation; no external library API changes or Context7 tool available.
+
+### Final validation
+- Focused validator/retry/runner/resume/progress/tracking suite: **352 passed, 2 skipped**.
+  Operational-retry subset: **83 passed**. The initial subset run had a test message-regex mismatch;
+  corrected the assertion and reran successfully.
+- Windows PowerShell `scripts/check.ps1`: **PASS**, **923 passed, 3 skipped** in 300.19 seconds,
+  **89.54%** coverage. Includes Wiki lint (15 pages, 139 links, no errors/warnings), Ruff
+  format/lint (321 files) and mypy (98 source files). Diff whitespace check passed.
+- README, CHANGELOG, handoff contract, affected Wiki/log, ticket plan and completion summary updated.
+  No model downloads/provider calls. Ubuntu CI was not executed locally and remains a remote check.
+- Integration warnings: ["YouTrack credentials unavailable", "YouTrack credentials unavailable", "YouTrack credentials unavailable"].
+  No direct tracking API calls or runner-owned tracking artifact edits.
+
+### Remaining boundary
+Only the exact blank approved projection backed by a matching prepared marker is repairable.
+A crash after the launching fence, corrupt manifest or contradictory artifacts still requires human
+inspection. This deliberately does not guess whether a child exists or discard dirty WIP.

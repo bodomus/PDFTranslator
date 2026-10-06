@@ -225,19 +225,31 @@ class SimulatedRunnerDeath(BaseException):
     """Bypass orderly failure handlers, as process death would."""
 
 
-def crash_after_begin(repo: Path, fake: FakePi, patch: pytest.MonkeyPatch) -> None:
-    begin = runner.begin_implementation
+def crash_after_begin(
+    repo: Path, fake: FakePi, patch: pytest.MonkeyPatch, *, between_writes: bool = False
+) -> None:
+    if between_writes:
+        write = validator._atomic_write_json
 
-    def crash(*args: object, **kwargs: object) -> None:
-        begin(*args, **kwargs)
-        raise SimulatedRunnerDeath
+        def interrupted_write(path: Path, document: dict[str, object]) -> None:
+            if path.name == "handoff.json" and document["system"]["state"] == "IMPLEMENTING":
+                raise SimulatedRunnerDeath
+            write(path, document)
 
-    patch.setattr(runner, "begin_implementation", crash)
+        patch.setattr(validator, "_atomic_write_json", interrupted_write)
+    else:
+        begin = runner.begin_implementation
+
+        def crash(*args: object, **kwargs: object) -> None:
+            begin(*args, **kwargs)
+            raise SimulatedRunnerDeath
+
+        patch.setattr(runner, "begin_implementation", crash)
     with pytest.raises(SimulatedRunnerDeath):
         run_cycle(repo, TICKET, executor=fake, config=_config())
 
 
-@pytest.mark.parametrize("stage", ["after_begin", "tracking_before_launch"])
+@pytest.mark.parametrize("stage", ["between_begin_writes", "after_begin", "tracking_before_launch"])
 def test_active_prelaunch_crash_resumes_same_approved_attempt(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -248,8 +260,8 @@ def test_active_prelaunch_crash_resumes_same_approved_attempt(
     (directory / "implementer.json").write_text('{"partial":', encoding="utf-8")
     approval = approve(git_repo)["operational_retries"]
     with monkeypatch.context() as patch:
-        if stage == "after_begin":
-            crash_after_begin(git_repo, fake, patch)
+        if stage in {"after_begin", "between_begin_writes"}:
+            crash_after_begin(git_repo, fake, patch, between_writes=stage == "between_begin_writes")
         else:
             call = runner.TrackingHooks.call
 
@@ -272,7 +284,7 @@ def test_active_prelaunch_crash_resumes_same_approved_attempt(
         "prepared"
     )
     before = artifacts(directory)
-    with pytest.raises(RunnerError, match="requires STOPPED"):
+    with pytest.raises((RunnerError, CycleError), match="requires STOPPED|handoff system"):
         run_cycle(
             git_repo,
             TICKET,
@@ -308,16 +320,23 @@ def test_active_prelaunch_crash_resumes_same_approved_attempt(
         "launching",
         "review_artifact",
         "implementation_artifact",
+        "nonblank_handoff",
+        "wrong_projection",
+        "boolean_projection",
+        "approval_mismatch",
+        "attempt_mismatch",
+        "repository_mismatch",
     ],
 )
+@pytest.mark.parametrize("between_writes", [False, True])
 def test_active_prelaunch_resume_fails_closed(
-    git_repo: Path, monkeypatch: pytest.MonkeyPatch, violation: str
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, violation: str, between_writes: bool
 ) -> None:
     fake = FakePi(git_repo)
     directory = fail(git_repo, fake)
     approve(git_repo)
     with monkeypatch.context() as patch:
-        crash_after_begin(git_repo, fake, patch)
+        crash_after_begin(git_repo, fake, patch, between_writes=between_writes)
     path = directory / "implementer-launch-attempt-2.json"
     if violation == "dirty":
         (git_repo / "tracked.txt").write_text("WIP")
@@ -328,6 +347,16 @@ def test_active_prelaunch_resume_fails_closed(
     elif violation in {"review_artifact", "implementation_artifact"}:
         name = "review-1.json" if violation == "review_artifact" else "implementation-2.json"
         (directory / name).write_text("{}")
+    elif violation in {"nonblank_handoff", "wrong_projection", "boolean_projection"}:
+        handoff_path = directory / "handoff.json"
+        document = json.loads(handoff_path.read_text())
+        if violation == "nonblank_handoff":
+            document["implementer"] = {"contradictory": True}
+        elif violation == "boolean_projection":
+            document["system"]["review_round"] = False
+        else:
+            document["system"]["state"] = "STOPPED"
+        runner._write_json(handoff_path, document)
     elif violation == "missing":
         path.unlink()
     elif violation == "corrupt":
@@ -336,9 +365,16 @@ def test_active_prelaunch_resume_fails_closed(
         path.write_text(path.read_text().replace('"phase":', '"phase": "prepared", "phase":'))
     else:
         record = json.loads(path.read_text())
-        record["phase" if violation == "launching" else "head_sha"] = (
-            "launching" if violation == "launching" else "0" * 40
-        )
+        if violation == "approval_mismatch":
+            record["approval"]["reason"] = "different approval"
+        elif violation == "attempt_mismatch":
+            record["implementation_attempt"] = 3
+        elif violation == "repository_mismatch":
+            record["repository_fingerprint"] = "0" * 64
+        else:
+            record["phase" if violation == "launching" else "head_sha"] = (
+                "launching" if violation == "launching" else "0" * 40
+            )
         runner._write_json(path, record)
     before = artifacts(directory)
     with pytest.raises((RunnerError, CycleError)):

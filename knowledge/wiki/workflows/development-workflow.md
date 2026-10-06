@@ -109,8 +109,12 @@ history authorize at most three new implementer attempts without granting review
 resumes a persisted approval; duplicate approval rejects. Atomic manifest approval can safely recover
 its blank handoff projection after interruption between writes. The runner holds an OS ticket lock
 and persists an attempt-bound `implementer-launch-attempt-<N>.json` prepared marker before begin.
-If it dies after begin/tracking but before the launch fence, normal invocation can resume the same
-active implementation under exclusive ownership, clean unchanged HEAD and matching strict marker.
+If it dies during begin's manifest/handoff writes or after begin/tracking but before the launch
+fence, normal invocation can resume the same active implementation under exclusive ownership,
+clean unchanged HEAD and matching strict approval-bound marker. Before status loading, the runner
+atomically completes only the exact blank prior approved handoff projection after validating all
+identity/Git bindings and absence of immutable accepted artifacts. Nonblank or other mismatched
+projections reject; this does not relax ordinary validator loading or repeat begin/accounting.
 Before executor entry the atomic marker becomes launching; uncertainty after that point, concurrent
 owners, absent/corrupt/mismatched markers and legacy active states reject without guessing a child.
 Historical markers remain available; approval/attempt/round accounting is never repeated.
