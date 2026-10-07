@@ -34,6 +34,10 @@ related:
 
 ## 2026-10-07
 
+- PDFTR-47 post-cycle R7 protects secondary creation-reconciliation diagnostics from sink failures.
+  The original uncertain mutation remains authoritative, survives restart and prevents duplicate
+  creation until successful exact-identity reconciliation.
+
 - PDFTR-47 post-cycle R6 preserves the original uncertain creation outcome across failed
   reconciliation reads and restart. Verified exact ticket/project discovery resolves only that create
   without a second POST; identity-safety and unrelated mutation fences remain intact.

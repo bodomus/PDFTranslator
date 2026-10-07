@@ -32,6 +32,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The post-cycle R6 correction retains an uncertain create's original outcome when reconciliation
   GETs fail, including HTTP/auth/socket failures. Restart discovery resolves only a verified exact
   ticket/project identity without another creation POST; identity and unrelated mutation fences survive.
+  The post-cycle R7 correction protects secondary reconciliation diagnostics: a failed warning sink
+  cannot replace the original uncertain creation outcome, journal evidence or restart protection.
 
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
   review-envelope protocol instead of runtime-importing a changed runner against cached validator

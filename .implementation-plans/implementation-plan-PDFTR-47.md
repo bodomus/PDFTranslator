@@ -104,6 +104,21 @@ Run focused preparation tests, broader tracking/validator regressions and full s
 update only affected docs/Wiki/completion records, then commit/push the existing branch and verify
 cleanliness. No agent-cycle artifacts, historical verdicts, reviewer permissions or PDFTR-45/46 changes.
 
+## Post-cycle human-approved correction — R7
+Level 1, clean baseline b196eaa691c3ec16b916a0a0eea203822ff3dcb4, existing ticket branch.
+Protect only secondary create-reconciliation diagnostics so sink failures cannot replace the
+original UncertainTransport. Reproduce POST 504 / GET 503 / diagnostic BrokenPipeError and OSError,
+including a persistently unavailable sink. Verify the same original exception reaches operation
+classification, original evidence and uncertainty survive restart, no second POST occurs, and exact
+identity reconciliation resolves the matching create. Preserve existing identity and mutation fences.
+Run focused and broader tracking/validator regressions, Wiki lint and full scripts/check.ps1;
+append scoped completion records, commit/push and verify cleanliness. Preserve historical cycle
+artifacts, reviewer permissions and PDFTR-45/46 behavior; no new automated cycle review.
+
+Completed R7 validation: focused 51 passed; broader 254 passed; full Windows scripts/check.ps1
+1107 passed, 3 skipped in 649.43s, coverage 89.54%; Wiki lint/Ruff/mypy passed. Original uncertainty,
+restart durability, no duplicate create and exact reconciliation verified for both sink failure types.
+
 ## Post-cycle human-approved correction — R6
 Level 1, clean baseline c8ff18631b6c8d17b3bd8d4311cedfae2befcef7, existing ticket branch.
 Address only uncertain creation being downgraded by a failed reconciliation GET. Preserve the

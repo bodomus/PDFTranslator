@@ -14,7 +14,7 @@ import threading
 import time
 import tomllib
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -872,11 +872,13 @@ class ProjectTracking:
                             raise
                         if isinstance(reconciliation_error, IdentityError):
                             self.data["identity_unsafe"] = True
-                        self.warning(
-                            "YouTrack create reconciliation failed: "
-                            + self.diagnostic(reconciliation_error),
-                            persist=False,
-                        )
+                        # Secondary reporting must not replace the authoritative mutation error.
+                        with suppress(Exception):
+                            self.warning(
+                                "YouTrack create reconciliation failed: "
+                                + self.diagnostic(reconciliation_error),
+                                persist=False,
+                            )
                         # A failed read cannot replace the already uncertain mutation outcome.
                         raise error from None
                 if isinstance(created, dict):

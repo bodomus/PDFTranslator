@@ -78,3 +78,18 @@ passed. No historical `.agent-cycle` artifacts, reviewer permissions or PDFTR-45
 This is an implementer completion record, not a new independent-review verdict. No live mutation
 was performed; YouTrack PDFTR-47 remains unavailable for field updates/attachments. Concise factual
 progress and validation logs: `temp/PDFTR-47-R6-*`.
+
+## Post-cycle human-approved corrective patch — R7
+
+Secondary create-reconciliation diagnostics now run best-effort. BrokenPipeError or OSError from
+a warning sink cannot replace the original UncertainTransport, uncertain operation status,
+HTTP 504 evidence or append-only journal outcome. Four new cases cover transient and persistent
+sink failures, the same original exception reaching classification, durable restart protection,
+no second creation POST, and later exact-identity reconciliation.
+
+Focused suite: 51 passed. Broader tracking/validator suite: 254 passed. Full Windows
+`scripts/check.ps1`: 1107 passed, 3 skipped in 649.43s, coverage 89.54%; Wiki lint, Ruff and mypy
+passed. Historical `.agent-cycle` artifacts, reviewer permissions and PDFTR-45/46 behavior remain
+unchanged. This is an implementer completion record, not an independent-review verdict.
+YouTrack PDFTR-47 lookup returned not found, so remote fields/attachments remain unavailable.
+Concise progress and validation logs: `temp/PDFTR-47-R7-*` (uncommitted).

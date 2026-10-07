@@ -107,6 +107,8 @@ Ignored runtime artifacts include `youtrack.json`, `youtrack-events.jsonl`, `git
 and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent is journaled before
 mutation: an uncertain create is recovered by exact-key discovery, never by blind re-creation;
 failed reconciliation reads preserve the original uncertain mutation and its non-repeatable guard.
+Secondary reconciliation diagnostics are best-effort: warning-sink failures preserve the original
+mutation uncertainty and evidence across restart.
 Only verified exact ticket/project discovery resolves that create, including after restart;
 identity mismatches retain the safety fence and unrelated mutation fences remain intact.
 Uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.

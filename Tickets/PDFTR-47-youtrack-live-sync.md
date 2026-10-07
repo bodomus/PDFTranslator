@@ -1,5 +1,17 @@
 # PDFTR-47 — YouTrack Live Synchronization Validation and Hardening
 
+## Human-approved post-cycle correction R7
+
+Address only the independent P2 finding at reviewed baseline
+`b196eaa691c3ec16b916a0a0eea203822ff3dcb4`: secondary diagnostic failures must never
+replace an already uncertain create mutation. Always propagate the original UncertainTransport
+after failed reconciliation, even when its warning sink raises BrokenPipeError or OSError.
+Preserve the original HTTP/transport uncertainty, non-repeatable guard and restart durability.
+Verify no second POST and later exact-identity resolution; retain mismatched-identity refusal and
+existing preparation/transport/rejection/GitHub regressions. Run focused/broader/full validation,
+commit and push the existing branch with a clean tree. No historical .agent-cycle changes,
+reviewer permission changes, weakened fencing or unrelated scope expansion.
+
 ## Human-approved post-cycle correction R6
 
 Address only the independent P2 finding at reviewed baseline

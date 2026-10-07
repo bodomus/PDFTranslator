@@ -250,6 +250,8 @@ An uncertain creation keeps its original mutation outcome when reconciliation GE
 read diagnostics never replace that evidence. After restart, only verified exact ticket/project
 discovery resolves the matching uncertain create without another POST. Identity-safety and unrelated
 mutation fences are preserved, and the original mutation event remains in the append-only journal.
+Secondary reconciliation reporting is best-effort: a failing diagnostic sink cannot replace the
+original UncertainTransport used for durable mutation outcome classification and evidence.
 Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
 operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe

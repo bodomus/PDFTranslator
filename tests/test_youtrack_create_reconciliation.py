@@ -12,7 +12,13 @@ from typing import Any
 from urllib.error import HTTPError
 
 import pytest
-from scripts.project_tracking import IdentityError, ProjectTracking, TrackingError, YouTrack
+from scripts.project_tracking import (
+    IdentityError,
+    ProjectTracking,
+    TrackingError,
+    UncertainTransport,
+    YouTrack,
+)
 
 TICKET = "PDFTR-47"
 SHA = "a" * 40
@@ -186,5 +192,77 @@ def test_uncertain_create_resolves_on_successful_immediate_discovery(
     tr = tracking()
     assert tr.ensure_youtrack_issue(allow_create=True) == state["issue"]
     assert json.loads(tr.path.read_text())["operations"][CREATE_KEY]["status"] == "success"
+    assert tracking().ensure_youtrack_issue(allow_create=True) == state["issue"]
+    assert state["posts"] == 1
+
+
+@pytest.mark.parametrize("sink_failure", [BrokenPipeError, OSError])
+@pytest.mark.parametrize("persistent_sink_failure", [False, True])
+def test_uncertain_create_survives_secondary_diagnostic_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sink_failure: type[Exception],
+    persistent_sink_failure: bool,
+) -> None:
+    tracking, state = creation_scenario(tmp_path, monkeypatch, 504, 503)
+    tr = tracking()
+    mutation_errors: list[UncertainTransport] = []
+    authoritative_errors: list[UncertainTransport] = []
+    request = tr.yt.request
+    diagnostic = tr.diagnostic
+
+    def observed_request(method: str, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return request(method, *args, **kwargs)
+        except UncertainTransport as error:
+            mutation_errors.append(error)
+            raise
+
+    def observed_diagnostic(error: Exception) -> str:
+        if isinstance(error, UncertainTransport):
+            authoritative_errors.append(error)
+        return diagnostic(error)
+
+    def broken_warning_sink(message: str) -> None:
+        if "create reconciliation failed:" in message or persistent_sink_failure:
+            raise sink_failure("diagnostic sink unavailable")
+
+    monkeypatch.setattr(tr.yt, "request", observed_request)
+    monkeypatch.setattr(tr, "diagnostic", observed_diagnostic)
+    monkeypatch.setattr(tr, "warn", broken_warning_sink)
+    expected_error = sink_failure if persistent_sink_failure else TrackingError
+    with pytest.raises(expected_error):
+        tr.ensure_youtrack_issue(allow_create=True)
+
+    # The very same mutation exception must reach operation outcome classification.
+    assert len(mutation_errors) == len(authoritative_errors) == 1
+    assert authoritative_errors[0] is mutation_errors[0]
+    persisted = json.loads(tr.path.read_text())
+    original = persisted["operations"][CREATE_KEY]
+    assert original == {"status": "uncertain", "conflicting_write": False}
+    assert any("YouTrack HTTP 504; remote outcome uncertain" in w for w in persisted["warnings"])
+    assert any(
+        "create reconciliation failed: YouTrack HTTP 503" in w for w in persisted["warnings"]
+    )
+    journal = (tr.directory / "youtrack-events.jsonl").read_text()
+    assert json.loads(journal)["error_class"] == "UncertainTransport"
+    assert sink_failure.__name__ not in journal
+
+    resumed = tracking()
+    assert resumed.data["operations"][CREATE_KEY] == original
+    with pytest.raises(TrackingError):
+        resumed.ensure_youtrack_issue(allow_create=True)
+    state["mode"] = "absent"
+    with pytest.raises(TrackingError):
+        resumed.ensure_youtrack_issue(allow_create=True)
+    assert json.loads(tr.path.read_text())["operations"][CREATE_KEY] == original
+    assert state["posts"] == 1
+
+    state["mode"] = "resolved"
+    assert tracking().ensure_youtrack_issue(allow_create=True) == state["issue"]
+    resolved = json.loads(tr.path.read_text())["operations"][CREATE_KEY]
+    assert resolved["status"] == "success"
+    assert resolved["result"] == state["issue"]
+    assert (tr.directory / "youtrack-events.jsonl").read_text().startswith(journal)
     assert tracking().ensure_youtrack_issue(allow_create=True) == state["issue"]
     assert state["posts"] == 1

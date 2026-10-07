@@ -341,3 +341,37 @@ Read-only YouTrack lookup returned `Issue not found: PDFTR-47`; ticket fields an
 attachments remain unavailable. Concise factual progress: `temp/PDFTR-47-R6-progress.log`;
 validation logs: `temp/PDFTR-47-R6-focused.txt`, `temp/PDFTR-47-R6-broader.txt`,
 `temp/PDFTR-47-R6-check.txt` (uncommitted).
+
+## Post-cycle human-approved corrective patch — R7
+
+Baseline: clean `pdftr-47-youtrack-live-sync` at
+`b196eaa691c3ec16b916a0a0eea203822ff3dcb4`; scope is only the remaining P2 diagnostic-sink finding.
+Secondary create-reconciliation reporting now runs best-effort, while the original
+UncertainTransport is re-raised outside that protection. A warning/reporting failure cannot replace
+its operation classification or original mutation evidence. No transport classification, mutation
+fence, identity check, reviewer permission, runner or PDFTR-45/46 behavior changed.
+
+Four new regression cases reproduce POST 504 / reconciliation GET 503 with BrokenPipeError and
+OSError from a transient or persistently unavailable diagnostic sink. They verify that the same
+original mutation exception reaches outcome classification, the operation remains uncertain,
+the HTTP 504 diagnostic and UncertainTransport journal event survive restart, re-entry sends no
+second POST, and later exact-identity discovery resolves only the matching creation. Existing
+HTTP/auth/socket reconciliation, preparation, rejection, identity and GitHub regressions remain.
+
+Before the fix all four new cases failed; after the fix the focused suite passed 51 tests and
+the broader tracking/validator suite passed 254 tests. ProjectWiki search, existing Graphify
+orientation and CRG incremental update/caller analysis were source-verified; CRG reported no errors.
+
+The first full-gate run was interrupted after detecting Windows backslashes stripped by pytest
+option parsing; its generated test directory and output were preserved under `temp/`. The rerun
+validated forward-slash options before execution. All validation caches, coverage and logs remain
+under repository-local `temp/` and are uncommitted.
+
+Read-only YouTrack lookup returned `Issue not found: PDFTR-47`; remote field updates and ticket/report
+attachments remain unavailable. No live mutation, new automated review or historical `.agent-cycle`
+artifact rewrite was performed. Concise progress: `temp/PDFTR-47-R7-progress.log`; validation logs:
+`temp/PDFTR-47-R7-focused.txt`, `temp/PDFTR-47-R7-broader.txt`, `temp/PDFTR-47-R7-check.txt`.
+
+Full Windows `scripts/check.ps1`: **1107 passed, 3 skipped in 649.43s**, coverage **89.54%**;
+Wiki lint **0 errors/0 warnings**, Ruff format/lint and mypy **98 source files** passed.
+This is an implementer completion record, not a new independent-review verdict.
