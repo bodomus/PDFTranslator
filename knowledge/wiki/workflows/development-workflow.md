@@ -310,10 +310,13 @@ required checks. Refreshed authoritative facts must prove PASSED, open/non-draft
 HEAD/implementation/CI SHA with every required check successful. Signals share one pure policy;
 event names are not authorization inputs and YouTrack is outside the decision path.
 
-A unique SHA receives at most one generation. REQUESTED/RUNNING/DISPATCH_UNCERTAIN suppress
-duplicates; exact-SHA results are retained when STALE and cannot approve a newer HEAD. Returning
-to stale history does not revive PASS. The harness-only store serializes and atomically persists
-intent before returning it; restart never automatically redispatches REQUESTED. Its API owns the
+A unique `(repository, PR, head_sha, base_sha)` receives at most one generation. Every record
+requires valid `requested_base_sha`; missing/malformed persisted bindings reject history.
+REQUESTED/RUNNING/DISPATCH_UNCERTAIN suppress duplicates for the same pair. Changing either SHA
+stales active/completed reviews and revokes PASS even before the new pair becomes ready.
+Exact-SHA results retain their generation's head/base binding when STALE; returning to stale
+history does not revive PASS or allocate a duplicate pair. The harness-only store serializes and
+atomically persists intent before returning it; restart never automatically redispatches REQUESTED. Its API owns the
 ticket lock and must not be called inside already-held ticket ownership. CLI status/evaluate are
 read-only diagnostics, not authorization; no result-mutation CLI exists. Future integrations must
 isolate store writes from agents and use trusted reviewer transport. No webhook, Work integration,

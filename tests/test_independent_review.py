@@ -199,6 +199,85 @@ def test_pass_revoked_by_readiness(facts, config):
     assert pass_is_valid(facts, state, config)
 
 
+def test_pass_invalid_on_base_only_move_and_pair_return(facts, config):
+    state, _ = request_review(facts, empty_state(config), config)
+    evidence = result(config)
+    state = record_result(facts, state, config, evidence)
+    assert pass_is_valid(facts, state, config)
+    moved = facts | {"base_sha": "d" * 40}
+    assert not pass_is_valid(moved, state, config)
+    assert evaluate_independent_review(moved, state, config)["decision"] == "ELIGIBLE"
+    updated, decision = request_review(moved, state, config)
+    assert decision == {"decision": "ELIGIBLE", "reason": "eligible", "generation": 2}
+    assert updated["reviews"][0]["status"] == "STALE"
+    assert updated["reviews"][0]["result"] == evidence
+    assert updated["reviews"][0]["requested_base_sha"] == "c" * 40
+    assert updated["reviews"][1]["requested_base_sha"] == "d" * 40
+    assert state["reviews"][0]["status"] == "PASS"
+    for _ in range(3):
+        updated, duplicate = request_review(moved, updated, config)
+        assert duplicate["decision"] == "ALREADY_REQUESTED"
+        assert len(updated["reviews"]) == 2
+    updated = record_result(moved, updated, config, result(config, 2))
+    assert pass_is_valid(moved, updated, config)
+    assert evaluate_independent_review(moved, updated, config)["decision"] == "ALREADY_REVIEWED"
+    reverted, decision = request_review(facts, updated, config)
+    assert decision["decision"] == "STALE"
+    assert reverted["current_generation"] == 2
+    assert all(review["status"] == "STALE" for review in reverted["reviews"])
+    assert not pass_is_valid(facts, reverted, config)
+    assert record_result(facts, reverted, config, evidence) == reverted
+    with pytest.raises(IndependentReviewError, match="result_immutable"):
+        record_result(facts, reverted, config, result(config, verdict="CHANGES_REQUIRED"))
+
+
+@pytest.mark.parametrize("status", ["REQUESTED", "RUNNING", "DISPATCH_UNCERTAIN"])
+@pytest.mark.parametrize("new_request", [False, True])
+def test_base_only_move_stales_active_and_late_pass(facts, config, status, new_request):
+    state, _ = request_review(facts, empty_state(config), config)
+    if status != "REQUESTED":
+        state = mark_dispatch(state, config, 1, status)
+    moved = facts | {"base_sha": "d" * 40}
+    state = refresh_state(moved, state, config)
+    assert state["reviews"][0]["status"] == "STALE"
+    if new_request:
+        state, decision = request_review(moved, state, config)
+        assert decision["decision"] == "ELIGIBLE" and decision["generation"] == 2
+    state = record_result(moved, state, config, result(config))
+    assert state["reviews"][0]["status"] == "STALE"
+    assert state["reviews"][0]["result"] == result(config)
+    assert state["reviews"][0]["requested_base_sha"] == "c" * 40
+    assert not pass_is_valid(moved, state, config)
+    assert not pass_is_valid(facts, state, config)
+
+
+@pytest.mark.parametrize(
+    ("patch", "reason"),
+    [
+        ({"checks": {"windows": "SUCCESS", "ubuntu": "PENDING"}}, "ci_pending"),
+        ({"checks": {"windows": "SUCCESS", "ubuntu": "FAILURE"}}, "ci_failed"),
+        ({"checks": {"windows": "SUCCESS", "ubuntu": "UNKNOWN"}}, "ci_unknown"),
+        ({"ci_sha": B}, "ci_sha_mismatch"),
+        ({"implementation_sha": B}, "sha_mismatch"),
+        ({"cycle_state": "STOPPED"}, "cycle_not_passed"),
+        ({"pr_draft": True}, "pr_draft"),
+        ({"pr_state": "CLOSED"}, "pr_closed"),
+    ],
+)
+def test_base_change_revokes_pass_before_readiness(facts, config, patch, reason):
+    state, _ = request_review(facts, empty_state(config), config)
+    state = record_result(facts, state, config, result(config))
+    moved = facts | {"base_sha": "d" * 40}
+    updated, decision = request_review(moved | patch, state, config)
+    assert decision == {"decision": "NOT_ELIGIBLE", "reason": reason, "generation": None}
+    assert updated["reviews"][0]["status"] == "STALE"
+    assert updated["current_generation"] == 1
+    assert not pass_is_valid(moved | patch, updated, config)
+    assert not pass_is_valid(facts, updated, config)
+    updated, decision = request_review(moved, updated, config)
+    assert decision["decision"] == "ELIGIBLE" and updated["current_generation"] == 2
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -331,6 +410,60 @@ def test_store_crash_restart_and_exclusive_ownership(store, facts, config):
     assert restarted.request(lambda: facts)["decision"] == "ALREADY_REQUESTED"
     restarted.accept_result(lambda: new_head(facts), result(config))
     assert restarted.load()["reviews"][0]["status"] == "STALE"
+
+
+def test_store_base_pair_binding_survives_restart(store, facts, config):
+    assert store.request(lambda: facts)["generation"] == 1
+    store.accept_result(lambda: facts, result(config))
+    restarted = IndependentReviewStore(store.root, store.directory, config)
+    assert pass_is_valid(facts, restarted.load(), config)
+    moved = facts | {"base_sha": "d" * 40}
+    assert not pass_is_valid(moved, restarted.load(), config)
+    assert restarted.request(lambda: moved)["generation"] == 2
+    persisted = restarted.load()
+    assert persisted["reviews"][0]["status"] == "STALE"
+    assert [r["requested_base_sha"] for r in persisted["reviews"]] == ["c" * 40, "d" * 40]
+    assert restarted.request(lambda: moved)["decision"] == "ALREADY_REQUESTED"
+    restarted.dispatch_status(2, "DISPATCH_UNCERTAIN")
+    assert restarted.request(lambda: moved)["decision"] == "ALREADY_REQUESTED"
+    assert restarted.request(lambda: facts)["decision"] == "STALE"
+    assert restarted.load()["current_generation"] == 2
+
+
+def test_store_late_base_result_before_new_request(store, facts, config):
+    store.request(lambda: facts)
+    store.dispatch_status(1, "RUNNING")
+    moved = facts | {"base_sha": "d" * 40}
+    state = store.accept_result(lambda: moved, result(config))
+    assert state["reviews"][0]["status"] == "STALE"
+    assert state["reviews"][0]["result"] == result(config)
+    assert not pass_is_valid(moved, store.load(), config)
+    assert store.request(lambda: moved)["generation"] == 2
+
+
+@pytest.mark.parametrize("generation", [1, 2])
+@pytest.mark.parametrize("base", ["missing", None, "", "main", "c" * 39, "C" * 40, True, [], {}])
+def test_persisted_missing_or_malformed_base_fails_closed(store, facts, config, generation, base):
+    store.request(lambda: facts)
+    store.accept_result(lambda: facts, result(config))
+    moved = new_head(facts)
+    store.request(lambda: moved)
+    store.accept_result(lambda: moved, result(config, 2, B))
+    state = store.load()
+    review = state["reviews"][generation - 1]
+    if base == "missing":
+        review.pop("requested_base_sha", None)
+    else:
+        review["requested_base_sha"] = base
+    store.path.write_text(json.dumps(state), encoding="utf-8")
+    old = store.path.read_bytes()
+    assert evaluate_independent_review(moved, state, config)["decision"] == "INVALID"
+    assert not pass_is_valid(moved, state, config)
+    with pytest.raises(IndependentReviewError):
+        store.load()
+    with pytest.raises(IndependentReviewError):
+        store.request(lambda: moved)
+    assert store.path.read_bytes() == old
 
 
 def test_store_failed_persist_returns_no_dispatch(store, facts, monkeypatch):

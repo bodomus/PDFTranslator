@@ -17,6 +17,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Independent review generations and PASS validity (PDFTR-49) now bind both PR head and base SHA.
+  A base-only change stales active/completed reviews and requires a new generation after readiness.
+  Identical pairs suppress duplicates; historical pairs cannot revive PASS. Missing/malformed
+  persisted base binding rejects history without inferring a migration.
+
 - YouTrack synchronization hardening (PDFTR-47): canonical HTTPS host configuration, categorized
   credential/project preflight, explicit creation permission, exact-key read-back after creation,
   locally serialized conflict recovery and semantic read-after-write verification. Missing issues

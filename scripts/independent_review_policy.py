@@ -141,17 +141,19 @@ def validate_state(state: dict, config: dict) -> None:
         type(state["current_generation"]) is int and type(state["reviews"]) is list, "state_corrupt"
     )
     _require(state["current_generation"] == len(state["reviews"]), "state_corrupt")
-    shas = set()
+    pairs = set()
     for generation, review in enumerate(state["reviews"], 1):
-        _keys(review, "generation requested_sha status result")
+        _keys(review, "generation requested_sha requested_base_sha status result")
         _require(
             type(review["generation"]) is int and review["generation"] == generation,
             "state_corrupt",
         )
         _require(
-            _sha(review["requested_sha"]) and review["requested_sha"] not in shas, "state_corrupt"
+            _sha(review["requested_sha"]) and _sha(review["requested_base_sha"]), "state_corrupt"
         )
-        shas.add(review["requested_sha"])
+        pair = (review["requested_sha"], review["requested_base_sha"])
+        _require(pair not in pairs, "state_corrupt")
+        pairs.add(pair)
         status = review["status"]
         _require(type(status) is str and status in ACTIVE | VERDICTS | {"STALE"}, "state_corrupt")
         if generation != state["current_generation"]:
@@ -203,7 +205,10 @@ def evaluate_independent_review(facts: dict, state: dict, config: dict) -> dict:
     if reason:
         return {"decision": "NOT_ELIGIBLE", "reason": reason, "generation": None}
     for review in state["reviews"]:
-        if review["requested_sha"] == facts["head_sha"]:
+        if (
+            review["requested_sha"] == facts["head_sha"]
+            and review["requested_base_sha"] == facts["base_sha"]
+        ):
             status = review["status"]
             decision = (
                 "ALREADY_REQUESTED"
@@ -230,7 +235,10 @@ def refresh_state(facts: dict, state: dict, config: dict) -> dict:
     validate_state(state, config)
     updated = copy.deepcopy(state)
     for review in updated["reviews"]:
-        if review["requested_sha"] != facts["head_sha"]:
+        if (
+            review["requested_sha"] != facts["head_sha"]
+            or review["requested_base_sha"] != facts["base_sha"]
+        ):
             review["status"] = "STALE"
     return updated
 
@@ -245,6 +253,7 @@ def request_review(facts: dict, state: dict, config: dict) -> tuple[dict, dict]:
             {
                 "generation": decision["generation"],
                 "requested_sha": facts["head_sha"],
+                "requested_base_sha": facts["base_sha"],
                 "status": "REQUESTED",
                 "result": None,
             }
@@ -302,5 +311,7 @@ def pass_is_valid(facts: dict, state: dict, config: dict) -> bool:
     return (
         review["status"] == "PASS"
         and review["result"]["verdict"] == "PASS"
+        and review["requested_sha"] == facts["head_sha"]
         and review["result"]["reviewed_sha"] == facts["head_sha"]
+        and review["requested_base_sha"] == facts["base_sha"]
     )

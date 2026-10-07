@@ -65,8 +65,8 @@ Facts (`head_sha`, `implementation_sha`, `ci_sha` must agree):
 }
 ```
 
-Base SHA is validated context, not an additional review identity. PR must exist, be open and not
- draft. Required checks must all succeed for candidate SHA. Unknown PR state fails closed.
+Both `head_sha` and `base_sha` bind the review generation. PR must exist, be open and not
+draft. Required checks must all succeed for candidate head SHA. Unknown PR state fails closed.
 
 ## Pure API
 
@@ -74,7 +74,7 @@ Base SHA is validated context, not an additional review identity. PR must exist,
 
 - `evaluate_independent_review(facts, state, config)`: decision/reason/generation, no mutation.
 - `request_review(...)`: copied refreshed history plus a decision. ELIGIBLE appends REQUESTED.
-- `refresh_state(...)`: marks old SHA records STALE, retaining evidence.
+- `refresh_state(...)`: marks records with a different head or base SHA STALE, retaining evidence.
 - `mark_dispatch(state, config, generation, status)`: RUNNING or DISPATCH_UNCERTAIN.
 - `record_result(facts, state, config, result)`: accepts exact bound results, once.
 - `pass_is_valid(...)`: current exact PASS **and** all readiness facts still hold; not a merge grant.
@@ -85,16 +85,20 @@ ci_sha_mismatch, ci_pending, ci_failed, ci_unknown. Schema/binding contradiction
 mutation APIs raise IndependentReviewError without changing their inputs.
 
 History contains the configuration plus `current_generation` and `reviews`. Each record has exactly
-`generation`, `requested_sha`, `status`, `result`. Generations are contiguous positive integers;
-SHA identity is unique for the repository/PR. No generation is allocated until ready. Repeated
-requests for the same SHA do not append; every previously superseded record is STALE. Returning
-to a previously stale SHA does not revive approval or allocate another request: human reconciliation
-is required. Observing HEAD movement revokes earlier status even while the new SHA is not eligible.
+`generation`, `requested_sha`, `requested_base_sha`, `status`, `result`. Generations are contiguous
+positive integers; `(repository, pull_request, requested_sha, requested_base_sha)` is unique.
+Both persisted SHAs must be lowercase full 40-character commit SHAs. Missing or malformed base
+binding rejects the entire history, including legacy records; no inferred migration is permitted.
+No generation is allocated until ready. Repeated requests for the same `(head, base)` do not append;
+every previously superseded record is STALE. Returning to a previously stale pair does not revive
+approval or allocate another request: human reconciliation is required. Observing head or base
+movement revokes earlier status even while the new pair is not eligible.
 The immutable request identity and original result/findings remain; STALE is a derived historical
 status, not an alteration of the review verdict. Duplicate identical result delivery is idempotent;
-a different replacement result rejects. PASS cannot survive changed HEAD, draft/closed PR, cycle
-mismatch or failing/incomplete CI. Late results may be recorded despite non-ready current CI, but
-never authorize that current HEAD.
+a different replacement result rejects. PASS requires requested/reviewed head SHA to equal current
+head SHA and requested base SHA to equal current base SHA. It cannot survive either SHA changing,
+draft/closed PR, cycle mismatch or failing/incomplete CI. Late results may be recorded despite
+non-ready current CI, but never authorize a different `(head, base)` pair.
 
 Result shape:
 
@@ -113,6 +117,8 @@ Result shape:
 
 Each finding has exactly id, severity, file, symbol, problem, required_fix, regression_test.
 IDs are unique, id/problem/required_fix nonempty, remaining location/test fields strings.
+The result's generation identifies its immutable requested head/base pair; `reviewed_sha` must
+match that generation's requested head. Result schema and accepted evidence remain unchanged.
 
 ## Persistence and future dispatch
 
@@ -133,15 +139,17 @@ replaces state, then returns the decision. Store and temp must be on the same fi
 replacement propagates and returns no dispatch grant. This protects process interruption, not a
 claim of full power-loss durability on every filesystem. Symlink/junction paths reject.
 
-Only a newly returned ELIGIBLE intent may dispatch the pinned requested SHA. The dispatcher must
-refresh/revalidate before launch if facts may have changed and must not use a moving branch.
+Only a newly returned ELIGIBLE intent may dispatch the pinned requested head/base pair.
+The dispatcher must refresh/revalidate before launch if facts may have changed and must not use
+a moving branch.
 A crash after persistence leaves REQUESTED; restart returns ALREADY_REQUESTED, not another grant.
 This deliberately chooses at-most-once intent over automatic delivery. RUNNING and
 DISPATCH_UNCERTAIN also suppress further requests. Uncertainty cannot transition back to RUNNING
 or automatically redispatch; human reconciliation is required. No external dispatch is implemented.
 
-`store.accept_result(refresh_facts, result)` validates bindings and freshly observed HEAD before
-recording evidence. Newer HEAD makes a late result STALE. No external publisher consumes it yet.
+`store.accept_result(refresh_facts, result)` validates bindings and freshly observed head/base SHAs
+before recording evidence. Either SHA changing makes a late result STALE, even with unchanged head.
+No external publisher consumes it yet.
 
 ## Read-only local inspection
 

@@ -61,3 +61,54 @@ PDFTR-49 — Independent Review Trigger Contract (attempt 1)
   Uncertain dispatch needs human reconciliation. No automated retry or merge grant exists.
 - YouTrack remains outside authorization. Supplied integration warnings (not newly reproduced):
   ["YouTrack identity mismatch; remote mutation refused", "YouTrack authentication failed"].
+
+## Human review correction: head/base SHA binding (2026-10-07)
+
+Finding: P1/HIGH on reviewed SHA `768575baa3fdbf14423f13900a784d237b17fad9`.
+The human explicitly requested this narrow correction and commit/push on the existing branch.
+The starting working tree was clean; this is a Level 1 policy fix.
+
+### Changes and compatibility
+
+- Every generation now requires full lowercase `requested_base_sha`; repository/PR configuration
+  plus requested head/base form its identity. Uniqueness and duplicate suppression use that pair.
+- Refresh marks records STALE if either head or base changes, independently of readiness. New pairs
+  become eligible only after the existing PR/cycle/exact-head CI predicates pass.
+- PASS requires requested/reviewed head and requested base to match current facts. A base-only move
+  invalidates PASS immediately, even before history is refreshed or another generation is allocated.
+- Late results retain their immutable generation and evidence as STALE. Returning to historical
+  pairs cannot revive PASS or create duplicate history. Reviewer result schema remains unchanged;
+  its generation binds the immutable requested head/base context.
+- Legacy/malformed history without valid base binding fails closed, including historical entries.
+  No inferred migration or history reset is introduced.
+- Persistence/locking, uncertainty fencing, result immutability, agent boundaries, YouTrack
+  independence and human merge ownership are preserved. No webhook/Work integration or dependencies.
+- README/CHANGELOG/contract and only affected Wiki workflow/log updated. Harness cycle files were
+  not rewritten; the old cycle result is not claimed as approval of this correction.
+
+### Investigation and regression evidence
+
+Graphify scoped query located policy/store/tests. CRG incremental update and qualified caller
+queries confirmed source-verified boundaries; slash/backslash duplicate graph nodes were handled
+with qualified names and source search. Post-change update succeeded; impact remains the store
+and focused test file. No module/PDF/model/translation/OCR/CUDA boundary changed, so no graph rebuild.
+
+Before implementation, 15 pure base-movement regression cases failed for the expected reasons:
+PASS survived B1-to-B2 movement and active/completed generations retained their old status.
+The initial sandboxed test attempt also hit Windows sandbox temporary-directory ACL restrictions;
+complete validation runs outside that sandbox with all new temporary output under repository temp/.
+
+- Focused command: `uv run --no-sync pytest tests/test_independent_review.py -o addopts='--strict-config
+  --strict-markers -q' --cov=scripts.independent_review_policy --cov=scripts.independent_review
+  --cov-report=term-missing --cov-fail-under=80 --basetemp=temp/pdftr49-base-final
+  -o cache_dir=temp/pytest-cache-pdftr49`.
+- Focused result: PASS, 96 tests (35 new regression cases); policy statement/branch coverage 100%,
+  policy plus persistence adapter coverage 94.15%.
+- Coverage includes PASS B1-to-B2/new generation, active REQUESTED/RUNNING/DISPATCH_UNCERTAIN,
+  late PASS before/after a new request, readiness gates, duplicates, historical pair return,
+  immutable old result, durable restart and malformed/missing bindings in current/historical records.
+- Full `scripts/check.ps1`: PASS, exit 0; 1242 passed, 3 skipped in 510.50 seconds,
+  package coverage 89.54%. Wiki lint: 15 pages, 0 errors/warnings; Ruff format/check and mypy PASS.
+  UV/pytest/Ruff/mypy/coverage/runtime temporary output was configured under repository temp/.
+- YouTrack `get_issue(PDFTR-49)` returned `Issue not found`; fields and attachments could not be
+  updated. The existing ticket Markdown and completion review remain saved locally.

@@ -33,3 +33,30 @@ Persistence APIs are for trusted harness/operator use only. Result ingestion is 
 or CLI. A future dispatcher must keep its store outside agent-writable mounts/permissions and use
 trusted reviewer output; local JSON itself is not an authenticated reviewer identity service.
 No merge authority is introduced. YouTrack is absent from policy and persistence.
+
+## Human review correction: exact head/base binding (2026-10-07)
+
+Reviewed SHA: `768575baa3fdbf14423f13900a784d237b17fad9`; finding P1/HIGH.
+Level 1 scoped policy fix, explicitly requested by the human with commit/push authorization.
+The cycle manifest is already PASSED; this manual correction does not rewrite harness-owned
+cycle state or manufacture a new independent approval.
+
+Root cause: facts validate base_sha, but history identity, refresh and PASS validation only
+compare head SHA. A base-only move can preserve approval of an obsolete review context.
+Source-verified scope: independent_review_policy.py, its store/inspection callers and focused
+tests. Graphify scoped query and CRG incremental update/caller queries confirm these boundaries;
+CRG has duplicate slash/backslash nodes, so qualified names and source searches are used.
+No PDF/model/OCR/dependency or module-boundary changes. YouTrack get_issue reports not found.
+
+- [x] Add regressions for PASS/base movement, active and late reviews, readiness gating,
+  identical-pair duplicates, historical pair returns and malformed/missing persisted base SHA.
+- [x] Run the new tests against the reviewed implementation and observe the defect.
+- [x] Require requested_base_sha in every generation; validate uniqueness by (head, base) within
+  the existing repository/PR binding. Compare both SHAs in eligibility, refresh and PASS validity.
+  Keep reviewer result schema and immutable evidence, persistence, uncertainty and read-only APIs.
+- [x] Update contract/README/CHANGELOG and affected Wiki; document fail-closed legacy history.
+- [x] Update CRG and verify scope; run focused tests and full scripts/check.ps1 with all temporary
+  output under temp/. Update this ticket's report/review.
+
+Delivery: commit this validated correction, inspect its exact SHA read-only, push the ticket branch,
+and report that SHA. Final human review and merge remain separate human decisions.

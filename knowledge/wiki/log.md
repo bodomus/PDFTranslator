@@ -33,6 +33,13 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-07
+
+- PDFTR-49 human review correction binds independent generations and PASS to exact PR head/base
+  pairs. Base-only movement revokes active/completed approval, late evidence stays STALE, historical
+  pairs cannot revive PASS, and missing/malformed persisted base binding fails closed.
+  Sources: independent-review contract, policy and focused tests linked in Development workflow.
+
 ## 2026-10-08
 
 - PDFTR-49 defines a separate exact-SHA independent-review policy and harness-only intent store.
