@@ -33,6 +33,18 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-07 — Explicit independent-review initialization
+
+- Documented the trusted operator `github_independent_review.py init` first-use boundary, reuse of
+  harness validation and shared PDFTR-49 store ownership, zero transport side effects, rejection
+  of existing/corrupt bytes, and continued fail-closed handling of missing/deleted event history.
+
+## PDFTR-50
+
+- Development workflow now documents authoritative GitHub wake-up reevaluation, exact head/base
+  connector dispatch after durable intent, shared ownership, conservative restart/timeout handling
+  and the protected trusted-service/read-only-worker deployment boundary.
+
 ## 2026-10-07
 
 - PDFTR-49 human review correction binds independent generations and PASS to exact PR head/base

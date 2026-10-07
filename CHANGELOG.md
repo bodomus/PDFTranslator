@@ -9,6 +9,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- GitHub-triggered independent-review dispatch (PDFTR-50): trusted-parent PR/CI signal and manual
+  reevaluation paths refresh repository/PR/head/base/check and cycle facts through PDFTR-49.
+  Durable request intent precedes exact-generation HTTPS connector dispatch; shared ticket ownership,
+  duplicate suppression and conservative restart/timeout handling prevent automatic redispatch.
+  Read-only reviewer instructions and bounded receipt metadata contain no authentication material.
+  No public receiver, result publication, YouTrack requirement or automatic merge is introduced.
+- Explicit trusted-parent/operator first initialization for PDFTR-50:
+  `github_independent_review.py init <ticket>` validates protected configuration and existing
+  harness context, then creates generation-zero history through the PDFTR-49 store under shared
+  ticket ownership. Init never dispatches; repeated/existing/corrupt state rejects without
+  replacement, and normal events with missing/deleted history continue to fail closed.
+
 - Independent exact-SHA review contract (PDFTR-49): pure fail-closed PR/cycle/required-CI policy,
   unique generations, stale-result retention, exact-SHA PASS validity and harness-only serialized
   request-intent persistence. Read-only local status/evaluate commands require no credentials.

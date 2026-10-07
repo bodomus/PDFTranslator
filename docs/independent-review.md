@@ -1,7 +1,8 @@
 # Independent exact-SHA review contract (PDFTR-49)
 
 This is a separate independent-review layer, not a change to the Pi cycle or its review budget.
-It implements no receiver, GitHub API adapter, Work dispatch, publication, automatic retry or merge.
+PDFTR-50 adds a trusted GitHub facts/connector dispatch integration below; no public receiver,
+result publication, automatic retry or merge is implemented.
 YouTrack is not an authorization input. Merge and contradictory-state recovery remain human-owned.
 
 ## Trust boundary
@@ -145,11 +146,121 @@ a moving branch.
 A crash after persistence leaves REQUESTED; restart returns ALREADY_REQUESTED, not another grant.
 This deliberately chooses at-most-once intent over automatic delivery. RUNNING and
 DISPATCH_UNCERTAIN also suppress further requests. Uncertainty cannot transition back to RUNNING
-or automatically redispatch; human reconciliation is required. No external dispatch is implemented.
+or automatically redispatch; human reconciliation is required. The PDFTR-50 integration below is the only dispatch entrypoint added here.
 
 `store.accept_result(refresh_facts, result)` validates bindings and freshly observed head/base SHAs
 before recording evidence. Either SHA changing makes a late result STALE, even with unchanged head.
 No external publisher consumes it yet.
+
+## GitHub-triggered dispatch (PDFTR-50)
+
+`scripts/github_independent_review.py` runs only in a **trusted parent/service**, never inside an
+agent tool or an untrusted PR job. Keep its code, trusted configuration, Git checkout and harness
+history outside agent-writable mounts/permissions. Shared local files cannot authenticate an agent;
+this is not a sandbox or filesystem identity service. Do not copy credentials into prompts or artifacts.
+The trusted parent supplies these environment variables:
+
+- `PDFTR_REVIEW_CONFIG`: protected operator-owned PDFTR-49 configuration file (schema above).
+- `GITHUB_TOKEN`: read-only repository/PR/check access.
+- `PDFTR_REVIEW_ENDPOINT`: operator-owned HTTPS review connector URL (no redirects/userinfo).
+- `PDFTR_REVIEW_TOKEN`: connector authentication, not given to the reviewer.
+
+The existing cycle must be validated in its bound repository/task branch; the parent/operator must
+explicitly initialize `IndependentReviewStore` once for legitimate first use with the command below.
+`init` loads only protected `PDFTR_REVIEW_CONFIG`, validates its ticket/config binding, and reuses
+the dispatch path's `load_cycle` harness validation (repository fingerprint, task branch, handoff,
+clean unchanged HEAD). It then calls the existing store's exclusive `initialize()`; the store owns
+shared ticket serialization and persists PDFTR-49 `empty_state(config)` with
+`current_generation == 0` and `reviews == []`. Concurrent owners reject; a second init returns
+`INVALID` / `state_already_exists` with existing bytes unchanged. Any existing file, including
+malformed/corrupt state, rejects rather than being replaced.
+
+Init does not construct GitHub/provider review transports and requires none of their credentials.
+It performs no dispatch, result ingestion, GitHub/YouTrack mutation, merge or automatic cycle
+transition. Only the trusted parent/operator may invoke it; deployment isolation described above
+enforces that boundary. It is a first-use operation, never a recovery/reset procedure: investigate
+lost history rather than invoking init again. Evaluate/signal still require existing valid history
+and fail closed when it is missing, deleted or corrupt; events never implicitly initialize it.
+Do not initialize or invoke dispatch inside an already-owned runner lock. The current Pi runner is
+unchanged; invoke this service after the runner releases ownership.
+
+```powershell
+uv run python scripts/github_independent_review.py init PDFTR-50
+uv run python scripts/github_independent_review.py evaluate PDFTR-50
+```
+
+Manual reevaluation performs real authoritative reads and **may dispatch**, unlike the diagnostic
+`independent_review.py evaluate`. There is no force flag or retry command.
+
+A trusted GitHub/Work event connector can invoke `handle_signal` or the `signal PDFTR-50` CLI,
+passing the GitHub JSON body on stdin and `GITHUB_EVENT_NAME` in its environment. Input is bounded
+at 1 MiB. PR actions opened/reopened/ready_for_review/synchronize/edited and check_run/check_suite/
+status/workflow_run signals all converge on the same evaluation. Incoming payload fields, including
+repository, PR number, CI, draft and SHAs, do not select the configured target or authorize dispatch.
+Notifications for other targets may cause an extra authoritative refresh, never authorization.
+Delivery identifiers are unnecessary for correctness; persisted head/base identities deduplicate.
+No HTTP receiver is provided: the upstream connector owns event authentication and routing. Do not
+expose the CLI as a public unauthenticated execution endpoint or run PR-provided code with secrets.
+
+GitHub reads use the fixed `api.github.com` host and GET only. Repository full name, PR number,
+base repository and head repository must match trusted configuration; forks are intentionally rejected.
+A second PR read must match the first head/base/branch/draft/state snapshot after fetching checks.
+Changed snapshots reject, without automatic retry. Cycle validation reuses the harness loader,
+including repository fingerprint/branch/handoff validation and clean unchanged Git HEAD. Cycle SHA
+is never rewritten to match PR HEAD. Base-only movement passes directly through PDFTR-49.
+
+Configured names refer to GitHub **check runs** (e.g. windows/ubuntu jobs), not legacy commit statuses.
+Each required name must have exactly one check observation, with exact head SHA and SUCCESS.
+Missing/ambiguous/wrong-SHA/neutral/skipped observations are UNKNOWN; failed/cancelled/timed_out/
+action_required are FAILURE. Queued/waiting/in-progress are PENDING. More than 100 check runs or
+incomplete collections reject, rather than silently trusting an unpaginated subset. This deliberately
+fails closed on reruns; operators must reconcile ambiguous CI rather than bypass eligibility.
+
+The store holds the existing OS ticket ownership from refresh through dispatch/status persistence.
+Concurrent owners reject nonblocking; a later notification may reevaluate. Only freshly persisted
+ELIGIBLE intent dispatches. Definite non-delivery leaves REQUESTED with no retry grant; timeout or
+unknown receipt becomes DISPATCH_UNCERTAIN. Restart/redelivery conservatively marks recovered
+REQUESTED uncertain (even if the crash was before send); RUNNING/uncertainty never redispatch.
+A crash after send/status-write failure therefore cannot silently duplicate delivery. Human
+reconciliation remains required. Exact-SHA history/result schemas and stale/PASS semantics are unchanged.
+
+### Trusted connector transport
+
+`IndependentReviewDispatcher` accepts a frozen `DispatchRequest`; the HTTPS implementation sends
+one POST with these fields plus `instructions`:
+
+```json
+{
+  "schema_version": "1.0",
+  "repository": "bodomus/PDFTranslator",
+  "ticket": "PDFTR-50",
+  "pull_request": 123,
+  "generation": 1,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "review_profile": "strict-independent-review"
+}
+```
+
+Instructions demand review of those exact SHAs, no moving branch/newer SHA, no repository mutation
+or merge, and PDFTR-49 structured PASS/CHANGES_REQUIRED bound to generation/reviewed_sha.
+The trusted connector must enforce a read-only worker capability profile: no push/merge, GitHub,
+YouTrack or harness mutation tools. The request does not grant capabilities. This is a transport
+contract for an operator-managed connector, **not a claimed native ChatGPT Work API**; provisioning
+Work triggers, authentication and read-only worker credentials is a deployment responsibility.
+
+For definite acceptance the connector responds HTTP 200/201/202 with every request identity/profile
+field echoed exactly (without `instructions`), plus `external_request_id` (1–128 ASCII letters,
+digits, `_` or `-`). Any other response, redirect, network failure or binding mismatch is uncertain;
+there are no automatic retries. The bounded opaque ID must not contain credentials. The transport
+rejects echoes of its authentication token. Local pre-transmission missing authentication is definite
+non-delivery. No server-provided free text or exception strings are logged/persisted.
+
+Diagnostic `independent-dispatch-<generation>.json` contains immutable request fields, outcome and
+opaque receipt ID; it is atomically persisted under the same ticket directory, never authorization
+input. Policy state remains `independent-review.json`; only it controls duplicate suppression.
+No results, PR comments/checks/statuses, YouTrack creation or merge operations are sent.
+All normal tests use mocked GitHub and connector responses, without live credentials.
 
 ## Read-only local inspection
 
