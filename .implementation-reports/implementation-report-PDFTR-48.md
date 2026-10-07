@@ -66,3 +66,37 @@ The runner owns external attachments, tracking lifecycle and final review coordi
 Approval is the existing human/operator operational boundary, not an authenticated identity service.
 Legacy stops lacking positive process evidence and uncertain launches require human inspection;
 no unsafe migration, cleanup, generic force retry or automatic retry is introduced.
+
+## Human exact-SHA review correction — operational budget isolation
+
+Baseline: clean `pdrtr-48-human-approved` at
+`e54c6ed2ec336f96f104efd48cc27d7827003280`. The reviewed P1/HIGH finding was reproduced:
+all three new regression cases accepted an operational stop through pre-handoff recovery.
+The minimal production correction changes only `evaluate_pre_handoff_retry`: structured operational
+stops now return `retry_stop_class_ineligible`, preserving every other clean pre-handoff predicate
+and the existing `operational_retry_limit` guard. Only PDFTR-45 operational retry approves operational
+failures and consumes its existing budget. Stop prose never controls this decision.
+
+Two same-state cases use both clarification-like and operational prose with
+`stop_class=operational` / `stop_code=implementer_process_failed`: pre-handoff rejection preserves
+artifact bytes and operational retry remains eligible and accepts with budget available.
+The alternating-command regression rejects pre-handoff approval before each operational approval,
+consumes exactly MAX_OPERATIONAL_RETRIES, then rejects both routes without changing evidence,
+creating a pre-handoff approval or spending review budget. Existing clean unknown-stop, mixed-attempt,
+provenance, process/ownership, crash/restart and mutation-uncertainty regressions remain green.
+
+Focused command: `uv run pytest tests/test_pre_handoff_retry.py tests/test_operational_retry.py
+--no-cov` with repository-local test/cache paths: **132 passed in 334.12s**.
+ProjectWiki search, existing Graphify orientation and CRG incremental/caller analysis were
+source-verified. Production caller remains `_pre_handoff_rejection`; no dependencies, module
+boundaries, operational/review recovery implementation, runner, reviewer permissions or remote
+mutation fencing changed. No historical `.agent-cycle` artifact was rewritten.
+
+YouTrack lookup returned `Issue not found: PDFTR-48`; remote ticket fields/attachments are unavailable.
+No live provider or tracking mutation was performed. Progress and complete validation output remain
+uncommitted under `temp/PDFTR-48-correction-progress.log`, `temp/PDFTR-48-correction-red.txt`,
+`temp/PDFTR-48-correction-focused.txt`, `temp/PDFTR-48-correction-check.txt`.
+
+Full Windows `scripts/check.ps1`: **1146 passed, 3 skipped in 631.15s**, coverage **89.54%**;
+Wiki lint **0 errors/0 warnings**, Ruff format/lint and mypy **98 source files** passed.
+This corrective completion record is not an independent review verdict or merge approval.

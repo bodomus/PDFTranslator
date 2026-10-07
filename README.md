@@ -253,6 +253,8 @@ Approval requires STOPPED, round zero, no accepted implementation/review, unchan
 recorded branch/repository identity, exclusive runner ownership, positive exited-process evidence,
 and no pending/uncertain YouTrack mutations. Unknown stop prose never grants eligibility. Legacy
 stops without runner exit evidence fail closed; operational retry remains a separate policy.
+Structured `stop_class=operational` stops are rejected by `retry-pre-handoff` and must use the
+PDFTR-45 operational retry path, including its retry budget; stop prose cannot bypass that rule.
 Each approval snapshots previous execution artifacts byte-for-byte under `attempts/<N>/`, records
 human approval time and source bindings in `pre_handoff_retries`, and persists
 `HUMAN_APPROVED_PRE_HANDOFF_RETRY` before dispatch. Attempts are monotonic; review budget is unchanged.

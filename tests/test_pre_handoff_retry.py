@@ -153,6 +153,68 @@ def test_stop_text_cannot_authorize_and_exited_proof_is_required(
         approve(git_repo)
 
 
+@pytest.mark.parametrize(
+    "reason", ["clean clarification before handoff", "implementer process failed"]
+)
+def test_operational_stop_requires_budgeted_retry(git_repo: Path, reason: str) -> None:
+    from tests.test_operational_retry import fail
+
+    fake = FakePi(git_repo)
+    directory = fail(git_repo, fake)
+    validator.stop_cycle(
+        git_repo,
+        TICKET,
+        reason,
+        stop_class=validator.StopClass.OPERATIONAL,
+        stop_code="implementer_process_failed",
+    )
+    before = artifacts(directory)
+    with pytest.raises(validator.CycleError, match="retry_stop_class_ineligible"):
+        approve(git_repo)
+    assert artifacts(directory) == before
+    status = validator.cycle_status(git_repo, TICKET)
+    assert status["stop_class"] == "operational"
+    assert status["stop_code"] == "implementer_process_failed"
+    assert not status["pre_handoff_retry_eligible"]
+    assert status["operational_retry_eligible"]
+
+    approved = validator.retry_operational_cycle(git_repo, TICKET, "human operational approval")
+    assert approved["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY"
+    assert len(approved["operational_retries"]) == 1
+    assert not approved.get("pre_handoff_retries")
+    assert approved["review_round"] == 0
+    assert fake.implementer_runs == 1 and fake.reviewer_runs == 0
+
+
+def test_alternating_retry_commands_cannot_bypass_operational_budget(git_repo: Path) -> None:
+    from tests.test_operational_retry import fail
+
+    fake = FakePi(git_repo)
+    for index in range(validator.MAX_OPERATIONAL_RETRIES):
+        directory = fail(git_repo, fake)
+        before = artifacts(directory)
+        with pytest.raises(validator.CycleError, match="retry_stop_class_ineligible"):
+            approve(git_repo)
+        assert artifacts(directory) == before
+        approved = validator.retry_operational_cycle(git_repo, TICKET, "human operational approval")
+        assert len(approved["operational_retries"]) == index + 1
+        assert not approved.get("pre_handoff_retries")
+
+    directory = fail(git_repo, fake)
+    stopped = runner._read_manifest(git_repo, TICKET)
+    assert stopped["stop_code"] == "operational_retry_limit"
+    assert len(stopped["operational_retries"]) == validator.MAX_OPERATIONAL_RETRIES
+    before = artifacts(directory)
+    with pytest.raises(validator.CycleError, match="retry_operational_limit"):
+        approve(git_repo)
+    with pytest.raises(validator.CycleError, match="operational_retry_limit"):
+        validator.retry_operational_cycle(git_repo, TICKET, "human operational approval")
+    assert artifacts(directory) == before
+    assert not stopped.get("pre_handoff_retries")
+    assert stopped["review_round"] == 0 and fake.reviewer_runs == 0
+    assert fake.implementer_runs == validator.MAX_OPERATIONAL_RETRIES + 1
+
+
 @pytest.mark.parametrize("stage", ["approval", "prepared", "begin_projection", "launching"])
 def test_crash_restart_same_attempt(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch, stage: str

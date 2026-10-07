@@ -23,3 +23,21 @@ this tool session. No new dependencies or external library APIs are needed.
 
 Blast radius: harness only; no PDF, translation, model, CUDA, OCR or dependency changes.
 Operational eligibility and review-exhaustion recovery remain separate policies.
+
+## Human exact-SHA review correction: operational budget isolation
+
+Baseline: `e54c6ed2ec336f96f104efd48cc27d7827003280`, existing ticket branch.
+Single bounded policy correction authorized by the human review: reject structured operational
+stops from pre-handoff retry; only PDFTR-45 operational retry can approve them and spend its budget.
+Preserve clean unknown-stop predicates, review-exhaustion recovery, mutation fences and permissions.
+
+- [x] Add failing real-cycle tests for operational rejection with misleading stop prose, same-state
+  operational acceptance, and alternating commands through MAX_OPERATIONAL_RETRIES exhaustion.
+- [x] Restrict `evaluate_pre_handoff_retry` to the existing unknown stop class; retain all other guards.
+- [x] Run focused pre-handoff/operational suites and full scripts/check.ps1; inspect every result.
+- [x] Update only affected documentation/Wiki and completion records.
+
+Validated: focused 132 passed; full gate 1146 passed, 3 skipped in 631.15s, coverage 89.54%;
+Wiki lint/Ruff/mypy passed. Commit/push the existing branch after validation and verify its remote
+SHA and clean tree; factual completion milestones are recorded in
+`temp/PDFTR-48-correction-progress.log`. Preserve historical agent-cycle artifacts.

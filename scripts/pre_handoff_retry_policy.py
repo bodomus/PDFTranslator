@@ -31,7 +31,8 @@ def evaluate_pre_handoff_retry(
     if facts.head_sha != manifest["current_head_sha"]:
         return "retry_head_mismatch"
     # Safety-class stops are not an operator escape hatch for a known safety failure.
-    if manifest.get("stop_class", "unknown") not in {"unknown", "operational"}:
+    # Operational stops must use PDFTR-45's budgeted retry path.
+    if manifest.get("stop_class", "unknown") != "unknown":
         return "retry_stop_class_ineligible"
     if manifest.get("stop_code") == "operational_retry_limit":
         return "retry_operational_limit"

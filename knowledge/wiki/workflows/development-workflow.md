@@ -157,6 +157,8 @@ Git state, no agent ownership and positive exited-process evidence. Every implem
 now records prepared/launching/exited process ownership; legacy unknown stops without exit proof
 remain ineligible. Pending/uncertain YouTrack mutations block approval and dispatch; successful
 mutation identities remain unchanged. Safety stops and exhausted operational retry limits reject.
+Structured operational stops also reject pre-handoff approval: only the PDFTR-45 operational path
+may approve them and consume its retry budget. This restriction uses stop_class, never stop prose.
 
 Prior top-level execution artifacts are byte-exact snapshots under `attempts/<N>/`, bound by
 SHA256 evidence in approval history. Loading verifies historical stopped manifests, blank handoffs,

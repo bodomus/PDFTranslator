@@ -1,5 +1,14 @@
 # PDFTR-48 — Human-approved retry for clean pre-handoff STOPPED states
 
+## Human exact-SHA review correction
+
+Reviewed SHA: `e54c6ed2ec336f96f104efd48cc27d7827003280`. P1/HIGH: pre-handoff retry
+must reject every structured operational stop, including implementer_process_failed. Operational
+failures use only the PDFTR-45 path and its MAX_OPERATIONAL_RETRIES budget. Stop prose never grants
+eligibility. Keep clean pre-handoff rules, review-exhaustion recovery, remote uncertainty fences and
+reviewer permissions intact. Add same-state rejection/acceptance and alternating-command budget
+regressions, run focused tests and full scripts/check.ps1, then commit and push the minimal fix.
+
 ## Status
 
 Planned
