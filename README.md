@@ -84,7 +84,16 @@ refreshes GitHub repository/PR/exact-SHA checks and validated cycle state, persi
 then sends an immutable head/base generation to a read-only reviewer connector. Duplicate events,
 restart and uncertain delivery never retry automatically. Trusted service configuration and credentials
 must be isolated from agents; this command must not be exposed as an agent tool.
-No public webhook server, result publication, YouTrack dependency or merge authority is added.
+No public webhook server, YouTrack dependency or merge authority is added.
+
+The [trusted result service (PDFTR-51)](docs/independent-review.md#trusted-result-ingestion-and-publication-pdftr-51)
+adds authenticated connector polling, exact dispatch correlation and deterministic SHA-bound
+`Independent Review` GitHub App checks. Accepted evidence and publication intent persist before
+mutation; duplicates and recovered/uncertain writes never resend. Read reconciliation can confirm an
+existing check. Current CHANGES_REQUIRED produces a separate pending human/policy continuation intent,
+not an agent launch. Current PASS readiness is refreshed and advisory; merge remains human-owned.
+There is deliberately no result-file ingestion CLI. Deploy only protected parent code/state with
+credentials unavailable to agents; the existing Pi runner is not automatically connected.
 
 For legitimate first use, the trusted parent/operator must explicitly initialize the review store
 using the protected `PDFTR_REVIEW_CONFIG` and a valid existing ticket cycle. `init` validates the

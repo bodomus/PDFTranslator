@@ -33,6 +33,13 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-08 — Independent review return path
+
+- Documented trusted connector polling, mandatory dispatch receipt correlation, separate durable
+  at-most-once publication ledger, GitHub App exact-head check reconciliation, refreshed readiness
+  and human/policy continuation intents. Agent artifacts never authenticate evidence; no retry,
+  launch, YouTrack or merge authority is introduced. Protected deployment remains operator-owned.
+
 ## 2026-10-07 — Explicit independent-review initialization
 
 - Documented the trusted operator `github_independent_review.py init` first-use boundary, reuse of
