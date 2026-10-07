@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, NoReturn
+
+if __package__ in {None, ""}:  # pragma: no cover - script entry point
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.cycle_ownership import CycleOwnershipError, ticket_ownership  # noqa: E402
+from scripts.pre_handoff_retry_policy import evaluate_pre_handoff_retry  # noqa: E402
 
 SCHEMA_VERSION = "1.0"
 MAX_REVIEW_ROUNDS = 2
@@ -46,6 +54,7 @@ class CycleState(StrEnum):
     NEW = "NEW"
     HUMAN_APPROVED_REWORK = "HUMAN_APPROVED_REWORK"
     HUMAN_APPROVED_OPERATIONAL_RETRY = "HUMAN_APPROVED_OPERATIONAL_RETRY"
+    HUMAN_APPROVED_PRE_HANDOFF_RETRY = "HUMAN_APPROVED_PRE_HANDOFF_RETRY"
     IMPLEMENTING = "IMPLEMENTING"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     REVIEWING = "REVIEWING"
@@ -276,6 +285,7 @@ def begin_implementation(repo_root: Path, ticket: str) -> dict[str, Any]:
         CycleState.CHANGES_REQUIRED,
         CycleState.HUMAN_APPROVED_REWORK,
         CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY,
+        CycleState.HUMAN_APPROVED_PRE_HANDOFF_RETRY,
     }:
         raise CycleError(f"cannot begin implementation from {state.value}")
     manifest["implementation_attempt"] = implementation_attempt(manifest)
@@ -476,7 +486,28 @@ def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
 
 def implementation_attempt(manifest: dict[str, Any]) -> int:
     """Implementation numbering is independent of the review budget."""
-    return manifest["review_round"] + 1 + len(manifest.get("operational_retries", []))
+    return manifest["review_round"] + 1 + len(retry_approvals(manifest))
+
+
+def retry_approvals(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(
+        manifest.get("operational_retries", []) + manifest.get("pre_handoff_retries", []),
+        key=lambda entry: entry["implementation_attempt"],
+    )
+
+
+def retry_state(manifest: dict[str, Any]) -> str:
+    approvals = retry_approvals(manifest)
+    if approvals and approvals[-1].get("retry_kind") == "pre_handoff":
+        return CycleState.HUMAN_APPROVED_PRE_HANDOFF_RETRY.value
+    return CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value
+
+
+def is_retry_approved(manifest: dict[str, Any]) -> bool:
+    return manifest["state"] in {
+        CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value,
+        CycleState.HUMAN_APPROVED_PRE_HANDOFF_RETRY.value,
+    }
 
 
 def _operational_rejection(
@@ -510,6 +541,142 @@ def _operational_rejection(
     if len(manifest.get("operational_retries", [])) >= MAX_OPERATIONAL_RETRIES:
         return "operational_retry_limit"
     return None
+
+
+def implementer_launch_record(manifest: dict[str, Any], phase: str) -> dict[str, Any]:
+    approvals = retry_approvals(manifest)
+    return {
+        "ticket": manifest["ticket"],
+        "repository_fingerprint": manifest["repository_fingerprint"],
+        "branch": manifest["branch"],
+        "head_sha": manifest["current_head_sha"],
+        "implementation_attempt": implementation_attempt(manifest),
+        "approval": approvals[-1] if approvals else None,
+        "phase": phase,
+    }
+
+
+def _pre_handoff_rejection(
+    manifest: dict[str, Any], handoff: dict[str, Any], facts: GitFacts, directory: Path
+) -> str | None:
+    rejection = evaluate_pre_handoff_retry(manifest, handoff, facts, directory)
+    if rejection:
+        return rejection
+    if manifest.get("implementation_attempt") != implementation_attempt(manifest):
+        return "retry_attempt_metadata_inconsistent"
+    marker = directory / f"implementer-launch-attempt-{implementation_attempt(manifest)}.json"
+    try:
+        actual = _load_json(marker)
+    except CycleError:
+        return "retry_process_outcome_unproven"
+    if json.dumps(actual, sort_keys=True) != json.dumps(
+        implementer_launch_record(manifest, "exited"), sort_keys=True
+    ):
+        return "retry_process_outcome_unproven"
+    return _tracking_retry_rejection(manifest, directory)
+
+
+def _tracking_retry_rejection(manifest: dict[str, Any], directory: Path) -> str | None:
+    tracking = directory / "youtrack.json"
+    if tracking.exists():
+        try:
+            data = _load_json(tracking)
+            operations = data["operations"]
+            if not isinstance(operations, dict) or data.get("ticket") != manifest["ticket"]:
+                return "retry_state_corrupt"
+            if data.get("identity_unsafe"):
+                return "retry_remote_mutation_uncertain"
+            for key, operation in operations.items():
+                if (
+                    not isinstance(key, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", key)
+                    or not isinstance(operation, dict)
+                    or not isinstance(operation.get("status"), str)
+                    or operation["status"] not in {"success", "failed", "pending", "uncertain"}
+                ):
+                    return "retry_state_corrupt"
+                expected_keys = (
+                    {"status", "result"}
+                    if operation["status"] == "success"
+                    else {"status", "conflicting_write"}
+                )
+                if operation.keys() != expected_keys or (
+                    "conflicting_write" in operation
+                    and type(operation["conflicting_write"]) is not bool
+                ):
+                    return "retry_state_corrupt"
+                if operation["status"] in {"pending", "uncertain"}:
+                    return "retry_remote_mutation_uncertain"
+        except (CycleError, KeyError):
+            return "retry_state_corrupt"
+    return None
+
+
+def retry_pre_handoff_cycle(repo_root: Path, ticket: str) -> dict[str, Any]:
+    """Operator-only approval; dispatch remains owned by the locked runner."""
+    try:
+        with ticket_ownership(cycle_directory(repo_root.resolve(), validate_ticket_id(ticket))):
+            try:
+                directory, manifest, handoff, facts = _load_cycle(repo_root, ticket)
+            except CycleError as error:
+                code = "retry_state_corrupt"
+                if str(error).startswith("wrong task branch:"):
+                    code = "retry_branch_mismatch"
+                elif str(error).startswith("cycle belongs to a different Git repository"):
+                    code = "retry_repository_identity_mismatch"
+                raise CycleError(f"{code}: {error}") from error
+            rejection = _pre_handoff_rejection(manifest, handoff, facts, directory)
+            if rejection:
+                raise CycleError(rejection)
+            previous = implementation_attempt(manifest)
+            archive = directory / "attempts" / str(previous)
+            for parent in (archive.parent, archive):
+                if parent.is_symlink() or parent.is_junction():
+                    raise CycleError("retry_state_corrupt")
+                parent.mkdir(exist_ok=True)
+            evidence = {}
+            for source in directory.iterdir():
+                if not source.is_file():
+                    continue
+                content = source.read_bytes()
+                target = archive / source.name
+                if target.is_symlink() or target.is_junction():
+                    raise CycleError("retry_state_corrupt")
+                if target.exists():
+                    if target.read_bytes() != content:
+                        raise CycleError("retry_attempt_metadata_inconsistent")
+                else:
+                    # Exclusive creation: existing evidence is never rewritten.
+                    with target.open("xb") as stream:
+                        stream.write(content)
+                evidence[source.name] = hashlib.sha256(content).hexdigest()
+            entry = {
+                "retry_kind": "pre_handoff",
+                "approved_by": "human",
+                "approved_at": datetime.now(UTC).isoformat(),
+                "implementation_attempt": previous + 1,
+                "previous_attempt_id": previous,
+                "source_head": facts.head_sha,
+                "branch": facts.branch,
+                "repository_identity": facts.repository_fingerprint,
+                "previous_stop_class": manifest.get("stop_class", "unknown"),
+                "previous_stop_code": manifest.get("stop_code"),
+                "previous_stop_reason": manifest["stop_reason"],
+                "evidence": evidence,
+            }
+            manifest.setdefault("pre_handoff_retries", []).append(entry)
+            manifest.update(
+                state=CycleState.HUMAN_APPROVED_PRE_HANDOFF_RETRY.value,
+                implementation_attempt=previous + 1,
+                stop_reason=None,
+                stop_class="unknown",
+                stop_code=None,
+            )
+            _sync_system(handoff, manifest)
+            _write_cycle(directory, manifest, handoff)
+            return manifest
+    except CycleOwnershipError as error:
+        raise CycleError("retry_agent_still_active") from error
 
 
 def retry_operational_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
@@ -636,6 +803,10 @@ def cycle_status(
                 else implementation_attempt(manifest)
             ),
         ),
+        "expected_head_sha": manifest["current_head_sha"],
+        "pre_handoff_retry_eligible": _pre_handoff_rejection(manifest, handoff, facts, _directory)
+        is None,
+        "pre_handoff_retry_rejection": _pre_handoff_rejection(manifest, handoff, facts, _directory),
         "operational_retry_count": len(manifest.get("operational_retries", [])),
         "operational_retry_eligible": rejection is None,
         "operational_retry_rejection": rejection,
@@ -676,18 +847,53 @@ def _load_cycle(
             raise CycleError("cycle artifacts must not be symbolic links or junctions")
     manifest = _load_json(directory / "manifest.json")
     _validate_manifest(manifest, ticket)
+    for approval in manifest.get("pre_handoff_retries", []):
+        archive = directory / "attempts" / str(approval["previous_attempt_id"])
+        for parent in (archive.parent, archive):
+            if parent.is_symlink() or parent.is_junction() or not parent.is_dir():
+                raise CycleError("retry_attempt_metadata_inconsistent")
+        for name, digest in approval["evidence"].items():
+            path = archive / name
+            if path.is_symlink() or path.is_junction() or not path.is_file():
+                raise CycleError("retry_attempt_metadata_inconsistent")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                raise CycleError("retry_attempt_metadata_inconsistent")
+        prior = _load_json(archive / "manifest.json")
+        if (
+            prior.get("state") != "STOPPED"
+            or prior.get("review_round") != 0
+            or prior.get("implementation_attempt") != approval["previous_attempt_id"]
+            or prior.get("current_head_sha") != approval["source_head"]
+            or prior.get("repository_fingerprint") != approval["repository_identity"]
+            or prior.get("branch") != approval["branch"]
+            or prior.get("stop_class", "unknown") != approval["previous_stop_class"]
+            or prior.get("stop_code") != approval["previous_stop_code"]
+            or prior.get("stop_reason") != approval["previous_stop_reason"]
+        ):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        _validate_manifest(prior, ticket)
+        prior_handoff = _load_json(archive / "handoff.json")
+        if json.dumps(prior_handoff, sort_keys=True) != json.dumps(
+            _blank_handoff(prior), sort_keys=True
+        ):
+            raise CycleError("retry_handoff_already_accepted")
+        old_marker = f"implementer-launch-attempt-{approval['previous_attempt_id']}.json"
+        if old_marker not in approval["evidence"] or json.dumps(
+            _load_json(archive / old_marker), sort_keys=True
+        ) != json.dumps(implementer_launch_record(prior, "exited"), sort_keys=True):
+            raise CycleError("retry_process_outcome_unproven")
     # Operational approval requires round zero and no human review recoveries. Its
     # audit accounts only for failed pre-handoff attempts, so no numbered accepted
     # implementation/review snapshots are authorized. Other states keep legitimate
     # immutable history; failed-attempt diagnostics are unaffected.
-    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+    if is_retry_approved(manifest) and (
         any(directory.glob("review-*.json")) or any(directory.glob("implementation-*.json"))
     ):
         raise CycleError("operational retry resume has contradictory handoff/review artifacts")
     handoff = _load_json(directory / "handoff.json")
     # Approval commits the manifest first. Only the blank pre-handoff projection can
     # be completed in memory after a crash between the two atomic replacements.
-    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value:
+    if is_retry_approved(manifest):
         previous = dict(manifest, state=CycleState.STOPPED.value)
         if json.dumps(handoff, sort_keys=True) == json.dumps(
             _blank_handoff(previous), sort_keys=True
@@ -711,10 +917,10 @@ def _load_cycle(
         and manifest["state"] == CycleState.IMPLEMENTING.value
         and manifest["active_agent"] == ActiveAgent.IMPLEMENTER.value
         and manifest["review_round"] == 0
-        and manifest.get("operational_retries")
+        and retry_approvals(manifest)
         and json.dumps(handoff, sort_keys=True)
         == json.dumps(
-            _blank_handoff(dict(manifest, state=CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value)),
+            _blank_handoff(dict(manifest, state=retry_state(manifest))),
             sort_keys=True,
         )
     ):
@@ -724,7 +930,7 @@ def _load_cycle(
             "branch": manifest["branch"],
             "head_sha": manifest["current_head_sha"],
             "implementation_attempt": implementation_attempt(manifest),
-            "approval": manifest["operational_retries"][-1],
+            "approval": retry_approvals(manifest)[-1],
             "phase": "prepared",
         }
         marker = directory / f"implementer-launch-attempt-{implementation_attempt(manifest)}.json"
@@ -737,11 +943,102 @@ def _load_cycle(
             raise CycleError("pre-launch resume has contradictory handoff/review artifacts")
         handoff = _blank_handoff(manifest)
     _validate_handoff(handoff, manifest)
-    if manifest["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
+    if is_retry_approved(manifest) and (
         handoff["implementer"] is not None or handoff["reviewer"] is not None
     ):
         raise CycleError("operational approval cannot contain an accepted handoff/review")
     return directory, manifest, handoff, facts
+
+
+def _validate_pre_handoff_fields(document: dict[str, Any]) -> None:
+    entries = document.get("pre_handoff_retries", [])
+    if not isinstance(entries, list):
+        raise CycleError("retry_attempt_metadata_inconsistent")
+    keys = {
+        "retry_kind",
+        "approved_by",
+        "approved_at",
+        "implementation_attempt",
+        "previous_attempt_id",
+        "source_head",
+        "branch",
+        "repository_identity",
+        "previous_stop_class",
+        "previous_stop_code",
+        "previous_stop_reason",
+        "evidence",
+    }
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        _require_exact_keys(entry, keys, "pre-handoff approval")
+        if (
+            entry["retry_kind"] != "pre_handoff"
+            or entry["approved_by"] != "human"
+            or type(entry["implementation_attempt"]) is not int
+            or type(entry["previous_attempt_id"]) is not int
+            or entry["implementation_attempt"] != entry["previous_attempt_id"] + 1
+            or entry["previous_attempt_id"] < 1
+            or entry["branch"] != document["branch"]
+            or entry["repository_identity"] != document["repository_fingerprint"]
+            or not isinstance(entry["previous_stop_class"], str)
+            or entry["previous_stop_class"] not in {"unknown", "operational"}
+            or not isinstance(entry["previous_stop_reason"], str)
+            or not isinstance(entry["approved_at"], str)
+            or not re.fullmatch(
+                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?\+00:00", entry["approved_at"]
+            )
+            or not isinstance(entry["evidence"], dict)
+            or not {"manifest.json", "handoff.json"} <= entry["evidence"].keys()
+        ):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        try:
+            datetime.fromisoformat(entry["approved_at"])
+        except ValueError as error:
+            raise CycleError("retry_attempt_metadata_inconsistent") from error
+        _validated_sha(entry["source_head"], "retry source HEAD")
+        code = entry["previous_stop_code"]
+        if code is not None and (not isinstance(code, str) or not re.fullmatch(r"[a-z_]+", code)):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        for name, digest in entry["evidence"].items():
+            if (
+                not isinstance(name, str)
+                or Path(name).name != name
+                or name in {".", ".."}
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                raise CycleError("retry_attempt_metadata_inconsistent")
+    if entries:
+        operational = document.get("operational_retries", [])
+        if not isinstance(operational, list) or any(
+            not isinstance(e, dict) or type(e.get("implementation_attempt")) is not int
+            for e in operational
+        ):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        numbers = [e["implementation_attempt"] for e in entries]
+        if (
+            numbers != sorted(numbers)
+            or any(e["source_head"] != entries[0]["source_head"] for e in entries)
+            or any(e.get("head_sha") != entries[0]["source_head"] for e in operational)
+        ):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+        # This also proves mixed operational/pre-handoff attempts have no gaps/duplicates.
+        attempts = [e["implementation_attempt"] for e in retry_approvals(document)]
+        if attempts != list(range(2, len(attempts) + 2)):
+            raise CycleError("retry_attempt_metadata_inconsistent")
+    if document["state"] == CycleState.HUMAN_APPROVED_PRE_HANDOFF_RETRY.value and (
+        not entries
+        or retry_state(document) != document["state"]
+        or document["review_round"] != 0
+        or document["active_agent"] is not None
+        or document["current_head_sha"] != entries[-1]["source_head"]
+        or document["stop_reason"] is not None
+        or document.get("stop_code") is not None
+        or document.get("stop_class") != "unknown"
+        or document.get("implementation_attempt") != implementation_attempt(document)
+    ):
+        raise CycleError("retry_attempt_metadata_inconsistent")
 
 
 def _validate_operational_fields(document: dict[str, Any]) -> None:
@@ -786,7 +1083,14 @@ def _validate_operational_fields(document: dict[str, Any]) -> None:
             or type(entry["review_round"]) is not int
             or entry["review_round"] != 0
             or type(entry["implementation_attempt"]) is not int
-            or entry["implementation_attempt"] != index + 2
+            or entry["implementation_attempt"]
+            != index
+            + 2
+            + sum(
+                1
+                for prior in document.get("pre_handoff_retries", [])
+                if prior["implementation_attempt"] < entry["implementation_attempt"]
+            )
             or entry["branch"] != document["branch"]
         ):
             raise CycleError("contradictory operational approval")
@@ -794,7 +1098,8 @@ def _validate_operational_fields(document: dict[str, Any]) -> None:
         if index and entry["head_sha"] != approvals[0]["head_sha"]:
             raise CycleError("operational approval HEAD changed")
     if document["state"] == CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY.value and (
-        not approvals
+        retry_state(document) != document["state"]
+        or not approvals
         or document["review_round"] != 0
         or document["active_agent"] is not None
         or document["current_head_sha"] != approvals[-1]["head_sha"]
@@ -811,10 +1116,12 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
         "stop_class",
         "stop_code",
         "operational_retries",
+        "pre_handoff_retries",
         "implementation_attempt",
     }
     expected = MANIFEST_KEYS | (optional & document.keys())
     _require_exact_keys(document, expected, "manifest")
+    _validate_pre_handoff_fields(document)
     _validate_operational_fields(document)
     recoveries = document.get("human_recoveries", [])
     if not isinstance(recoveries, list):
@@ -852,7 +1159,7 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
             or recovery["review_round"] != expected_round
             or type(recovery["implementation_attempt"]) is not int
             or recovery["implementation_attempt"]
-            != expected_round + 1 + len(document.get("operational_retries", []))
+            != expected_round + 1 + len(retry_approvals(document))
         ):
             raise CycleError("invalid human recovery round/attempt")
         _validated_sha(recovery["reviewed_sha"], "human recovery reviewed_sha")
@@ -907,7 +1214,7 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
     attempt = document.get("implementation_attempt")
     if "implementation_attempt" in document and (
         type(attempt) is not int
-        or not max(1, document["review_round"] + len(document.get("operational_retries", [])))
+        or not max(1, document["review_round"] + len(retry_approvals(document)))
         <= attempt
         <= implementation_attempt(document)
     ):
@@ -1177,6 +1484,10 @@ def _print_status(status: dict[str, Any]) -> None:
     print(f"State: {status['state']}")
     print(f"Branch: {status['branch']}")
     print(f"HEAD: {status['head_sha']}")
+    print(f"Expected HEAD: {status['expected_head_sha']}")
+    print(f"Pre-handoff retry eligible: {'yes' if status['pre_handoff_retry_eligible'] else 'no'}")
+    if status["pre_handoff_retry_rejection"]:
+        print(f"Rejection code: {status['pre_handoff_retry_rejection']}")
     print(
         f"Review round: {status['review_round']} (automatic limit: {status['max_review_rounds']})"
     )
@@ -1224,6 +1535,10 @@ def _parser() -> argparse.ArgumentParser:
     retry = subparsers.add_parser("retry-operational", help="human approval of pre-handoff retry")
     retry.add_argument("ticket")
     retry.add_argument("--reason", required=True)
+    pre_handoff = subparsers.add_parser(
+        "retry-pre-handoff", help="human approval of a proven unchanged pre-handoff attempt"
+    )
+    pre_handoff.add_argument("ticket")
     stop = subparsers.add_parser("stop", help="record an external/manual stop")
     stop.add_argument("ticket")
     stop.add_argument("--reason", required=True)
@@ -1248,6 +1563,11 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
             reopen_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "retry-operational":
             retry_operational_cycle(root, arguments.ticket, arguments.reason)
+        elif arguments.command == "retry-pre-handoff":
+            # The approval loader reports a structured rejection on binding/corrupt state.
+            with contextlib.suppress(CycleError):
+                _print_status(cycle_status(root, arguments.ticket))
+            retry_pre_handoff_cycle(root, arguments.ticket)
         elif arguments.command == "stop":
             stop_cycle(root, arguments.ticket, arguments.reason)
         elif arguments.command == "status":

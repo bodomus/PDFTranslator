@@ -141,5 +141,25 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   `implementation-report-attempt-<previous>.md`. Nothing silently truncates old diagnostics.
   Legacy exhausted-review recovery is classified from validated immutable reviews, not stop text.
 
+- Separate clean pre-handoff recovery: operator-only `agent_cycle.py retry-pre-handoff <TICKET>`
+  approves `HUMAN_APPROVED_PRE_HANDOFF_RETRY`; normal runner invocation dispatches that attempt.
+  STOPPED/round-zero/no accepted handoff or review, clean unchanged HEAD, branch/repository bindings,
+  no active owner, strict exited launch evidence and no pending/uncertain tracking mutation are
+  independently checked. Stop prose does not grant authority; legacy unknown stops lacking positive
+  process evidence reject. Safety-class stops and exhausted operational limits cannot use this path.
+- Optional strict `pre_handoff_retries` records contain `retry_kind=pre_handoff`,
+  `approved_by=human`, UTC `approved_at`, `implementation_attempt`, `previous_attempt_id`,
+  `source_head`, `branch`, `repository_identity`, previous stop class/code/reason and `evidence`
+  filename-to-SHA256 bindings. Prior top-level execution artifacts are exclusively snapshotted into
+  `attempts/<previous_attempt_id>/`; history, blank prior handoff and exited marker are validated on
+  every load. Missing/changed history or inconsistent mixed retry numbering fails closed.
+  Attempt numbering includes both retry histories; review authorization remains unchanged.
+- All implementer executions now persist prepared/launching/exited markers. Exited is written only
+  after owned process-tree cleanup returns. Approval shares the OS ticket lock with runner dispatch.
+  The existing exact blank-projection and prepared-marker crash repair applies to either approved
+  retry kind. Launching uncertainty never permits active-phase redispatch; repeated approvals reject.
+  Tracking successful mutation keys/identity are retained, and uncertainty is rechecked at dispatch.
+  Approval metadata and historical artifacts are harness-owned, never agent handoff fields.
+
 Do not delete or rewrite immutable review artifacts as recovery. Human final review and merge remain
 outside the state machine.

@@ -32,6 +32,12 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-08
+
+- PDFTR-48 adds explicit clean pre-handoff approval with positive process-exit proof,
+  monotonic retry audit, hash-checked historical evidence and shared crash-safe ticket ownership.
+  Operational/exhausted-review recovery and remote uncertainty fences remain independent.
+
 ## 2026-10-07
 
 - PDFTR-47 post-cycle R7 protects secondary creation-reconciliation diagnostics from sink failures.

@@ -42,6 +42,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Human-approved clean pre-handoff recovery (PDFTR-48): dedicated `retry-pre-handoff` approval,
+  positive process-exit evidence, hardened unchanged Git bindings, remote uncertainty fences,
+  monotonic attempts and byte-exact hash-checked historical artifacts. Separate approval state
+  reuses serialized crash-safe launch ownership without granting review or automatic retry.
+  Legacy unknown stops without exit evidence remain ineligible; operational and exhausted-review
+  recovery policies remain distinct.
+
 - Operator `project_tracking.py validate-live` with read-only default, `--dry-run`, explicit
   create/field/state opt-ins, human `--finalize`, discovered mapping diagnostics and idempotent
   second synchronization. Deterministic mocks validate behavior without live credentials.
