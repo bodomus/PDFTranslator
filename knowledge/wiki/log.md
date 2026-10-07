@@ -33,6 +33,12 @@ related:
 
 # ProjectWiki knowledge change log
 
+## PDFTR-50
+
+- Development workflow now documents authoritative GitHub wake-up reevaluation, exact head/base
+  connector dispatch after durable intent, shared ownership, conservative restart/timeout handling
+  and the protected trusted-service/read-only-worker deployment boundary.
+
 ## 2026-10-07
 
 - PDFTR-49 human review correction binds independent generations and PASS to exact PR head/base

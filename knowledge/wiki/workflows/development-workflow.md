@@ -30,6 +30,10 @@ sources:
 - ../../../tests/test_operational_retry.py
 - ../../../scripts/independent_review_policy.py
 - ../../../scripts/independent_review.py
+- ../../../scripts/github_review_facts.py
+- ../../../scripts/github_independent_review.py
+- ../../../scripts/independent_review_dispatch.py
+- ../../../tests/test_github_independent_review.py
 - ../../../tests/test_independent_review.py
 - ../../../docs/independent-review.md
 - ../../../scripts/pre_handoff_retry_policy.py
@@ -318,9 +322,19 @@ Exact-SHA results retain their generation's head/base binding when STALE; return
 history does not revive PASS or allocate a duplicate pair. The harness-only store serializes and
 atomically persists intent before returning it; restart never automatically redispatches REQUESTED. Its API owns the
 ticket lock and must not be called inside already-held ticket ownership. CLI status/evaluate are
-read-only diagnostics, not authorization; no result-mutation CLI exists. Future integrations must
-isolate store writes from agents and use trusted reviewer transport. No webhook, Work integration,
-identity service or merge automation is implemented by this layer.
+read-only diagnostics, not authorization; no result-mutation CLI exists.
+
+PDFTR-50 adds trusted-parent GitHub event/manual reevaluation and a transport-neutral HTTPS connector.
+Event payloads only wake the configured target. Fixed-host authoritative reads verify repository/PR,
+reject forks, sandwich exact-head check reads between matching PR snapshots and validate existing cycle
+Git/branch/history bindings. Configured check runs must be unique, complete and exact-SHA SUCCESS;
+missing, ambiguous, skipped and wrong-SHA evidence fails closed. The single shared OS ownership scope
+persists REQUESTED before dispatch. Definite failure never retries; timeout/unknown receipt and recovered
+REQUESTED are conservatively uncertain. Duplicate events/restarts cannot redispatch a generation.
+Frozen requests pin exact head/base and demand a read-only reviewer. Bounded receipt sidecars are diagnostic,
+not policy input. Deployment must protect service code/configuration/history/credentials from agents and
+provision a read-only trusted connector; no native Work API or public HTTP receiver is claimed. No result
+publication, YouTrack dependency/creation or merge automation is added.
 
 ## Completion
 

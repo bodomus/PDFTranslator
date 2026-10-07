@@ -123,6 +123,41 @@ class IndependentReviewStore:
             self._persist(state)
             return decision
 
+    def request_and_dispatch(
+        self, refresh_facts: Callable[[], dict], dispatch: Callable[[dict], str | None]
+    ) -> dict:
+        """Trusted parent only: one ownership scope from refresh through delivery.
+
+        None means definite non-delivery, with no automatic retry. A recovered
+        REQUESTED is conservatively uncertain (including a crash before send).
+        Any ordinary transport exception is uncertainty, never a retry grant.
+        """
+        self._safe_directory()
+        with ticket_ownership(self.directory):
+            state, decision = request_review(refresh_facts(), self.load(), self.config)
+            generation = decision["generation"]
+            if decision["decision"] != "ELIGIBLE":
+                if (
+                    generation is not None
+                    and state["reviews"][generation - 1]["status"] == "REQUESTED"
+                ):
+                    state = mark_dispatch(state, self.config, generation, "DISPATCH_UNCERTAIN")
+                self._persist(state)
+                return decision
+            self._persist(state)  # Mandatory durable intent BEFORE external side effects.
+            review = json.loads(json.dumps(state["reviews"][generation - 1]))
+            try:
+                status = dispatch(review)
+            except Exception:
+                # Never persist transport exceptions: they may contain credentials.
+                status = "DISPATCH_UNCERTAIN"
+            if status not in {None, "RUNNING", "DISPATCH_UNCERTAIN"}:
+                status = "DISPATCH_UNCERTAIN"
+            if status is not None:
+                state = mark_dispatch(state, self.config, generation, status)
+                self._persist(state)
+            return {**decision, "dispatch_state": status or "DEFINITE_NOT_DISPATCHED"}
+
     def accept_result(self, refresh_facts: Callable[[], dict], result: dict) -> dict:
         """Only trusted independent reviewer transport may call this, never agents."""
         self._safe_directory()
