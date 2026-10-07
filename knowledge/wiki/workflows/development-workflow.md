@@ -33,6 +33,9 @@ sources:
 - ../../../scripts/github_review_facts.py
 - ../../../scripts/github_independent_review.py
 - ../../../scripts/independent_review_dispatch.py
+- ../../../scripts/independent_review_result.py
+- ../../../scripts/github_review_publication.py
+- ../../../tests/test_independent_review_result.py
 - ../../../tests/test_github_independent_review.py
 - ../../../tests/test_github_independent_review_init.py
 - ../../../tests/test_independent_review.py
@@ -338,10 +341,32 @@ Git/branch/history bindings. Configured check runs must be unique, complete and 
 missing, ambiguous, skipped and wrong-SHA evidence fails closed. The single shared OS ownership scope
 persists REQUESTED before dispatch. Definite failure never retries; timeout/unknown receipt and recovered
 REQUESTED are conservatively uncertain. Duplicate events/restarts cannot redispatch a generation.
-Frozen requests pin exact head/base and demand a read-only reviewer. Bounded receipt sidecars are diagnostic,
-not policy input. Deployment must protect service code/configuration/history/credentials from agents and
+Frozen requests pin exact head/base and demand a read-only reviewer. Bounded receipt sidecars are
+transport correlation evidence for PDFTR-51, not substitutes for policy history or readiness. Deployment must protect service code/configuration/history/credentials from agents and
 provision a read-only trusted connector; no native Work API or public HTTP receiver is claimed. No result
-publication, YouTrack dependency/creation or merge automation is added.
+publication, YouTrack dependency/creation or merge automation is added by PDFTR-50.
+
+PDFTR-51 adds `IndependentReviewResultService`, a protected parent API with authenticated connector
+GET polling, not a result-file/stdin/comment ingestion CLI. Exact successful receipt identity must
+match policy generation/head/base/profile, and returned request ID must match the receipt. Strict
+PDFTR-49 result validation/record_result and pass_is_valid remain authoritative. Accepted evidence
+persists before separate publication intent; one shared ticket lock spans refresh/persistence/write.
+Missing/corrupt ledger rejects; explicit first-use initialization never replaces existing history.
+
+`GitHubCheckPublisher` creates a deterministic exact-head `Independent Review` check with persisted
+external identity and app-owned check ID. Recovered PENDING and possibly dispatched failures fence
+retries as PUBLICATION_UNCERTAIN; no status/reconciliation path resends writes. Reconciliation accepts
+only a complete unique exact app/identity/head/output match; absence/read failure remains uncertain.
+Pre-write refresh prevents stale publication; post-write/status refresh recomputes advisory readiness.
+Checks bind head, not an atomic PR/base snapshot: same-head base movement revokes local readiness,
+and old checks remain historical evidence. No branch protection changes or merge API are added.
+
+Current published CHANGES_REQUIRED persists one separate pending human/policy continuation intent.
+Stale results do not create it; historical intents lose eligibility. No agent launches or cycle/budget
+transitions occur. Known parent credentials are rejected before evidence persistence, findings rendering
+is bounded by whole findings, and full evidence remains protected locally. YouTrack is outside the path.
+Deployment must isolate code/config/history/credentials from agent authority and provision a trusted
+read-only connector and GitHub App; current Pi runner wiring/live API compatibility are not claimed.
 
 ## Completion
 

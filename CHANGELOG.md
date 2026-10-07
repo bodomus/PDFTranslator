@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Trusted independent-review return path (PDFTR-51): authenticated HTTPS polling reuses the
+  PDFTR-49 result schema and requires exact PDFTR-50 receipt/generation/head/base correlation.
+  Accepted results and separate publication intents persist before SHA-bound `Independent Review`
+  GitHub App check mutation. Duplicate/restarted/uncertain writes never resend; exact app-owned
+  read reconciliation confirms existing checks. Stale evidence is retained without new publication
+  or continuation. Bounded findings preserve full local evidence; current CHANGES_REQUIRED creates
+  a separate human/policy intent, and PASS readiness is freshly evaluated, never merge authority.
+  Protected trusted-parent service API only: no result-file CLI, agent launch or YouTrack dependency.
 - GitHub-triggered independent-review dispatch (PDFTR-50): trusted-parent PR/CI signal and manual
   reevaluation paths refresh repository/PR/head/base/check and cycle facts through PDFTR-49.
   Durable request intent precedes exact-generation HTTPS connector dispatch; shared ticket ownership,

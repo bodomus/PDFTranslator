@@ -1,8 +1,8 @@
 # Independent exact-SHA review contract (PDFTR-49)
 
 This is a separate independent-review layer, not a change to the Pi cycle or its review budget.
-PDFTR-50 adds a trusted GitHub facts/connector dispatch integration below; no public receiver,
-result publication, automatic retry or merge is implemented.
+PDFTR-50 adds trusted GitHub facts/connector dispatch; PDFTR-51 adds authenticated result polling
+and GitHub App check publication below. No public callback, automatic retry or merge is implemented.
 YouTrack is not an authorization input. Merge and contradictory-state recovery remain human-owned.
 
 ## Trust boundary
@@ -150,7 +150,8 @@ or automatically redispatch; human reconciliation is required. The PDFTR-50 inte
 
 `store.accept_result(refresh_facts, result)` validates bindings and freshly observed head/base SHAs
 before recording evidence. Either SHA changing makes a late result STALE, even with unchanged head.
-No external publisher consumes it yet.
+PDFTR-51 uses the same pure policy under a single ownership scope and adds receipt correlation
+and separate publication persistence; the lower-level API alone does not publish.
 
 ## GitHub-triggered dispatch (PDFTR-50)
 
@@ -256,11 +257,92 @@ there are no automatic retries. The bounded opaque ID must not contain credentia
 rejects echoes of its authentication token. Local pre-transmission missing authentication is definite
 non-delivery. No server-provided free text or exception strings are logged/persisted.
 
-Diagnostic `independent-dispatch-<generation>.json` contains immutable request fields, outcome and
-opaque receipt ID; it is atomically persisted under the same ticket directory, never authorization
-input. Policy state remains `independent-review.json`; only it controls duplicate suppression.
-No results, PR comments/checks/statuses, YouTrack creation or merge operations are sent.
+`independent-dispatch-<generation>.json` contains immutable request fields, outcome and opaque
+receipt ID. PDFTR-51 uses this protected trusted-parent receipt for transport correlation only;
+it cannot substitute for policy history, generation binding or refreshed GitHub readiness.
+A missing/mismatched/uncertain receipt fails closed on ingestion. Policy history remains
+`independent-review.json`; only it controls dispatch duplicate suppression. Dispatch sends no
+results, PR comments/checks/statuses, YouTrack creation or merge operations.
 All normal tests use mocked GitHub and connector responses, without live credentials.
+
+## Trusted result ingestion and publication (PDFTR-51)
+
+`scripts/independent_review_result.py` exposes a trusted service API, deliberately **no CLI**.
+The parent constructs `IndependentReviewResultService(store, provider, receiver, publisher)`
+with the existing configured `IndependentReviewStore` / `GitHubFactsProvider`, an authenticated
+`HTTPSReviewResultReceiver(endpoint, token)` and `GitHubCheckPublisher(installation_token, app_id)`.
+App ID is independently protected configuration, not a result field. Provision a GitHub App
+installation token with Checks write plus required repository/PR/check read access. Reader credentials
+may remain separately read-only. Connector credentials, App token and service code/configuration/state
+must be inaccessible to agents. Do not execute PR-provided or agent-edited code in the trusted process.
+The current Pi runner does not wire this optional deployment; operator-managed connector provisioning
+is required, not a claimed native Work integration. Context7/live integration was unavailable during
+implementation; mocked tests do not establish live connector/App compatibility.
+
+After legitimate first use of the PDFTR-49 store, call `service.initialize()` exactly once to create
+`independent-publications.json` under shared ticket ownership. Existing/malformed bytes reject.
+Normal operations with missing/corrupt history fail closed. Never reinitialize lost history to retry
+publication. Release runner ownership before invoking this service; do not nest ticket locks.
+
+Call `service.receive_and_publish(generation)` for a previously dispatched generation. The trusted
+receiver performs authenticated HTTPS GET `<endpoint>/<external_request_id>` (no redirects,
+userinfo/query/fragment, 1 MiB response bound). Connector returns exactly:
+
+```json
+{"external_request_id": "opaque-123", "result": {"schema_version": "1.0", "repository": "bodomus/PDFTranslator", "ticket": "PDFTR-51", "pull_request": 123, "generation": 2, "reviewed_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verdict": "PASS", "findings": []}}
+```
+
+The envelope ID must equal the persisted successful dispatch receipt. Receipt fields must equal
+policy history's immutable repository/PR/ticket/generation/head/base/profile. The result reuses
+PDFTR-49 strict keys and cannot supply a substitute base or mutation fields. Transport must attest
+that evidence came from the independently dispatched read-only worker. A Python Protocol or OS lock
+is **not** authentication: arbitrary in-process callers and agent-writable mounts are outside the
+supported deployment boundary. Files/comments/stdin are not ingestion sources. Receipt and ledger
+must be protected alongside policy history, not copied back from agent artifacts.
+
+Under one OS ticket lock: validate history/receipt/result, refresh authoritative facts, call
+`record_result`, durably persist evidence, refresh again, persist publication intent, then send
+at most one SHA-bound GitHub check. PASS authorization delegates to `pass_is_valid`; current
+CHANGES_REQUIRED also requires exact generation and current readiness. Late head/base results are
+retained STALE, without publication or continuation. A second refresh before mutation prevents
+publishing an already obsolete context. A race during sending leaves only an exact-head historical
+check; post-write refresh revokes local readiness/continuation. Same-head base changes also revoke
+local readiness: GitHub's check SHA alone does not prove a still-current reviewed base. Future branch
+protection integration must respect that limitation; this ticket changes no protection rules.
+
+Publication identity hashes repository/PR/generation/head/base/verdict. The separate ledger persists
+identity, deterministic payload, generation, `publication_state`, `github_check_id` and optional
+continuation. States are PENDING, PUBLISHED, PUBLICATION_UNCERTAIN, FAILED_DEFINITE, STALE; absent
+entry means NOT_REQUESTED. Recovered PENDING becomes uncertain even if a crash preceded dispatch.
+Timeouts, connection failures, HTTP 408/5xx, redirects and invalid responses remain uncertain.
+400/401/403/404/422 rejection is definite. Neither classification grants automatic retry.
+Accepted evidence or intent persistence failure prevents sending; post-send persistence failure
+leaves its durable PENDING fence. Duplicate evidence is immutable/idempotent, publication is
+independently at-most-once. The original outcome is saved before secondary refresh diagnostics.
+
+`service.status(generation, reconcile=True)` reads GitHub only. It accepts exactly one complete,
+matching app-owned check with the exact identity/head/name/conclusion/output and positive ID.
+Incomplete (>100 runs), ambiguous, absent or failed reads remain uncertain, never permission to
+send again. Definite absence requires separate operator investigation; there is no retry command.
+`status(generation)` refreshes policy/readiness and returns advisory `ready_for_human_merge` and
+`continuation_eligible`; these are snapshots, not durable merge/launch grants. Checks are never
+accepted as independent-review evidence. No merge endpoint is implemented.
+
+CHANGES_REQUIRED check output contains full JSON findings as inert code blocks, up to 20 complete
+findings / roughly 40,000 rendering characters. If a complete finding cannot fit, the rest are
+explicitly omitted with a reference to protected `independent-review.json` and generation; full
+structured evidence remains local. No finding is partially truncated. Transport exceptions, raw
+reviewer logs and chain-of-thought are not rendered or persisted. Known receiver/publisher/reader
+tokens are rejected in evidence before persistence; supply other protected credentials via the
+service's `secrets` tuple. Do not put secrets in review inputs; this is not a universal secret detector.
+
+Only a PUBLISHED, freshly current CHANGES_REQUIRED creates one separate continuation object:
+`schema_version`, `ticket`, `source=independent_review`, `generation`, `reviewed_sha`,
+`verdict=CHANGES_REQUIRED`, `status=PENDING_HUMAN_OR_POLICY`. Historical intent is retained but
+`continuation_eligible` becomes false after context/readiness changes. An operator may inspect this
+intent and follow existing human recovery procedures; this service does not transition Pi states,
+launch agents, consume/reset review budgets or automatically fix code. PASS creates no continuation.
+YouTrack is omitted entirely and missing issues cannot block evidence/publication.
 
 ## Read-only local inspection
 
