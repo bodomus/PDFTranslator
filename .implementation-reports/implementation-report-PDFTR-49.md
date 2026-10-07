@@ -41,7 +41,9 @@ PDFTR-49 — Independent Review Trigger Contract (attempt 1)
   PASS, 1207 passed, 3 skipped, 89.54% package coverage. Wiki lint, Ruff format/check, mypy all PASS.
 - `uv run python scripts/project_wiki/wiki_lint.py`: PASS, 15 pages, no errors/warnings.
 - CLI `--help` smoke test: PASS.
-- Windows execution verified locally; Ubuntu/Windows hosted CI must verify the pushed revision.
+- Windows execution verified locally. Hosted Windows/Ubuntu CI verification is blocked:
+  `gh run list` refused without GitHub authentication. No CI success is claimed; the pushed
+  revision must be checked by the authenticated runner/operator.
 - No live GitHub/YouTrack mutation, Work dispatch, model downloads, CUDA, OCR or manual PDF tests.
 
 ## Trust and remaining limitations
