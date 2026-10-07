@@ -30,6 +30,7 @@ from scripts.agent_cycle import (  # noqa: E402
     StopClass,
     _atomic_write_json,
     _load_json,
+    _tracking_retry_rejection,
     begin_implementation,
     begin_review,
     collect_git_facts,
@@ -37,10 +38,13 @@ from scripts.agent_cycle import (  # noqa: E402
     cycle_directory,
     cycle_status,
     implementation_attempt,
+    implementer_launch_record,
     initialize_cycle,
+    is_retry_approved,
     record_handoff,
     record_review,
     reopen_cycle,
+    retry_approvals,
     retry_operational_cycle,
     stop_cycle,
     validate_ticket_id,
@@ -52,6 +56,7 @@ from scripts.agent_progress import (  # noqa: E402
     last_activity,
     progress_policy,
 )
+from scripts.cycle_ownership import CycleOwnershipError, ticket_ownership  # noqa: E402
 from scripts.project_tracking import (  # noqa: E402
     INTENT_HELP,
     TrackingError,
@@ -1126,7 +1131,7 @@ def _outcome(manifest: dict[str, Any], config: RunnerConfig) -> RunOutcome:
         implementation_attempt=manifest.get(
             "implementation_attempt",
             (
-                manifest["review_round"] + len(manifest.get("operational_retries", []))
+                manifest["review_round"] + len(retry_approvals(manifest))
                 if manifest["review_round"]
                 else implementation_attempt(manifest)
             ),
@@ -1137,53 +1142,16 @@ def _outcome(manifest: dict[str, Any], config: RunnerConfig) -> RunOutcome:
 
 @contextlib.contextmanager
 def _runner_ownership(repo_root: Path, ticket: str) -> Iterator[None]:
-    """OS ownership survives neither process death nor a second concurrent runner."""
-    directory = cycle_directory(repo_root, ticket)
-    directory.parent.mkdir(parents=True, exist_ok=True)
-    path = directory.parent / f"{ticket}.runner.lock"
-    if path.is_symlink() or path.is_junction():
-        raise RunnerError("runner lock must not be a symbolic link")
-    with path.open("a+b") as stream:
-        stream.seek(0)
-        if os.name == "nt":
-            import msvcrt
-
-            # Windows byte-range locks may cover an empty file, without rewriting it.
-            def lock() -> None:
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-
-            def unlock() -> None:
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            def lock() -> None:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-            def unlock() -> None:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-        try:
-            lock()
-        except OSError as error:
-            raise RunnerError("another runner owns this ticket") from error
-        try:
+    """Reuse the same OS ownership for runner dispatch and operator retry approval."""
+    try:
+        with ticket_ownership(cycle_directory(repo_root, ticket)):
             yield
-        finally:
-            stream.seek(0)
-            unlock()
+    except CycleOwnershipError as error:
+        raise RunnerError(str(error)) from error
 
 
 def _launch_record(manifest: dict[str, Any], phase: str) -> dict[str, Any]:
-    return {
-        "ticket": manifest["ticket"],
-        "repository_fingerprint": manifest["repository_fingerprint"],
-        "branch": manifest["branch"],
-        "head_sha": manifest["current_head_sha"],
-        "implementation_attempt": implementation_attempt(manifest),
-        "approval": manifest["operational_retries"][-1],
-        "phase": phase,
-    }
+    return implementer_launch_record(manifest, phase)
 
 
 def _launch_path(directory: Path, manifest: dict[str, Any]) -> Path:
@@ -1196,7 +1164,7 @@ def _prepared_operational_launch(directory: Path, manifest: dict[str, Any]) -> b
         manifest["state"] == "IMPLEMENTING"
         and manifest["active_agent"] == "implementer"
         and manifest["review_round"] == 0
-        and manifest.get("operational_retries")
+        and retry_approvals(manifest)
     ):
         return False
     path = _launch_path(directory, manifest)
@@ -1328,6 +1296,7 @@ def _run_cycle(
         "CHANGES_REQUIRED",
         "HUMAN_APPROVED_REWORK",
         "HUMAN_APPROVED_OPERATIONAL_RETRY",
+        "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
         "READY_FOR_REVIEW",
         "READY_FOR_REVIEW_2",
     }:
@@ -1345,15 +1314,25 @@ def _run_cycle(
                 "CHANGES_REQUIRED",
                 "HUMAN_APPROVED_REWORK",
                 "HUMAN_APPROVED_OPERATIONAL_RETRY",
+                "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
             }:
-                if manifest["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY":
+                if is_retry_approved(manifest):
                     _preserve_failed_attempt(repo_root, ticket, directory, manifest)
                     if active_config.progress.enabled:
                         append_boundary(
                             directory / "implementer-progress.log",
-                            "Human-approved operational retry started "
-                            "after previous implementer failure",
+                            "Human-approved "
+                            + (
+                                "pre-handoff"
+                                if manifest["state"] == "HUMAN_APPROVED_PRE_HANDOFF_RETRY"
+                                else "operational"
+                            )
+                            + " retry started after previous implementer failure",
                         )
+                if manifest.get("pre_handoff_retries"):
+                    rejection = _tracking_retry_rejection(manifest, directory)
+                    if rejection:
+                        raise RunnerError(rejection)
                 attempt = implementation_attempt(manifest)
                 findings = _load_findings(repo_root, ticket, manifest["review_round"])
                 # Do not accept an input left over from an earlier attempt.
@@ -1381,10 +1360,10 @@ def _run_cycle(
                     f"implementer{round_label} started: "
                     f"{active_config.implementer.provider} / {active_config.implementer.model}"
                 )
-                operational_launch = bool(manifest.get("operational_retries")) and (
-                    manifest["state"] == "HUMAN_APPROVED_OPERATIONAL_RETRY" or resuming_launch
+                operational_launch = bool(retry_approvals(manifest)) and (
+                    is_retry_approved(manifest) or resuming_launch
                 )
-                if operational_launch and not resuming_launch:
+                if not resuming_launch:
                     path = _launch_path(directory, manifest)
                     prepared = _launch_record(manifest, "prepared")
                     if path.exists() and _load_json(path) != prepared:
@@ -1395,7 +1374,11 @@ def _run_cycle(
                 manifest = _read_manifest(repo_root, ticket)
                 tracking.call("role_metadata", "implementer", active_config.implementer)
                 tracking.call("lifecycle", "start", manifest)
-                if operational_launch:
+                if manifest.get("pre_handoff_retries"):
+                    rejection = _tracking_retry_rejection(manifest, directory)
+                    if rejection:
+                        raise RunnerError(rejection)
+                if operational_launch or not resuming_launch:
                     # Irreversible launch fence: a crash from here on is ambiguous, even
                     # if it occurs just before spawn. Never infer that no child exists.
                     _atomic_write_json(
@@ -1415,6 +1398,10 @@ def _run_cycle(
                     execution_number=attempt,
                     progress_config=active_config.progress,
                     reporter=progress,
+                )
+                # _execute_child has returned only after owned process-tree cleanup.
+                _atomic_write_json(
+                    _launch_path(directory, manifest), _launch_record(manifest, "exited")
                 )
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
                 if implementer_result.returncode != 0 or implementer_result.failure_code:

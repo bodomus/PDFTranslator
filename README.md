@@ -239,6 +239,30 @@ Any recovery review requesting changes stops again and needs another explicit hu
 Agents must never request their own recovery; this command is a human/operator approval boundary,
 not an authenticated identity service. Corrupt state and unclassified stops cannot be reopened.
 
+For a **clean pre-handoff stop** (including a clean clarification exit), the human operator can
+approve another attempt without renaming or deleting the cycle directory:
+
+```powershell
+uv run python scripts/agent_cycle.py retry-pre-handoff PDFTR-XX
+uv run python scripts/pi_ticket_cycle.py PDFTR-XX
+```
+
+The first command approves only; the second dispatches the persisted attempt. Status reports
+eligibility, attempt, expected/actual HEAD, branch, clean-tree evidence and rejection codes.
+Approval requires STOPPED, round zero, no accepted implementation/review, unchanged clean HEAD,
+recorded branch/repository identity, exclusive runner ownership, positive exited-process evidence,
+and no pending/uncertain YouTrack mutations. Unknown stop prose never grants eligibility. Legacy
+stops without runner exit evidence fail closed; operational retry remains a separate policy.
+Structured `stop_class=operational` stops are rejected by `retry-pre-handoff` and must use the
+PDFTR-45 operational retry path, including its retry budget; stop prose cannot bypass that rule.
+Each approval snapshots previous execution artifacts byte-for-byte under `attempts/<N>/`, records
+human approval time and source bindings in `pre_handoff_retries`, and persists
+`HUMAN_APPROVED_PRE_HANDOFF_RETRY` before dispatch. Attempts are monotonic; review budget is unchanged.
+A crash before the launch fence resumes only the same prepared attempt; a crash after the fence
+requires inspection and cannot launch another implementer. Historical evidence is hash-checked.
+Normal run/status never approves retries. Agents must not invoke this operator command or modify
+approval metadata. Existing tracking identities and successful mutation keys are retained.
+
 For a **pre-handoff operational failure**, a human can approve a separate implementer retry:
 
 ```powershell

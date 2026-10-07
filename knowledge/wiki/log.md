@@ -32,7 +32,17 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-08
+
+- PDFTR-48 adds explicit clean pre-handoff approval with positive process-exit proof,
+  monotonic retry audit, hash-checked historical evidence and shared crash-safe ticket ownership.
+  Operational/exhausted-review recovery and remote uncertainty fences remain independent.
+
 ## 2026-10-07
+
+- PDFTR-48 human-review correction rejects structured operational stops from pre-handoff recovery.
+  Operational failures use the budgeted PDFTR-45 path; alternating recovery commands cannot bypass
+  its retry limit. Existing clean retry predicates and mutation/review safety boundaries remain.
 
 - PDFTR-47 post-cycle R7 protects secondary creation-reconciliation diagnostics from sink failures.
   The original uncertain mutation remains authoritative, survives restart and prevents duplicate

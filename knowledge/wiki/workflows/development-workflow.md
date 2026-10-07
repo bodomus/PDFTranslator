@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-07
+updated: 2026-10-08
 tags:
 - development
 - tickets
@@ -28,6 +28,9 @@ sources:
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../tests/test_operational_retry.py
+- ../../../scripts/pre_handoff_retry_policy.py
+- ../../../scripts/cycle_ownership.py
+- ../../../tests/test_pre_handoff_retry.py
 - ../../../Tickets/PDFTR-42-resumable-pi-ticket-cycle.md
 - ../../../scripts/reviewer_git/inspector.mjs
 - ../../../.agents/skills/two-agent-ticket-workflow/REVIEWER_GIT_SAFETY.md
@@ -144,6 +147,26 @@ nonzero implementer exits have stable codes; trusted adapters can supply provide
 messages are never parsed. Legacy text-only operational stops remain unknown; legacy exhausted
 review recovery derives classification from validated immutable reviews. No WIP cleanup, automatic
 retry, process-ownership guessing or new reviewer authority is introduced.
+
+Clean pre-handoff STOPPED recovery has its own operator command:
+`agent_cycle.py retry-pre-handoff <TICKET>`, followed by normal runner invocation.
+`HUMAN_APPROVED_PRE_HANDOFF_RETRY` and `pre_handoff_retries` preserve human UTC approval,
+source/repository bindings, monotonic attempt identity and previous stop metadata. Retry policy
+never interprets stop prose. It requires round zero, no accepted handoff/review, clean unchanged
+Git state, no agent ownership and positive exited-process evidence. Every implementer invocation
+now records prepared/launching/exited process ownership; legacy unknown stops without exit proof
+remain ineligible. Pending/uncertain YouTrack mutations block approval and dispatch; successful
+mutation identities remain unchanged. Safety stops and exhausted operational retry limits reject.
+Structured operational stops also reject pre-handoff approval: only the PDFTR-45 operational path
+may approve them and consume its retry budget. This restriction uses stop_class, never stop prose.
+
+Prior top-level execution artifacts are byte-exact snapshots under `attempts/<N>/`, bound by
+SHA256 evidence in approval history. Loading verifies historical stopped manifests, blank handoffs,
+exit markers and attempt continuity; missing/contradictory evidence fails closed. Shared OS ticket
+ownership is extracted into `cycle_ownership.py`, startup-loaded with the pure retry policy.
+Existing prepared-marker/blank-projection crash repair applies to the new approved state without
+manufacturing another attempt. A launch fence remains irreversible after runner death. Approval
+adds no review grant and no automatic retry; operational and review-exhaustion policies stay separate.
 
 The runner reports lifecycle boundaries and authoritative handoff/review results with flushed
 plain console output. `SubprocessExecutor` retries timed communication and emits an elapsed-time
