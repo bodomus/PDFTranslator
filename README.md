@@ -70,6 +70,19 @@ See [the two-agent workflow skill](.agents/skills/two-agent-ticket-workflow/SKIL
 recovery contracts. The tool records workflow state only; it does not launch agents, fetch, merge,
 or create pull requests. PDFTR-33 itself is the one explicitly authorized bootstrap exception.
 
+### Independent review eligibility (PDFTR-49)
+
+The separate [exact-SHA independent-review contract](docs/independent-review.md) requires a passed
+cycle, an open non-draft PR and all configured required CI checks successful for the same SHA.
+Each generation binds the exact `(head_sha, base_sha)` pair. Changing either SHA invalidates PASS
+and stales active/completed reviews; a new pair requires a new review once readiness predicates pass.
+Identical pairs suppress duplicates, historical pairs cannot revive approval, and persisted reviews
+without valid base binding fail closed.
+Read-only `scripts/independent_review.py status/evaluate` commands inspect normalized local facts;
+they never dispatch or write approval. Harness-only persistence records request intent before any
+future dispatch. No webhook, Work automation, result-ingestion CLI or merge authority is added.
+Future integrations must refresh authoritative facts and isolate authorization state from agents.
+
 ### External tracking and human review (PDFTR-43 / PDFTR-47)
 
 `project-tracking.toml` controls the harness-owned YouTrack and GitHub adapters. Before launching

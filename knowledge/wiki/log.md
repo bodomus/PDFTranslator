@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-49-Independent-Review-Trigger-Contract.md
 - ../../Tickets/PDFTR-47-youtrack-live-sync.md
 - ../../Tickets/PDFTR-46-Self-Modifying-Runner.md
 - ../../Tickets/PDFTR-45-operational-stopped-retry.md
@@ -32,7 +33,18 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-07
+
+- PDFTR-49 human review correction binds independent generations and PASS to exact PR head/base
+  pairs. Base-only movement revokes active/completed approval, late evidence stays STALE, historical
+  pairs cannot revive PASS, and missing/malformed persisted base binding fails closed.
+  Sources: independent-review contract, policy and focused tests linked in Development workflow.
+
 ## 2026-10-08
+
+- PDFTR-49 defines a separate exact-SHA independent-review policy and harness-only intent store.
+  Required CI, duplicate suppression, stale evidence and dispatch uncertainty fail closed;
+  local inspection is read-only and future authorization storage must be isolated from agents.
 
 - PDFTR-48 adds explicit clean pre-handoff approval with positive process-exit proof,
   monotonic retry audit, hash-checked historical evidence and shared crash-safe ticket ownership.

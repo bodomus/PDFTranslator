@@ -28,6 +28,10 @@ sources:
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../tests/test_operational_retry.py
+- ../../../scripts/independent_review_policy.py
+- ../../../scripts/independent_review.py
+- ../../../tests/test_independent_review.py
+- ../../../docs/independent-review.md
 - ../../../scripts/pre_handoff_retry_policy.py
 - ../../../scripts/cycle_ownership.py
 - ../../../tests/test_pre_handoff_retry.py
@@ -297,6 +301,26 @@ context for independent human/ChatGPT Work review; `github-events.jsonl` records
 No Work UI automation or automatic merge is implemented. Passed-cycle resume re-verifies external
 readiness without rerunning agents, including idempotent YouTrack bootstrap/PASS catch-up for legacy passed
 cycles. Existing committed completion summaries under `reviews/` are attached after PASS.
+
+## Independent exact-SHA review eligibility
+
+The [independent-review contract](../../../docs/independent-review.md) is separate from Pi cycle
+states and existing readiness artifacts. Trusted configuration binds repository, PR, ticket and
+required checks. Refreshed authoritative facts must prove PASSED, open/non-draft PR and matching
+HEAD/implementation/CI SHA with every required check successful. Signals share one pure policy;
+event names are not authorization inputs and YouTrack is outside the decision path.
+
+A unique `(repository, PR, head_sha, base_sha)` receives at most one generation. Every record
+requires valid `requested_base_sha`; missing/malformed persisted bindings reject history.
+REQUESTED/RUNNING/DISPATCH_UNCERTAIN suppress duplicates for the same pair. Changing either SHA
+stales active/completed reviews and revokes PASS even before the new pair becomes ready.
+Exact-SHA results retain their generation's head/base binding when STALE; returning to stale
+history does not revive PASS or allocate a duplicate pair. The harness-only store serializes and
+atomically persists intent before returning it; restart never automatically redispatches REQUESTED. Its API owns the
+ticket lock and must not be called inside already-held ticket ownership. CLI status/evaluate are
+read-only diagnostics, not authorization; no result-mutation CLI exists. Future integrations must
+isolate store writes from agents and use trusted reviewer transport. No webhook, Work integration,
+identity service or merge automation is implemented by this layer.
 
 ## Completion
 

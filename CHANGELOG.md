@@ -7,7 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Independent exact-SHA review contract (PDFTR-49): pure fail-closed PR/cycle/required-CI policy,
+  unique generations, stale-result retention, exact-SHA PASS validity and harness-only serialized
+  request-intent persistence. Read-only local status/evaluate commands require no credentials.
+  Dispatch uncertainty blocks duplicate requests; no webhook, Work dispatch, automatic retry,
+  agent-writable approval command or merge integration is introduced.
+
 ### Fixed
+
+- Independent review generations and PASS validity (PDFTR-49) now bind both PR head and base SHA.
+  A base-only change stales active/completed reviews and requires a new generation after readiness.
+  Identical pairs suppress duplicates; historical pairs cannot revive PASS. Missing/malformed
+  persisted base binding rejects history without inferring a migration.
 
 - YouTrack synchronization hardening (PDFTR-47): canonical HTTPS host configuration, categorized
   credential/project preflight, explicit creation permission, exact-key read-back after creation,
