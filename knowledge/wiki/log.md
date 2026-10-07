@@ -3,11 +3,12 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-06
+updated: 2026-10-07
 tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-47-youtrack-live-sync.md
 - ../../Tickets/PDFTR-46-Self-Modifying-Runner.md
 - ../../Tickets/PDFTR-45-operational-stopped-retry.md
 - ../../Tickets/PDFTR-44-agent-progress-journal.md
@@ -31,7 +32,37 @@ related:
 
 # ProjectWiki knowledge change log
 
+## 2026-10-07
+
+- PDFTR-47 post-cycle R7 protects secondary creation-reconciliation diagnostics from sink failures.
+  The original uncertain mutation remains authoritative, survives restart and prevents duplicate
+  creation until successful exact-identity reconciliation.
+
+- PDFTR-47 post-cycle R6 preserves the original uncertain creation outcome across failed
+  reconciliation reads and restart. Verified exact ticket/project discovery resolves only that create
+  without a second POST; identity-safety and unrelated mutation fences remain intact.
+
 ## 2026-10-06
+
+- PDFTR-47 post-cycle R5 requires preparation before intent for every mutation operation, including
+  issue creation, comments, attachments and PR cross-links. Failed preparation leaves no mutation
+  key/fence; restart retries remain idempotent and dispatched writes retain uncertainty protection.
+- PDFTR-47 post-cycle R4 separates read-only overall timeouts from mutation uncertainty; pre-write
+  field/definition GET failures leave no fence, while dispatched mutations retain durable protection.
+- PDFTR-47 attempt 5 classifies HTTP 408/5xx mutation errors as uncertain: delayed upstream writes
+  retain durable lifecycle/operator fences across restart; read errors and definite rejections remain distinct.
+- PDFTR-47 attempt 4 separates GitHub readiness from the YouTrack uncertainty fence under the
+  shared lock; cross-links skip visibly while exact-SHA readiness refresh/revocation continues.
+- PDFTR-47 attempt 3 extends durable write uncertainty to socket timeouts, connection loss and
+  unreadable mutation responses; client transport termination never proves server-side failure.
+  Real request-wrapper regressions verify delayed writes cannot bypass restart/lifecycle fences.
+
+- Clarified PDFTR-47 durable field/definition uncertainty fences, operator reconciliation requirements,
+  and configured-value validation/nonzero operator failure reporting after attempt-two regressions.
+
+- Documented PDFTR-47 canonical YouTrack host/token configuration, categorized preflight,
+  exact opt-in creation, discovered mappings and read-back, concise evidence, local locking
+  and read-only/dry-run operator validation. Live access remains an explicit operator step.
 
 - Recorded PDFTR-46 startup-snapshot semantics, independent review protocol and preserved
   post-review stdout/log evidence; harness edits activate on the next invocation without hot reload.

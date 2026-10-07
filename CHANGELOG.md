@@ -9,12 +9,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- YouTrack synchronization hardening (PDFTR-47): canonical HTTPS host configuration, categorized
+  credential/project preflight, explicit creation permission, exact-key read-back after creation,
+  locally serialized conflict recovery and semantic read-after-write verification. Missing issues
+  and remote failures are visible but remain non-blocking for local cycles. No inferred estimates,
+  due dates, enum values or unverified agent comment claims. PASS never closes the issue.
+  Pending/timed-out field and definition writes now fence subsequent synchronization across restarts
+  until operator reconciliation, including socket timeouts, connection loss, HTTP 408/5xx mutation
+  errors (including gateway 504) and unreadable responses (client termination or a server/gateway
+  error does not prove remote failure). Malformed configured values fail before bootstrap mutation, and
+  failed operator synchronization never claims idempotent completion. GitHub PR synchronization and
+  exact-SHA readiness verification remain independent of YouTrack write fences; remote cross-links
+  are skipped visibly while stale local human-review evidence is still revoked.
+  The post-cycle R4 correction classifies read-only overall timeouts as ordinary read failures and
+  completes field/definition read-before-write checks before journaling a mutation. A pre-write GET
+  timeout no longer fences later synchronization across restart; dispatched mutation and post-write
+  verification timeout protection is preserved.
+  The post-cycle R5 correction extends mandatory preparation to issue creation, lifecycle comments,
+  attachments and PR cross-links. Failed pre-write reads never reserve a non-repeatable mutation key;
+  the same action can retry safely after restart. Actual mutations retain write-ahead intent and
+  uncertainty protection.
+  The post-cycle R6 correction retains an uncertain create's original outcome when reconciliation
+  GETs fail, including HTTP/auth/socket failures. Restart discovery resolves only a verified exact
+  ticket/project identity without another creation POST; identity and unrelated mutation fences survive.
+  The post-cycle R7 correction protects secondary reconciliation diagnostics: a failed warning sink
+  cannot replace the original uncertain creation outcome, journal evidence or restart protection.
+
 - Self-modifying runner safety (PDFTR-46): tracking and the runner startup-load a shared pure
   review-envelope protocol instead of runtime-importing a changed runner against cached validator
   code. Harness edits activate on the next invocation. Strict review validation is unchanged;
   unexpected post-review failures preserve raw stdout/logs and stop without repeating the reviewer.
 
 ### Added
+
+- Operator `project_tracking.py validate-live` with read-only default, `--dry-run`, explicit
+  create/field/state opt-ins, human `--finalize`, discovered mapping diagnostics and idempotent
+  second synchronization. Deterministic mocks validate behavior without live credentials.
 
 - Human-approved pre-review operational retry (PDFTR-45) with `--recover-operational`, structured
   stop codes, clean-tree/exact-HEAD/branch/repository gates, separate approval state and strict audit

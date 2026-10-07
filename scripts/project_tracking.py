@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import queue
 import re
 import subprocess
+import sys
+import threading
+import time
 import tomllib
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from contextlib import contextmanager, suppress
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.review_protocol import (
     JSON_FENCE,
@@ -34,19 +43,43 @@ issue ID. Harness validates and applies to the current ticket only. Never call Y
 API directly or write tracking artifacts. External failure does not change your verdict.
 """
 STATES = {
+    "NEW": "Open",
+    "IMPLEMENTING": "In Progress",
+    "READY_FOR_REVIEW": "Ready for Review",
+    "READY_FOR_REVIEW_2": "Ready for Review",
+    "PASSED": "Ready for Human Review",
     "start": "In Progress",
     "handoff": "Ready for Review",
     "CHANGES_REQUIRED": "In Progress",
     "PASS": "Ready for Human Review",
     "merged": "Done",
 }
+READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 class TrackingError(RuntimeError):
     pass
 
 
+class UncertainTransport(TrackingError):
+    """A terminated or timed-out client transport does not prove remote failure."""
+
+
+class ReadTimeout(TrackingError):
+    """A read timed out without dispatching a mutation."""
+
+
+class APIError(TrackingError):
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"YouTrack HTTP {status}")
+
+
 class IdentityError(TrackingError):
+    pass
+
+
+class SynchronizationBusy(TrackingError):
     pass
 
 
@@ -190,7 +223,36 @@ class YouTrack:
         self.url = url.rstrip("/")
         self.token = token
 
+    overall_timeout = 10.0
+
     def request(self, method: str, path: str, body: Any = None) -> Any:
+        # DNS/TLS and trickling bodies must not hold the local workflow indefinitely.
+        # Only a possibly dispatched mutation has an uncertain remote write outcome.
+        outcome: queue.Queue[Any] = queue.Queue(maxsize=1)
+
+        def call() -> None:
+            try:
+                outcome.put((True, self._request(method, path, body)))
+            except Exception as error:
+                outcome.put((False, error))
+
+        threading.Thread(target=call, daemon=True).start()
+        try:
+            success, value = outcome.get(timeout=self.overall_timeout)
+        except queue.Empty:
+            if method.upper() in READ_ONLY_METHODS:
+                raise ReadTimeout("YouTrack read overall timeout") from None
+            raise UncertainTransport("YouTrack overall timeout; remote outcome uncertain") from None
+        if not success:
+            if isinstance(value, TrackingError):
+                raise value
+            raise TrackingError("YouTrack transport/response failure") from None
+        return value
+
+    def _request(self, method: str, path: str, body: Any = None) -> Any:
+        read_only = method.upper() in READ_ONLY_METHODS
+        if path.startswith(("/", "\\")) or "://" in path or ".." in path:
+            raise IdentityError("YouTrack request target refused")
         headers = {
             "Authorization": "Bearer " + self.token,
             "Content-Type": "application/json",
@@ -203,8 +265,24 @@ class YouTrack:
             payload = None if body is None else json.dumps(body).encode()
         request = Request(self.url + "/api/" + path, data=payload, headers=headers, method=method)
         try:
-            with build_opener(NoRedirect()).open(request, timeout=20) as response:
-                payload = response.read()
+            deadline = time.monotonic() + 10
+            with build_opener(NoRedirect()).open(request, timeout=5) as response:
+                if hasattr(response, "read1"):
+                    chunks = []
+                    size = 0
+                    while True:
+                        if time.monotonic() >= deadline:
+                            raise TrackingError("YouTrack overall timeout")
+                        chunk = response.read1(65536)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > 4 * 1024 * 1024:
+                            raise TrackingError("YouTrack response too large")
+                        chunks.append(chunk)
+                    payload = b"".join(chunks)
+                else:
+                    payload = response.read()
                 result = json.loads(payload) if payload else None
                 if method == "GET" and result is None:
                     raise TrackingError("YouTrack empty/null read response")
@@ -212,8 +290,23 @@ class YouTrack:
         except HTTPError as error:
             if method == "GET" and error.code == 404:
                 return None
-            raise TrackingError(f"YouTrack HTTP {error.code}") from None
-        except (OSError, ValueError):
+            if not read_only and (error.code == 408 or 500 <= error.code <= 599):
+                # A gateway/server timeout or failure is not proof that the upstream
+                # rejected the write: it may still execute after this response.
+                raise UncertainTransport(
+                    f"YouTrack HTTP {error.code}; remote outcome uncertain"
+                ) from None
+            raise APIError(error.code) from None
+        except Exception:
+            # Once open() is entered, a mutation may have reached the server. Socket
+            # timeout/connection loss, truncated JSON, and response-limit failures do
+            # not prove it failed remotely, even after the client transport terminates.
+            # Definite HTTP rejections are handled above; pre-dispatch validation is
+            # outside this try block. Never expose transport/server exception text.
+            if not read_only:
+                raise UncertainTransport(
+                    "YouTrack transport/response failure; remote outcome uncertain"
+                ) from None
             raise TrackingError("YouTrack transport/response failure") from None
 
 
@@ -400,7 +493,8 @@ class ProjectTracking:
         github: Any = None,
         warn: Callable[[str], None] = print,
     ) -> None:
-        self.root, self.ticket, self.text, self.warn = root, ticket, text, warn
+        self.root, self.ticket, self.text = root, ticket, text
+        self.warn = lambda message: warn(self.safe_text(message))
         if config is None:
             path = root / "project-tracking.toml"
             config = tomllib.loads(path.read_text("utf-8")) if path.exists() else {}
@@ -422,7 +516,10 @@ class ProjectTracking:
             raise IdentityError("tracking artifact target mismatch")
         self.yt = youtrack
         if self.yt is None and self.yconfig.get("enabled"):
-            url, token = os.getenv("YOUTRACK_URL"), os.getenv("YOUTRACK_TOKEN")
+            url, token = self.yconfig.get("base_url"), os.getenv("YOUTRACK_TOKEN")
+            override = os.getenv("YOUTRACK_URL")
+            if override and override.rstrip("/") != str(url).rstrip("/"):
+                raise IdentityError("YouTrack configured host mismatch")
             if url and token:
                 self.yt = YouTrack(url, token)
         self.gh = github
@@ -432,17 +529,56 @@ class ProjectTracking:
                 self.gh = GitHub(root, repository)
         self.issue: dict[str, Any] | None = None
         self.fields: list[dict[str, Any]] = []
+        self.project: dict[str, Any] | None = None
+        self.sync_failed = False
+
+    def safe_text(self, text: str) -> str:
+        token = getattr(getattr(self, "yt", None), "token", None) or os.getenv("YOUTRACK_TOKEN")
+        return text.replace(token, "[REDACTED]") if token else text
 
     def save(self) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         staging = self.path.with_suffix(".tmp")
-        staging.write_text(json.dumps(self.data, indent=2) + "\n", "utf-8")
+        staging.write_text(self.safe_text(json.dumps(self.data, indent=2)) + "\n", "utf-8")
         staging.replace(self.path)
 
-    def warning(self, message: str) -> None:
-        self.data["warnings"].append(message)
-        self.warn("Integration warning: " + message)
-        self.save()
+    def warning(self, message: str, *, persist: bool = True) -> None:
+        message = self.safe_text(message)
+        if message not in self.data["warnings"]:
+            self.data["warnings"].append(message)
+        self.warn(f"[{self.ticket}] Integration warning: " + message)
+        if persist:
+            self.save()
+
+    def synchronization_failure(self, error: Exception) -> None:
+        self.sync_failed = True
+        # Never replace another owner's write-ahead fence with this instance's stale snapshot.
+        self.warning(self.diagnostic(error), persist=False)
+
+    def diagnostic(self, error: Exception) -> str:
+        if isinstance(error, SynchronizationBusy):
+            return "YouTrack synchronization busy; local workflow continues"
+        if isinstance(error, APIError):
+            return f"YouTrack HTTP {error.status}"
+        if isinstance(error, IdentityError):
+            return "YouTrack identity mismatch; remote mutation refused"
+        if type(error) in {TrackingError, UncertainTransport, ReadTimeout}:
+            # Only our fixed diagnostics; never arbitrary fake/server exception text.
+            safe = str(error)
+            if safe.startswith(
+                (
+                    "field unavailable:",
+                    "field value unavailable:",
+                    "read-after-write",
+                    "YouTrack",
+                    "exact issue absent",
+                    "create outcome",
+                    "unsupported",
+                    "past due date",
+                )
+            ):
+                return safe
+        return "YouTrack transport/response failure"
 
     def operation(
         self,
@@ -450,16 +586,22 @@ class ProjectTracking:
         action: str,
         sha: str,
         round_: int,
-        fn: Callable[[], Any],
+        execute: Callable[[], Any],
         *,
+        prepare: Callable[[], bool],
         repeatable: bool = False,
     ) -> Any:
+        """Prepare reads/payloads before intent; execution starts at possible mutation dispatch."""
+        self.require_reconciled_writes()
         key = hashlib.sha256(f"{self.ticket}|{role}|{round_}|{sha}|{action}".encode()).hexdigest()
         previous = self.data["operations"].get(key)
-        if previous and (previous["status"] == "success" or not repeatable):
+        if previous and not repeatable:
+            if previous["status"] != "success":
+                self.warning(
+                    f"YouTrack uncertain prior {action}; discovery/reconciliation required"
+                )
+                self.sync_failed = True
             return previous.get("result")
-        self.data["operations"][key] = {"status": "pending"}
-        self.save()  # At-most-once mutation even if response is lost or runner crashes.
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "ticket": self.ticket,
@@ -470,30 +612,69 @@ class ProjectTracking:
             "idempotency_key": key,
             "issue_id": self.data.get("issue_id"),
         }
+        mutation_started = False
         try:
-            result = fn()
+            result = None
+            # Read-before-write failures must not leave mutation evidence, even on process death.
+            if prepare():
+                self.data["operations"][key] = {
+                    "status": "pending",
+                    "conflicting_write": repeatable,
+                }
+                self.save()  # At-most-once mutation even if response is lost or runner crashes.
+                mutation_started = True
+                result = execute()
             event["status"] = "success"
             self.data["operations"][key] = {"status": "success", "result": result}
             return result
         except Exception as error:
+            self.sync_failed = True
             # Never include arbitrary server/error text, which may contain credentials.
             event.update(
                 status="failed",
                 error_class=type(error).__name__,
                 message="external operation failed; local workflow continues",
             )
-            self.data["operations"][key] = {"status": "failed"}
+            # A verification read timeout after POST still belongs to a possible remote write.
+            uncertain = isinstance(error, UncertainTransport) or (
+                mutation_started and isinstance(error, ReadTimeout)
+            )
+            if mutation_started:
+                self.data["operations"][key] = {
+                    "status": "uncertain" if uncertain else "failed",
+                    "conflicting_write": repeatable and uncertain,
+                }
+            # Preparation failures are diagnostic events, never mutation/idempotency evidence.
+            # Preserve any prior evidence; only a dispatched attempt can replace it.
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
-            self.warning(f"{action}: {type(error).__name__}; local workflow continues")
+            self.warning(f"{action}: {self.diagnostic(error)}; local workflow continues")
             return None
         finally:
             self.data.update(
-                last_sync_role=role, last_sync_sha=sha, last_sync_status=event["status"]
+                last_sync_role=role,
+                last_sync_sha=sha,
+                last_sync_status=event["status"],
+                last_sync_action=action,
             )
             self.save()
             with (self.directory / "youtrack-events.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(event) + "\n")
+                stream.write(self.safe_text(json.dumps(event)) + "\n")
+
+    def require_reconciled_writes(self) -> None:
+        # Pending survives process death; uncertain survives any lost write response. Neither
+        # lock release nor a later GET proves a detached transport cannot still write.
+        if any(
+            op.get("conflicting_write") and op.get("status") in {"pending", "uncertain"}
+            for op in self.data["operations"].values()
+        ):
+            self.sync_failed = True
+            self.data["last_sync_status"] = "failed"
+            message = (
+                "YouTrack uncertain prior field/definition write; operator reconciliation required"
+            )
+            self.warning(message)
+            raise TrackingError(message)
 
     def verify(self, issue: Any) -> dict[str, Any]:
         if not isinstance(issue, dict) or issue.get("idReadable") != self.ticket:
@@ -512,18 +693,290 @@ class ProjectTracking:
             "project": {"id": issue["project"]["id"], "shortName": issue["project"]["shortName"]},
         }
 
-    def bootstrap(self, manifest: dict[str, Any] | None = None) -> None:
+    @contextmanager
+    def synchronization(self, *, require_youtrack_writes: bool = True) -> Any:
+        """OS-held, non-waiting lock shared by operator validation and harness calls."""
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.directory / "youtrack.lock"
+        if path.is_symlink():
+            raise IdentityError("YouTrack lock symlink refused")
+        with path.open("a+b") as stream:
+            if os.name == "nt":
+                import msvcrt
+
+                def lock() -> None:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+
+                def unlock() -> None:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                def lock() -> None:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                def unlock() -> None:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+            try:
+                lock()
+            except OSError:
+                raise SynchronizationBusy(
+                    "YouTrack synchronization busy; local workflow continues"
+                ) from None
+            try:
+                if self.path.exists():
+                    fresh = json.loads(self.path.read_text("utf-8"))
+                    self.data.clear()
+                    self.data.update(fresh)
+                    if self.data.get("ticket") != self.ticket:
+                        raise IdentityError("tracking artifact target mismatch")
+                if require_youtrack_writes:
+                    self.require_reconciled_writes()
+                yield
+            finally:
+                unlock()
+
+    def preflight(self) -> str:
+        status = "disabled"
+        if self.yconfig.get("enabled"):
+            status = "credentials unavailable"
+            if self.yt:
+                stage = "authentication"
+                try:
+                    account = self.yt.request("GET", "users/me?fields=id,login")
+                    if not isinstance(account, dict) or not account.get("login"):
+                        raise TrackingError("YouTrack authentication response unavailable")
+                    expected = self.yconfig.get("expected_login")
+                    if expected and account["login"] != expected:
+                        raise IdentityError("unexpected authenticated account")
+                    stage = "project"
+                    projects = self.yt.request(
+                        "GET", "admin/projects?fields=id,shortName&$top=1000"
+                    )
+                    matches = [
+                        p
+                        for p in (projects or [])
+                        if p.get("shortName") == self.yconfig.get("project", "PDFTR")
+                    ]
+                    if len(matches) != 1:
+                        status = "project unavailable"
+                    else:
+                        self.project = matches[0]
+                        stage = "endpoint"
+                        try:
+                            fields = self.yt.request(
+                                "GET",
+                                "admin/projects/"
+                                + quote(self.project["id"], safe="")
+                                + "/customFields?fields=id,field(name,"
+                                "fieldType(isMultiValue,valueType)),$type,"
+                                "bundle(values(id,name),aggregatedUsers(id,login))&$top=1000",
+                            )
+                        except APIError:
+                            raise
+                        except Exception:
+                            fields = None
+                            self.warning("YouTrack project field endpoint unavailable")
+                        self.fields = (
+                            [
+                                f
+                                for f in fields
+                                if isinstance(f, dict)
+                                and isinstance(f.get("field"), dict)
+                                and isinstance(f["field"].get("name"), str)
+                            ]
+                            if isinstance(fields, list)
+                            else []
+                        )
+                        if not isinstance(fields, list):
+                            self.warning("YouTrack project field schema unavailable")
+                        elif len(self.fields) != len(fields):
+                            self.warning("malformed project field definitions skipped")
+                        status = "ready"
+                except APIError as error:
+                    status = (
+                        "authentication failed"
+                        if error.status == 401
+                        or (error.status == 403 and stage == "authentication")
+                        else "project unavailable"
+                        if stage == "project"
+                        else "endpoint unavailable"
+                    )
+                except IdentityError as error:
+                    self.data["identity_unsafe"] = True
+                    self.warning(self.diagnostic(error))
+                    status = "authentication failed"
+                except Exception:
+                    status = "transport/endpoint unavailable"
+        self.data["preflight_status"] = status
+        self.warn(f"[{self.ticket}] YouTrack: {status}")
+        if status not in {"ready", "disabled"}:
+            self.warning("YouTrack " + status)
+        return status
+
+    def ensure_youtrack_issue(self, *, allow_create: bool = False, dry_run: bool = False) -> Any:
+        if self.yconfig.get("project", "PDFTR") != self.ticket.split("-", 1)[0]:
+            raise IdentityError("configured project does not match ticket key")
+        if not re.match(r"#\s+" + re.escape(self.ticket) + r"(?:\s|:|$)", self.text):
+            raise IdentityError("Markdown ticket identity mismatch")
+        query = "?fields=id,idReadable,project(id,shortName)"
+        issue = self.yt.request("GET", "issues/" + self.ticket + query)
+        if issue is None:
+            if dry_run:
+                self.warn(f"Would create: {self.ticket} (requires --allow-create)")
+                return None
+            if not allow_create:
+                raise TrackingError(
+                    "exact issue absent; remote create unavailable (explicit permission required)"
+                )
+
+            existing: dict[str, Any] | None = None
+            payload: dict[str, Any] = {}
+
+            def prepare_create() -> bool:
+                nonlocal existing
+                # Recheck under the synchronization lock, including a remote race before POST.
+                found = self.yt.request("GET", "issues/" + self.ticket + query)
+                if found is not None:
+                    existing = self.verify(found)
+                    return False
+                lines = self.text.strip().splitlines()
+                payload.update(
+                    project={"id": self.project["id"]},
+                    summary=lines[0].lstrip("# "),
+                    description="\n".join(lines[1:]).strip(),
+                )
+                return True
+
+            def create() -> Any:
+                try:
+                    created = self.yt.request(
+                        "POST",
+                        "issues" + query,
+                        payload,
+                    )
+                except Exception as error:
+                    if isinstance(error, APIError) and error.status < 500 and error.status != 409:
+                        raise
+                    # Lost response/conflict: only exact discovery can authorize continuation.
+                    try:
+                        found = self.yt.request("GET", "issues/" + self.ticket + query)
+                        if found is None:
+                            raise UncertainTransport(
+                                "create outcome uncertain; discovery only on resume"
+                            ) from None
+                        return self.verify(found)
+                    except Exception as reconciliation_error:
+                        if not isinstance(error, UncertainTransport):
+                            raise
+                        if isinstance(reconciliation_error, IdentityError):
+                            self.data["identity_unsafe"] = True
+                        # Secondary reporting must not replace the authoritative mutation error.
+                        with suppress(Exception):
+                            self.warning(
+                                "YouTrack create reconciliation failed: "
+                                + self.diagnostic(reconciliation_error),
+                                persist=False,
+                            )
+                        # A failed read cannot replace the already uncertain mutation outcome.
+                        raise error from None
+                if isinstance(created, dict):
+                    self.data["create_response_identity"] = {
+                        "id": created.get("id")
+                        if re.fullmatch(r"[\w-]+", str(created.get("id", "")))
+                        else "malformed",
+                        "key": created.get("idReadable")
+                        if re.fullmatch(r"[A-Z]+-[0-9]+", str(created.get("idReadable", "")))
+                        else "malformed",
+                    }
+                    self.save()
+                verified = self.verify(created)
+                reread = self.verify(self.yt.request("GET", "issues/" + verified["id"] + query))
+                if reread != verified:
+                    raise IdentityError("create read-back identity mismatch")
+                canonical = self.verify(self.yt.request("GET", "issues/" + self.ticket + query))
+                if canonical != verified:
+                    raise IdentityError("duplicate/conflicting issue identity")
+                self.warn(f"[{self.ticket}] YouTrack created issue {self.ticket}")
+                return canonical
+
+            issue = self.operation(
+                "harness",
+                "create",
+                self.data.get("bootstrap_sha", ""),
+                0,
+                create,
+                prepare=prepare_create,
+            )
+            if issue is None:
+                issue = existing
+            if issue is None:
+                raise TrackingError("YouTrack issue creation unavailable; discovery only on resume")
+        self.issue = self.verify(issue)
+        self.data.update(
+            issue_id=self.issue["id"],
+            issue_key=self.ticket,
+            project=self.issue["project"]["shortName"],
+            issue_url=self.yt.url + "/issue/" + self.ticket,
+        )
+        create_key = hashlib.sha256(
+            f"{self.ticket}|harness|0|{self.data.get('bootstrap_sha', '')}|create".encode()
+        ).hexdigest()
+        prior_create = self.data["operations"].get(create_key)
+        if (
+            prior_create
+            and prior_create.get("status") == "uncertain"
+            and not self.data.get("identity_unsafe")
+        ):
+            # Exact discovery on resume resolves this create only; other mutation fences survive.
+            self.data["operations"][create_key] = {
+                **prior_create,
+                "status": "success",
+                "result": self.issue,
+            }
+            self.save()
+        self.warn(f"[{self.ticket}] YouTrack ready: {self.ticket}")
+        return self.issue
+
+    def bootstrap(
+        self,
+        manifest: dict[str, Any] | None = None,
+        *,
+        allow_create: bool | None = None,
+        mutate: bool = True,
+        dry_run: bool = False,
+    ) -> None:
+        try:
+            with self.synchronization():
+                self._bootstrap(manifest, allow_create=allow_create, mutate=mutate, dry_run=dry_run)
+        except Exception as error:
+            self.synchronization_failure(error)
+
+    def _bootstrap(
+        self,
+        manifest: dict[str, Any] | None = None,
+        *,
+        allow_create: bool | None = None,
+        mutate: bool = True,
+        dry_run: bool = False,
+    ) -> None:
+        self.sync_failed = False
+        self.issue = None
         local_sha = self.data.setdefault(
             "bootstrap_sha", manifest["current_head_sha"] if manifest else ""
         )
         if self.ticket in {f"PDFTR-{number}" for number in range(38, 43)}:
             self.warning("historical placeholder excluded from automatic YouTrack synchronization")
             return
-        if not self.yt:
-            if self.yconfig.get("enabled"):
-                self.warning("YouTrack credentials unavailable")
+        if self.yconfig.get("project", "PDFTR") != self.ticket.split("-", 1)[0]:
+            self.data["identity_unsafe"] = True
+            self.warning("configured project does not match ticket key")
             return
-        if self.data.get("identity_unsafe"):
+        status = self.preflight()
+        if status != "ready" or self.data.get("identity_unsafe"):
+            if status != "disabled":
+                self.save()
             return
 
         def ensure() -> Any:
@@ -531,55 +984,28 @@ class ProjectTracking:
                 raise IdentityError("configured project does not match ticket key")
             if not re.match(r"#\s+" + re.escape(self.ticket) + r"(?:\s|:|$)", self.text):
                 raise IdentityError("Markdown ticket identity mismatch")
-            expected_login = self.yconfig.get("expected_login")
-            if expected_login:
-                account = self.yt.request("GET", "users/me?fields=login")
-                if not isinstance(account, dict) or account.get("login") != expected_login:
-                    raise IdentityError("unexpected authenticated account")
-            query = "?fields=id,idReadable,project(id,shortName)"
-            issue = self.yt.request("GET", "issues/" + self.ticket + query)
-            if issue is None:
-
-                def create() -> Any:
-                    project = self.yt.request("GET", "admin/projects?fields=id,shortName")
-                    matches = [
-                        p for p in project if p["shortName"] == self.yconfig.get("project", "PDFTR")
-                    ]
-                    if len(matches) != 1:
-                        raise IdentityError("ambiguous project")
-                    lines = self.text.strip().splitlines()
-                    summary = lines[0].lstrip("# ")
-                    created = self.yt.request(
-                        "POST",
-                        "issues" + query,
-                        {
-                            "project": {"id": matches[0]["id"]},
-                            "summary": summary,
-                            "description": "\n".join(lines[1:]).strip(),
-                        },
-                    )
-                    if isinstance(created, dict):
-                        remote_id, remote_key = created.get("id"), created.get("idReadable")
-                        self.data["create_response_identity"] = {
-                            "id": remote_id
-                            if isinstance(remote_id, str)
-                            and re.fullmatch(r"[A-Za-z0-9_-]+", remote_id)
-                            else "malformed",
-                            "key": remote_key
-                            if isinstance(remote_key, str)
-                            and re.fullmatch(r"[A-Z]+-[0-9]+[A-Z]?", remote_key)
-                            else "malformed",
-                        }
-                        self.save()
-                    return self.verify(created)
-
-                issue = self.operation("harness", "create", local_sha, 0, create)
-                if issue is None:
-                    raise TrackingError("create outcome uncertain; discovery only on resume")
-            self.issue = self.verify(issue)
-            self.data.update(
-                issue_id=self.issue["id"], issue_url=self.yt.url + "/issue/" + self.ticket
+            defaults = {"assignee": self.yconfig.get("assignee", "bodomus")}
+            defaults.update(self.yconfig.get("defaults", {}))
+            self.validate_field_values(defaults)
+            self.discover_mappings()
+            if dry_run:
+                self.warn("Would assign: " + self.yconfig.get("assignee", "bodomus"))
+                for key, value in self.yconfig.get("defaults", {}).items():
+                    self.warn(f"Would set {key}: {value}")
+            self.ensure_youtrack_issue(
+                allow_create=(
+                    self.yconfig.get("allow_create", False)
+                    if allow_create is None
+                    else allow_create
+                )
+                and mutate
+                and not dry_run,
+                dry_run=dry_run,
             )
+            if not self.issue:
+                return
+            if not mutate or dry_run:
+                return
             lines = self.text.strip().splitlines()
             definition = {
                 "summary": lines[0].lstrip("# "),
@@ -587,58 +1013,33 @@ class ProjectTracking:
             }
             digest = hashlib.sha256(self.text.encode()).hexdigest()
 
+            query = "?fields=id,idReadable,project(id,shortName),summary,description"
+
+            def prepare_definition() -> bool:
+                remote = self.yt.request("GET", "issues/" + self.ticket + query)
+                self.verify(remote)
+                return not all(remote.get(k) == v for k, v in definition.items())
+
             def sync_definition() -> None:
                 self.yt.request("POST", "issues/" + self.issue["id"], definition)
+                remote = self.yt.request("GET", "issues/" + self.ticket + query)
+                self.verify(remote)
+                if not all(remote.get(k) == v for k, v in definition.items()):
+                    raise TrackingError("read-after-write mismatch: ticket definition")
 
             self.operation(
-                "harness", "definition:" + digest, local_sha, 0, sync_definition, repeatable=True
+                "harness",
+                "definition:" + digest,
+                local_sha,
+                0,
+                sync_definition,
+                repeatable=True,
+                prepare=prepare_definition,
             )
             self.attach(self.ticket + ".md", self.text, "harness", local_sha, 0)
-            try:
-                fields = self.yt.request(
-                    "GET",
-                    "admin/projects/"
-                    + self.issue["project"]["id"]
-                    + "/customFields?fields=id,field(name,fieldType(isMultiValue,valueType)),$type,"
-                    "bundle(values(id,name),aggregatedUsers(id,login))",
-                )
-                if not isinstance(fields, list):
-                    raise TrackingError("unsupported project field schema")
-                self.fields = [
-                    f
-                    for f in fields
-                    if isinstance(f, dict)
-                    and isinstance(f.get("field"), dict)
-                    and isinstance(f["field"].get("name"), str)
-                ]
-                if len(self.fields) != len(fields):
-                    self.warning("malformed project field definitions skipped")
-            except Exception as error:
-                self.fields = []
-                self.warning(f"project field schema unavailable: {type(error).__name__}")
-            # Coarse scope buckets, not a claim of precise implementation time.
-            days = 1 if len(self.text) < 8000 else 3
-            defaults = {
-                "assignee": self.yconfig.get("assignee", "bodomus"),
-                "estimation": f"{days}d",
-                "due_date": (date.today() + timedelta(days=days + 2)).isoformat(),
-            }
-            for key, choices in {"type": ["Task", "Feature"], "priority": ["Normal"]}.items():
-                name = self.yconfig.get("fields", {}).get(key, key.title())
-                candidates = [f for f in self.fields if f["field"]["name"] == name]
-                if len(candidates) == 1:
-                    values = {
-                        v.get("name") for v in candidates[0].get("bundle", {}).get("values", [])
-                    }
-                    safe = next((choice for choice in choices if choice in values), None)
-                    if safe:
-                        defaults[key] = safe
-                    else:
-                        self.warning(f"bootstrap field {name}: no supported conservative value")
-            defaults.update(self.yconfig.get("defaults", {}))
-            defaults = self.data.setdefault("bootstrap_defaults", defaults)
+            self.data["bootstrap_defaults"] = defaults
             self.save()
-            self.apply_fields(defaults, "harness", local_sha, 0)
+            self._apply_fields(defaults, "harness", local_sha, 0)
 
         # Reads always repeat: recover uncertain create by discovering exact key, never recreate.
         event = {
@@ -651,19 +1052,109 @@ class ProjectTracking:
         }
         try:
             ensure()
-            event.update(status="success", issue_id=self.data.get("issue_id"))
+            event.update(
+                status="partial" if self.sync_failed else "success",
+                issue_id=self.data.get("issue_id"),
+            )
             self.save()
         except Exception as error:
+            self.sync_failed = True
             event["error_class"] = type(error).__name__
             if isinstance(error, IdentityError):
                 self.data["identity_unsafe"] = True
-            self.warning(f"bootstrap: {type(error).__name__}; local workflow continues")
+            self.warning(f"bootstrap: {self.diagnostic(error)}; local workflow continues")
         finally:
+            self.data.update(last_sync_status=event["status"], last_sync_action="ensure_issue")
+            self.save()
             event["remote_response_identity"] = self.data.get("create_response_identity")
             with (self.directory / "youtrack-events.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(event) + "\n")
+                stream.write(self.safe_text(json.dumps(event)) + "\n")
+
+    def discover_mappings(self) -> None:
+        names = {
+            "assignee": "Assignee",
+            "state": "State",
+            "estimation": "Estimation",
+            "due_date": "Due Date",
+        }
+        names.update(self.yconfig.get("fields", {}))
+        for name in names.values():
+            candidates = [f for f in self.fields if f["field"]["name"] == name]
+            if len(candidates) != 1:
+                self.warning("field unavailable: " + name)
+        states = [f for f in self.fields if f["field"]["name"] == names["state"]]
+        if len(states) == 1:
+            values = {v.get("name") for v in states[0].get("bundle", {}).get("values", [])}
+            for target in set({**STATES, **self.yconfig.get("states", {})}.values()):
+                if target not in values:
+                    self.warning("field value unavailable: State -> " + target)
+        self.resolve_assignee(self.yconfig.get("assignee", "bodomus"))
+
+    def resolve_assignee(self, login: str) -> dict[str, Any] | None:
+        try:
+            users = self.yt.request(
+                "GET", "users?query=" + quote(login, safe="") + "&fields=id,login&$top=1000"
+            )
+            matches = [u for u in (users or []) if u.get("login") == login]
+            if len(matches) == 1 and isinstance(matches[0].get("id"), str):
+                return {"id": matches[0]["id"]}
+        except Exception:
+            pass
+        self.warning("field value unavailable: Assignee (login unresolved)")
+        return None
+
+    def read_field(self, name: str) -> Any:
+        remote = self.yt.request(
+            "GET",
+            "issues/" + self.ticket + "?fields=id,idReadable,project(id,shortName),"
+            "customFields(name,value(id,presentation,minutes))",
+        )
+        self.verify(remote)
+        values = [f.get("value") for f in remote.get("customFields", []) if f.get("name") == name]
+        if len(values) > 1:
+            raise TrackingError("read-after-write ambiguous field")
+        return values[0] if values else None
+
+    @staticmethod
+    def same_value(actual: Any, expected: Any) -> bool:
+        if isinstance(expected, list):
+            return isinstance(actual, list) and sorted(v.get("id", "") for v in actual) == sorted(
+                v["id"] for v in expected
+            )
+        if isinstance(expected, dict):
+            if not isinstance(actual, dict):
+                return False
+            if "id" in expected:
+                return actual.get("id") == expected["id"]
+            # Preserve period units; do not assume a project's workday/week duration.
+            return re.sub(r"\s+", "", str(actual.get("presentation", ""))) == re.sub(
+                r"\s+", "", expected["presentation"]
+            )
+        return type(actual) is type(expected) and actual == expected
 
     def apply_fields(self, proposed: dict[str, str], role: str, sha: str, round_: int) -> None:
+        try:
+            with self.synchronization():
+                self._apply_fields(proposed, role, sha, round_)
+        except Exception as error:
+            self.synchronization_failure(error)
+
+    @staticmethod
+    def validate_field_values(proposed: dict[str, Any]) -> None:
+        for key, value in proposed.items():
+            if not isinstance(value, str):
+                raise TrackingError(f"unsupported {key}; expected string")
+            if key == "estimation" and not re.fullmatch(r"\d+[wdhm](?: \d+[wdhm])*", value):
+                raise TrackingError("unsupported estimation; expected unit-bearing period string")
+            if key == "due_date":
+                try:
+                    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                        raise ValueError
+                    date.fromisoformat(value)
+                except ValueError:
+                    raise TrackingError("unsupported due date; expected ISO YYYY-MM-DD") from None
+
+    def _apply_fields(self, proposed: dict[str, str], role: str, sha: str, round_: int) -> None:
         if not self.issue or self.data.get("identity_unsafe"):
             return
         names = {
@@ -678,8 +1169,18 @@ class ProjectTracking:
         for key, value in proposed.items():
             if self.data.get("identity_unsafe"):
                 break
+            try:
+                self.validate_field_values({key: value})
+            except TrackingError as error:
+                self.sync_failed = True
+                self.warning(self.diagnostic(error))
+                continue
 
-            def update(key: str = key, value: str = value) -> None:
+            field_update: dict[str, Any] = {}
+
+            def prepare_update(
+                key: str = key, value: str = value, field_update: dict[str, Any] = field_update
+            ) -> bool:
                 self.verify(
                     self.yt.request(
                         "GET",
@@ -688,13 +1189,32 @@ class ProjectTracking:
                 )
                 candidates = [f for f in self.fields if f["field"]["name"] == names[key]]
                 if len(candidates) != 1:
-                    raise TrackingError("missing/ambiguous custom field")
+                    raise TrackingError("field unavailable: " + names[key])
                 field = candidates[0]
                 kind = field["$type"].removesuffix("ProjectCustomField")
                 cardinal_kinds = {"Enum", "User", "Version", "Build", "Owned"}
-                if kind not in cardinal_kinds | {"State", "Period", "Simple"}:
+                expected_kind = {
+                    "assignee": "User",
+                    "state": "State",
+                    "estimation": "Period",
+                    "due_date": "Simple",
+                    "type": "Enum",
+                    "priority": "Enum",
+                }
+                if kind not in cardinal_kinds | {
+                    "State",
+                    "Period",
+                    "Simple",
+                } or kind != expected_kind.get(key):
                     raise TrackingError("unsupported custom-field type")
                 field_type = field["field"].get("fieldType", {})
+                if key == "due_date" and field_type.get("valueType") != "date":
+                    raise TrackingError("unsupported due date field type")
+                if (
+                    kind in {"State", "Period", "Simple"}
+                    and field_type.get("isMultiValue") is not False
+                ):
+                    raise TrackingError("unsupported custom-field cardinality")
                 if kind in cardinal_kinds and not isinstance(field_type.get("isMultiValue"), bool):
                     raise TrackingError("unknown custom-field cardinality")
                 prefix = "Multi" if field_type.get("isMultiValue") else "Single"
@@ -702,6 +1222,8 @@ class ProjectTracking:
                 if kind == "Simple" and field_type.get("valueType") == "date":
                     type_ = "DateIssueCustomField"
                 if type_ == "DateIssueCustomField" and key == "due_date":
+                    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                        raise TrackingError("unsupported due date; expected ISO YYYY-MM-DD")
                     target = date.fromisoformat(value)
                     if target < date.today():
                         raise TrackingError("past due date")
@@ -719,40 +1241,84 @@ class ProjectTracking:
                         if key == "assignee"
                         else bundle.get("values", [])
                     )
-                    matches = [v for v in values if value in {v.get("name"), v.get("login")}]
+                    if key == "assignee":
+                        user = self.resolve_assignee(value)
+                        matches = [v for v in values if user and v.get("id") == user["id"]]
+                    else:
+                        matches = [v for v in values if value == v.get("name")]
                     if len(matches) != 1:
-                        raise TrackingError("unsupported field value")
+                        raise TrackingError("field value unavailable: " + names[key])
                     if not isinstance(matches[0].get("id"), str) or not matches[0]["id"]:
                         raise TrackingError("malformed bundle value identity")
                     mapped = {"id": matches[0]["id"]}
                     if type_.startswith("Multi"):
                         mapped = [mapped]
+                field_update.update({"name": names[key], "$type": type_, "value": mapped})
+                return not self.same_value(self.read_field(names[key]), mapped)
+
+            def update(
+                key: str = key, value: str = value, field_update: dict[str, Any] = field_update
+            ) -> None:
                 self.yt.request(
                     "POST",
                     "issues/" + self.issue["id"],
-                    {"customFields": [{"name": names[key], "$type": type_, "value": mapped}]},
+                    {"customFields": [field_update]},
                 )
+                if not self.same_value(self.read_field(names[key]), field_update["value"]):
+                    raise TrackingError("read-after-write mismatch: " + names[key])
+                if key == "state":
+                    self.warn(f"[{self.ticket}] YouTrack state -> {value}")
 
-            self.operation(role, "field:" + key + ":" + value, sha, round_, update, repeatable=True)
+            self.operation(
+                role,
+                "field:" + key + ":" + value,
+                sha,
+                round_,
+                update,
+                repeatable=True,
+                prepare=prepare_update,
+            )
 
     def lifecycle(
         self, action: str, manifest: dict[str, Any], role: str = "harness", stdout: str = ""
     ) -> None:
+        try:
+            with self.synchronization():
+                self.sync_failed = False
+                self._lifecycle(action, manifest, role, stdout)
+                if self.issue:
+                    self.data.update(
+                        last_sync_action=action,
+                        last_sync_status="failed"
+                        if self.data.get("identity_unsafe")
+                        else "partial"
+                        if self.sync_failed
+                        else "success",
+                    )
+                    self.save()
+        except Exception as error:
+            self.synchronization_failure(error)
+
+    def _lifecycle(self, action: str, manifest: dict[str, Any], role: str, stdout: str) -> None:
         sha, round_ = manifest["current_head_sha"], manifest["review_round"]
         try:
             intent = parse_intent(stdout, self.ticket, role)
         except Exception as error:
             self.warning(f"intent rejected: {type(error).__name__}")
             if isinstance(error, IdentityError):
+                self.sync_failed = True
                 return
             intent = None
         if not self.issue or self.data.get("identity_unsafe"):
             return
         proposed = intent["proposed_fields"] if intent else {}
-        self.apply_fields(proposed, role, sha, round_)
+        self._apply_fields(proposed, role, sha, round_)
         state = self.yconfig.get("states", {}).get(action, STATES.get(action))
-        if state:
-            self.apply_fields({"state": state}, role, sha, round_)
+        done = self.yconfig.get("states", {}).get("merged", "Done")
+        if state in {"Done", done} and action != "merged":
+            self.warning("field value unavailable: Done requires explicit finalization")
+        elif state:
+            self._apply_fields({"state": state}, role, sha, round_)
         if self.data.get("identity_unsafe"):
             return
         if action == "PASS":
@@ -777,25 +1343,19 @@ class ProjectTracking:
                         self.attach(path.name, path.read_text("utf-8"), role, sha, round_)
         if self.data.get("identity_unsafe"):
             return
-        if intent or action in {"handoff", "PASS", "CHANGES_REQUIRED"}:
+        if intent or action in {"start", "handoff", "PASS", "CHANGES_REQUIRED"}:
             marker = f"[{self.ticket}:{role}:{round_}:{sha}:{action}]"
             text = f"{marker}\n{action} at {sha}."
-            if action == "CHANGES_REQUIRED":
-                review_path = self.directory / f"review-{round_}.json"
-                if review_path.exists():
-                    text += "\nFindings: " + json.dumps(
-                        json.loads(review_path.read_text("utf-8")).get("findings", [])
-                    )
-            if action == "handoff":
-                handoff_path = self.directory / "handoff.json"
-                if handoff_path.exists():
-                    text += "\nValidation: " + json.dumps(
-                        json.loads(handoff_path.read_text("utf-8")).get("implementer", {})
-                    )
-            if intent:
-                text += "\n" + intent["summary"] + "\n" + intent["comment"]
+            if action == "start":
+                text += "\nImplementation started"
+            if action in {"PASS", "CHANGES_REQUIRED"}:
+                text += f"\nReview round {round_}: {action}"
+            if action == "PASS":
+                text += "\nReady for human review"
+            # Agent prose is not verified CI/PR/review evidence; do not publish it as claims.
+            comment_payload = {"text": text}
 
-            def comment() -> None:
+            def prepare_comment() -> bool:
                 self.verify(
                     self.yt.request(
                         "GET",
@@ -808,47 +1368,70 @@ class ProjectTracking:
                     )
                     or []
                 )
-                if not any(marker in c["text"] for c in comments):
-                    self.yt.request(
-                        "POST", "issues/" + self.issue["id"] + "/comments", {"text": text}
-                    )
+                return not any(marker in c["text"] for c in comments)
 
-            self.operation(role, "comment:" + action, sha, round_, comment)
+            def comment() -> None:
+                self.yt.request("POST", "issues/" + self.issue["id"] + "/comments", comment_payload)
+
+            self.operation(role, "comment:" + action, sha, round_, comment, prepare=prepare_comment)
 
     def attach(self, filename: str, content: str, role: str, sha: str, round_: int) -> None:
         if not self.issue or self.data.get("identity_unsafe"):
             return
         digest = hashlib.sha256(content.encode()).hexdigest()
+        boundary = "pdftranslate-" + digest
+        payload = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="upload"; '
+            f'filename="{filename}"\r\nContent-Type: text/markdown\r\n\r\n'
+            + content
+            + f"\r\n--{boundary}--\r\n"
+        ).encode()
 
-        def upload() -> None:
+        def prepare_upload() -> bool:
             self.verify(
                 self.yt.request(
                     "GET", "issues/" + self.ticket + "?fields=id,idReadable,project(id,shortName)"
                 )
             )
-            boundary = "pdftranslate-" + digest
-            payload = (
-                f'--{boundary}\r\nContent-Disposition: form-data; name="upload"; '
-                f'filename="{filename}"\r\nContent-Type: text/markdown\r\n\r\n'
-                + content
-                + f"\r\n--{boundary}--\r\n"
-            ).encode()
+            return True
+
+        def upload() -> None:
             self.yt.request(
                 "POST",
                 "issues/" + self.issue["id"] + "/attachments",
                 (payload, "multipart/form-data; boundary=" + boundary),
             )
 
-        self.operation(role, "attachment:" + filename + ":" + digest, sha, round_, upload)
+        self.operation(
+            role,
+            "attachment:" + filename + ":" + digest,
+            sha,
+            round_,
+            upload,
+            prepare=prepare_upload,
+        )
 
     def role_metadata(self, role: str, config: Any) -> None:
-        self.data.setdefault("roles", {})[role] = {
-            "provider": config.provider,
-            "model": config.model,
-        }
-        self.save()
+        try:
+            with self.synchronization():
+                self.data.setdefault("roles", {})[role] = {
+                    "provider": config.provider,
+                    "model": config.model,
+                }
+                self.save()
+        except Exception as error:
+            self.synchronization_failure(error)
 
     def passed(self, manifest: dict[str, Any], config: Any) -> None:
+        if manifest["state"] != "PASSED" or not self.gconfig.get("create_pr_on_pass"):
+            return
+        try:
+            with self.synchronization(require_youtrack_writes=False):
+                self._passed(manifest, config)
+        except Exception as error:
+            self.synchronization_failure(error)
+
+    def _passed(self, manifest: dict[str, Any], config: Any) -> None:
         if manifest["state"] != "PASSED" or not self.gconfig.get("create_pr_on_pass"):
             return
         sha = manifest["current_head_sha"]
@@ -865,6 +1448,12 @@ class ProjectTracking:
             "status": "failed",
         }
         try:
+            youtrack_writes_allowed = True
+            try:
+                self.require_reconciled_writes()
+            except TrackingError:
+                youtrack_writes_allowed = False
+                self.warning("YouTrack PR cross-link skipped; operator reconciliation required")
             if not self.gh:
                 raise TrackingError("GitHub repository unavailable")
             handoff = json.loads((self.directory / "handoff.json").read_text("utf-8"))
@@ -934,10 +1523,146 @@ class ProjectTracking:
             staging.write_text(json.dumps(document, indent=2) + "\n", "utf-8")
             staging.replace(output)
             event.update(status="success", pr_url=pr["url"], ci_status=document["ci_status"])
+            if youtrack_writes_allowed and self.issue and not self.data.get("identity_unsafe"):
+                marker = f"[{self.ticket}:pr:{sha}]"
+                crosslink_payload = {
+                    "text": marker
+                    + "\nPR: "
+                    + pr["url"]
+                    + "\nImplementation SHA: "
+                    + sha
+                    + "\nCI snapshot: "
+                    + document["ci_status"]
+                }
+
+                def prepare_crosslink() -> bool:
+                    self.verify(
+                        self.yt.request(
+                            "GET",
+                            "issues/" + self.ticket + "?fields=id,idReadable,project(id,shortName)",
+                        )
+                    )
+                    comments = self.yt.request(
+                        "GET", "issues/" + self.issue["id"] + "/comments?fields=id,text&$top=1000"
+                    )
+                    return not any(marker in c["text"] for c in comments)
+
+                def crosslink() -> None:
+                    self.yt.request(
+                        "POST", "issues/" + self.issue["id"] + "/comments", crosslink_payload
+                    )
+
+                self.operation(
+                    "harness",
+                    "pr-link",
+                    sha,
+                    manifest["review_round"],
+                    crosslink,
+                    prepare=prepare_crosslink,
+                )
             self.warn("Human review PR: " + pr["url"] + "; CI: " + document["ci_status"])
         except Exception as error:
             event["error_class"] = type(error).__name__
             self.warning(f"PR readiness unavailable: {type(error).__name__}; cycle remains PASSED")
         finally:
             with (self.directory / "github-events.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(event) + "\n")
+                stream.write(self.safe_text(json.dumps(event)) + "\n")
+
+
+def validate_live(
+    tracking: ProjectTracking,
+    *,
+    dry_run: bool = False,
+    allow_create: bool = False,
+    apply_fields: bool = False,
+    state: str | None = None,
+    finalize: bool = False,
+) -> int:
+    """Operator-only validation; default is remote read-only, never advances a local cycle."""
+    target = (
+        tracking.yconfig.get("states", {}).get(state, STATES.get(state, state)) if state else None
+    )
+    done = tracking.yconfig.get("states", {}).get("merged", "Done")
+    if (state == "merged" or target in {"Done", done}) and not finalize:
+        raise TrackingError("Done requires explicit --finalize")
+    mutate = (allow_create or apply_fields or state is not None) and not dry_run
+    tracking.bootstrap(allow_create=allow_create, mutate=mutate, dry_run=dry_run)
+    if dry_run:
+        if state:
+            target = tracking.yconfig.get("states", {}).get(state, STATES.get(state, state))
+            tracking.warn("Would set state: " + target)
+        tracking.warn("Dry-run: no remote mutation")
+    elif tracking.issue and mutate:
+        if tracking.sync_failed:
+            return 1
+        if state:
+            target = tracking.yconfig.get("states", {}).get(state, STATES.get(state, state))
+            # Do not publish simulated SHA/review/CI evidence during operator validation.
+            tracking.apply_fields({"state": target}, "operator", "", 0)
+            if tracking.sync_failed:
+                return 1
+        tracking.bootstrap(allow_create=allow_create, mutate=True)
+        if tracking.sync_failed:
+            return 1
+        if state:
+            tracking.apply_fields({"state": target}, "operator", "", 0)
+        if tracking.sync_failed:
+            return 1
+        tracking.warn(
+            "Idempotent second synchronization completed; inspect warnings for limitations"
+        )
+    else:
+        tracking.warn("Read-only validation: no remote mutation")
+    return (
+        0
+        if (
+            tracking.data.get("preflight_status") == "ready"
+            and tracking.issue
+            and not tracking.sync_failed
+            and not tracking.data.get("identity_unsafe")
+        )
+        else 1
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Explicit operator YouTrack validation")
+    parser.add_argument("command", choices=["validate-live"])
+    parser.add_argument("ticket")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--allow-create", action="store_true")
+    parser.add_argument("--apply-fields", action="store_true")
+    parser.add_argument("--state", help="Configured lifecycle action or exact discovered state")
+    parser.add_argument("--finalize", action="store_true", help="Explicit human close signal")
+    args = parser.parse_args(argv)
+    if not re.fullmatch(r"PDFTR-[1-9][0-9]*", args.ticket):
+        parser.error("exact PDFTR ticket key required")
+    root = Path(__file__).resolve().parents[1]
+    tickets = list((root / "Tickets").glob(args.ticket + "*.md"))
+    tickets = [
+        p
+        for p in tickets
+        if re.match(r"#\s+" + re.escape(args.ticket) + r"(?:\s|:|$)", p.read_text("utf-8"))
+    ]
+    if len(tickets) != 1:
+        parser.error("exact local Markdown ticket unavailable/ambiguous")
+    try:
+        tracking = ProjectTracking(root, args.ticket, tickets[0].read_text("utf-8"))
+        return validate_live(
+            tracking,
+            dry_run=args.dry_run,
+            allow_create=args.allow_create,
+            apply_fields=args.apply_fields,
+            state=args.state,
+            finalize=args.finalize,
+        )
+    except Exception as error:
+        # Never expose raw exception text (including local configuration parse errors).
+        print(
+            f"[{args.ticket}] Integration warning: validation unavailable ({type(error).__name__})"
+        )
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

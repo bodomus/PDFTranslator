@@ -31,7 +31,7 @@ from scripts.project_tracking import (
 TICKET = "PDFTR-43"
 SHA = "a" * 40
 CONFIG = {
-    "youtrack": {"enabled": True, "project": "PDFTR", "assignee": "bodomus"},
+    "youtrack": {"enabled": True, "project": "PDFTR", "assignee": "bodomus", "allow_create": True},
     "github": {"create_pr_on_pass": True},
 }
 TEXT = "# PDFTR-43 — Integration\n\nTask body.\n"
@@ -72,7 +72,13 @@ class FakeYouTrack:
                 [
                     {"id": str(i), "name": name}
                     for i, name in enumerate(
-                        ["In Progress", "Ready for Review", "Ready for Human Review", "Done"]
+                        [
+                            "In Progress",
+                            "Ready for Review",
+                            "Ready for Human Review",
+                            "Done",
+                            "Open",
+                        ]
                     )
                 ],
             ),
@@ -81,14 +87,24 @@ class FakeYouTrack:
         self.comments: list[dict[str, Any]] = []
         self.outage = False
         self.lose_create_response = False
+        self.values: dict[str, Any] = {}
 
     def request(self, method: str, path: str, body: Any = None) -> Any:
         self.calls.append((method, path, body))
         if self.outage:
             raise TimeoutError("secret-token must never be logged")
         if method == "GET":
+            if path.startswith("users/me"):
+                return {"id": "u", "login": "bodomus"}
+            if path.startswith("users?"):
+                return [{"id": "u", "login": "bodomus"}]
             if path.startswith("issues/") and "/comments" not in path:
-                return self.issue
+                if self.issue is None:
+                    return None
+                return {
+                    **self.issue,
+                    "customFields": [{"name": k, "value": v} for k, v in self.values.items()],
+                }
             if path.startswith("admin/projects?"):
                 return [{"id": "p", "shortName": "PDFTR"}]
             if "/customFields" in path:
@@ -106,6 +122,11 @@ class FakeYouTrack:
             return self.issue
         elif "/comments" in path:
             self.comments.append(body)
+        elif isinstance(body, dict) and "customFields" in body:
+            for custom in body["customFields"]:
+                self.values[custom["name"]] = custom["value"]
+        elif isinstance(body, dict) and "summary" in body and self.issue:
+            self.issue.update(body)
         return {}
 
 
@@ -138,8 +159,7 @@ def test_bootstrap_reuses_or_creates_and_maps_markdown(tmp_path: Path, exists: b
     fields = [b["customFields"][0] for b in mutations(yt) if "customFields" in b]
     assert fields[0]["value"] == {"id": "u"}
     assert fields[0]["$type"] == "SingleUserIssueCustomField"
-    assert fields[1]["value"]["presentation"] == "1d"
-    assert fields[2]["value"] > 0
+    assert len(fields) == 1  # Never invent estimation or due date.
     tracker(tmp_path, yt).bootstrap()
     assert len(
         [1 for method, path, _ in yt.calls if method == "POST" and path.startswith("issues?")]
@@ -264,7 +284,8 @@ def test_structured_intent_harness_only(tmp_path: Path) -> None:
     assert parse_intent(intent(), TICKET, "reviewer")
     assert len(mutations(yt)) == before
     tracking.lifecycle("PASS", manifest(), "reviewer", intent())
-    assert "Validation passed" in yt.comments[-1]["text"]
+    assert "Validation passed" not in yt.comments[-1]["text"]
+    assert "Review round 1: PASS" in yt.comments[-1]["text"]
     before = len(mutations(yt))
     another_sha = manifest()
     another_sha["current_head_sha"] = "c" * 40
@@ -432,7 +453,7 @@ def test_attachments_are_multipart_and_idempotent(tmp_path: Path) -> None:
 
 def test_account_mismatch_and_markdown_identity(tmp_path: Path) -> None:
     yt = FakeYouTrack()
-    config = {"youtrack": {"enabled": True, "expected_login": "bodomus"}}
+    config = {"youtrack": {"enabled": True, "expected_login": "other-user"}}
     tracking = ProjectTracking(
         tmp_path, TICKET, TEXT, config=config, youtrack=yt, warn=lambda _: None
     )
@@ -587,7 +608,13 @@ def test_configurable_schema_and_state_names(tmp_path: Path) -> None:
     yt = FakeYouTrack()
     yt.fields[-1]["field"]["name"] = "Workflow"
     yt.fields[-1]["bundle"]["values"] = [{"id": "ready", "name": "Human Review"}]
-    config = {"youtrack": {"fields": {"state": "Workflow"}, "states": {"PASS": "Human Review"}}}
+    config = {
+        "youtrack": {
+            "enabled": True,
+            "fields": {"state": "Workflow"},
+            "states": {"PASS": "Human Review"},
+        }
+    }
     tracking = ProjectTracking(
         tmp_path, TICKET, TEXT, config=config, youtrack=yt, warn=lambda _: None
     )
@@ -685,8 +712,11 @@ def test_optional_type_and_priority_from_existing_bundles(tmp_path: Path) -> Non
     )
     tracking = tracker(tmp_path, yt)
     tracking.bootstrap()
-    assert tracking.data["bootstrap_defaults"]["type"] == "Task"
-    assert tracking.data["bootstrap_defaults"]["priority"] == "Normal"
+    assert "type" not in tracking.data["bootstrap_defaults"]
+    assert "priority" not in tracking.data["bootstrap_defaults"]
+    tracking.apply_fields({"type": "Task", "priority": "Normal"}, "operator", SHA, 0)
+    assert yt.values["Type"] == {"id": "task"}
+    assert yt.values["Priority"] == {"id": "normal"}
 
 
 def test_missing_issue_with_wrong_configured_project_never_created(tmp_path: Path) -> None:
@@ -801,7 +831,9 @@ def test_unknown_schema_shape_never_guesses_field_payload(tmp_path: Path, unsupp
     updates = [b["customFields"][0] for b in mutations(yt) if "customFields" in b]
     assert not any(f["name"] == "Assignee" for f in updates)
     assert tracking.data["warnings"]
-    assert any(f["name"] == "Due Date" for f in updates)
+    assert not any(f["name"] == "Due Date" for f in updates)
+    tracking.apply_fields({"due_date": "2099-01-01"}, "operator", SHA, 0)
+    assert yt.values["Due Date"] > 0
 
 
 @pytest.mark.parametrize("payload", [b"", b"null"])
@@ -1006,6 +1038,48 @@ def test_stale_pr_recovers_only_after_new_sha_is_reviewed(tmp_path: Path) -> Non
     output = json.loads((tracking.directory / "human-review.json").read_text())
     assert output["head_sha"] == "b" * 40
     assert not any(c[:2] == ("pr", "create") for c in gh.calls)
+
+
+@pytest.mark.parametrize("status", ["pending", "uncertain"])
+@pytest.mark.parametrize("action", ["field:State", "definition"])
+@pytest.mark.parametrize("moved_head", [False, True])
+def test_youtrack_write_fence_does_not_block_github_readiness(
+    tmp_path: Path, status: str, action: str, moved_head: bool
+) -> None:
+    gh = FakeGitHub(tmp_path)
+    tracking = passed_tracking(tmp_path, gh)
+    tracking.issue = tracking.verify(tracking.yt.issue)
+    tracking.data["operations"][action] = {"status": status, "conflicting_write": True}
+    tracking.save()
+    # Reload the persisted fence under the shared lock, rather than relying on instance state.
+    tracking.data["operations"].clear()
+    output = tracking.directory / "human-review.json"
+    output.write_text('{"stale":true}')
+    if moved_head:
+        gh.pr["headRefOid"] = "b" * 40
+    tracking.passed(manifest(), None)
+    assert any(call[:2] == ("pr", "create") for call in gh.calls)
+    assert tracking.yt.calls == []
+    persisted = json.loads(tracking.path.read_text())
+    assert persisted["operations"][action] == {"status": status, "conflicting_write": True}
+    assert any("YouTrack PR cross-link skipped" in w for w in persisted["warnings"])
+    assert any("PR readiness unavailable" in w for w in persisted["warnings"]) == moved_head
+    events = [
+        json.loads(line)
+        for line in (tracking.directory / "github-events.jsonl").read_text().splitlines()
+    ]
+    assert events[-1]["status"] == ("failed" if moved_head else "success")
+    if moved_head:
+        assert not output.exists()
+        assert "READY FOR HUMAN REVIEW" not in gh.body
+    else:
+        readiness = json.loads(output.read_text())
+        assert readiness["head_sha"] == SHA
+        assert any("YouTrack PR cross-link skipped" in w for w in readiness["warnings"])
+        assert f"READY FOR HUMAN REVIEW for reviewed SHA {SHA}" in gh.body
+        tracking.passed(manifest(), None)
+        assert sum(call[:2] == ("pr", "create") for call in gh.calls) == 1
+        assert tracking.yt.calls == []
 
 
 def test_uncertain_readiness_write_is_neutralized_without_handoff(tmp_path: Path) -> None:

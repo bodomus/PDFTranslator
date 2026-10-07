@@ -28,6 +28,7 @@ build/
 dist/
 
 # PDFTranslate runtime and local development artifacts
+.agent-cycle/
 .cache/
 models/
 logs/

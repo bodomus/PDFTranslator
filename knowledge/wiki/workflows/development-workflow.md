@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-06
+updated: 2026-10-07
 tags:
 - development
 - tickets
@@ -23,6 +23,8 @@ sources:
 - ../../../scripts/tracking_hooks.py
 - ../../../project-tracking.toml
 - ../../../tests/test_project_tracking.py
+- ../../../tests/test_youtrack_validation.py
+- ../../../tests/test_youtrack_create_reconciliation.py
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../tests/test_operational_retry.py
@@ -200,14 +202,26 @@ package subprocesses in other test modules.
 The runner invokes `TrackingHooks` after safe local preflight. `ProjectTracking` bootstraps the
 exact Markdown ticket before implementer execution; its narrow YouTrack REST adapter verifies
 key/project/configured account before mutations, reads project field cardinality/value bundles,
-and uploads the ticket definition. Only configured schema-valid fields and lifecycle states are
+and uploads the ticket definition. `project-tracking.toml` is canonical, with a credential-free HTTPS
+`base_url` and environment-only token. A legacy URL variable must match the configured URL exactly.
+Preflight distinguishes disabled, missing credentials, authentication, project and endpoint failures.
+Creation is opt-in (shipped `allow_create = false`); definite exact absence differs from transport/auth
+failure. Creation responses and read-back must agree with the requested key/project; a differently
+allocated YouTrack number requires human reconciliation, never fallback mutation. OS-held local
+synchronization locks serialize harness/operator access; ambiguous creates recover through exact
+discovery only. Important field/definition updates use read-before-write and semantic read-back.
+Assignee resolves an exact API login; estimates, UTC due dates and enums require explicit local values.
+The operator `validate-live` command defaults to remote read-only, supports dry-run, explicit creation,
+field/state updates and a separate finalization opt-in, and repeats opted-in synchronization to verify
+idempotency. No real credentials or remote mutations are required during implementation; deterministic
+fakes do not establish live API/mapping compatibility. Only configured schema-valid fields and lifecycle states are
 applied. Unsupported fields and outages generate agent-visible warnings without changing verdicts.
 Historical PDFTR-38…PDFTR-42 placeholders are excluded.
 
 Optional agent metadata is a separate YouTrack stdout envelope, not a change to strict handoff or
 review schemas. The runner applies it only after accepting the relevant local result. The reviewer
-keeps its fixed read-only tools. Integration tokens are removed from child environments; generic
-external error messages avoid server-body/credential disclosure. Invalid metadata is isolated from
+keeps its fixed read-only tools. Integration tokens are removed from child environments; categorized, sanitized
+external diagnostics avoid server-body/credential disclosure. Invalid metadata is isolated from
 an otherwise valid review result. The strict review envelope is selected first and never rewritten
 by metadata removal. Nested, overlapping and unmatched intent delimiters, including those inside
 fenced JSON, fail closed; metadata cannot hide competing verdicts.
@@ -216,11 +230,38 @@ and review comments continue independently of custom-field availability.
 
 Runtime `youtrack.json` and JSONL events preserve identities, mutation keys, SHA, action and status.
 Mutations are journaled before sending: ambiguous create outcomes use discovery only on resume,
-while uncertain comment/attachment mutations require human reconciliation. Implementation reports
+while uncertain comment/attachment mutations require human reconciliation. Concise comments publish
+only harness-confirmed SHA/round/action evidence, not agent prose or huge logs. PASS/PASSED target human
+review, never Done; only an explicit merged/finalization action may close. REST socket and overall
+timeouts bound calls; an uncertain in-flight request is never blindly retried. Mutation socket timeouts,
+connection loss, HTTP 408/5xx mutation errors (including gateway 504), and unreadable mutation
+responses also retain uncertainty: a gateway/server error or terminated client transport
+does not prove server-side failure. Pending/uncertain field/definition writes durably block later
+YouTrack synchronization, including after restart; operator repair
+requires proving transport termination and reconciling remote state, not merely a GET or lock release.
+Read-only overall timeouts are ordinary read failures. Every mutation has mandatory preparation:
+identity/discovery/duplicate reads and payload construction precede pending mutation journaling.
+This includes issue creation, lifecycle comments, attachments and PR cross-links as well as fields
+and definitions. Preparation failures persist diagnostic events, without mutation evidence or a
+non-repeatable mutation guard, permitting the same action to retry after restart. Existing mutation
+evidence is preserved; pending intent is persisted before execution. Verification GET timeouts
+after a dispatched mutation retain its durable fence.
+An uncertain creation keeps its original mutation outcome when reconciliation GETs fail; secondary
+read diagnostics never replace that evidence. After restart, only verified exact ticket/project
+discovery resolves the matching uncertain create without another POST. Identity-safety and unrelated
+mutation fences are preserved, and the original mutation event remains in the append-only journal.
+Secondary reconciliation reporting is best-effort: a failing diagnostic sink cannot replace the
+original UncertainTransport used for durable mutation outcome classification and evidence.
+Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
+operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe
 local work. Configurable `merged` lifecycle updates support Done without automatic merge polling.
 
-After PASSED, GitHub integration uses the explicit configured repository and head/base. It creates
+After PASSED, GitHub readiness processing retains the shared OS lock but is not blocked by pending
+or uncertain YouTrack writes. The YouTrack cross-link is skipped with a persisted warning; GitHub
+PR creation/reverification and stale local readiness revocation still proceed independently.
+The YouTrack fence remains intact and no remote YouTrack mutation is attempted.
+GitHub integration uses the explicit configured repository and head/base. It creates
 or reuses one open PR with neutral metadata, checks exact reviewed head, publishes SHA-bound
 readiness/review/CI evidence, checks the head again, and includes
 local validation/report evidence, persisted role/model provenance, warnings and recovery history.
