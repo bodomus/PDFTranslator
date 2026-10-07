@@ -93,7 +93,11 @@ mutation; duplicates and recovered/uncertain writes never resend. Read reconcili
 existing check. Current CHANGES_REQUIRED produces a separate pending human/policy continuation intent,
 not an agent launch. Current PASS readiness is refreshed and advisory; merge remains human-owned.
 There is deliberately no result-file ingestion CLI. Deploy only protected parent code/state with
-credentials unavailable to agents; the existing Pi runner is not automatically connected.
+credentials unavailable to agents. The [PDFTR-52 continuation service](docs/independent-review.md#safe-automatic-fix-continuation-pdftr-52)
+connects the protected return path to the existing Pi implementer **and internal reviewer** when
+all exact-context safety checks pass. It permits at most two automatic correction authorizations
+per ticket, one per independent generation. Authorization persists before launch; uncertain launches
+never auto-retry. This is a trusted-parent API, not a comments/results-file CLI or merge mechanism.
 
 For legitimate first use, the trusted parent/operator must explicitly initialize the review store
 using the protected `PDFTR_REVIEW_CONFIG` and a valid existing ticket cycle. `init` validates the

@@ -161,5 +161,17 @@ requires `blocked_reason`. Exact repeated findings use `(id, file, symbol)`.
   Tracking successful mutation keys/identity are retained, and uncertainty is rechecked at dispatch.
   Approval metadata and historical artifacts are harness-owned, never agent handoff fields.
 
+- Separate trusted independent continuation (PDFTR-52) consumes only the protected PDFTR-51
+  publication intent and exact PDFTR-49 result/receipt. It does not add agent input fields. A durable
+  `independent-continuations.json` authorization precedes immutable structured findings preparation,
+  `POLICY_APPROVED_CONTINUATION` projection and existing runner launch fences. One generation may
+  authorize one attempt; two authorizations maximum per ticket lineage. The optional strict manifest
+  `independent_continuations` list binds continuation ID, source generation/round/head/base and findings
+  digest. Cumulative attempts/review filenames and retry histories are retained; a correction gets the
+  normal two internal reviews. Ordinary runner commands cannot dispatch the policy-approved state
+  without the protected parent hook. Positive prelaunch preparation may resume the same identity;
+  launch uncertainty requires human inspection. See `docs/independent-review.md` for deployment,
+  rejection codes and restart constraints. Neither role may mutate continuation authority or findings.
+
 Do not delete or rewrite immutable review artifacts as recovery. Human final review and merge remain
 outside the state machine.

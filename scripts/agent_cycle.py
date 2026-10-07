@@ -19,6 +19,9 @@ if __package__ in {None, ""}:  # pragma: no cover - script entry point
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.cycle_ownership import CycleOwnershipError, ticket_ownership  # noqa: E402
+from scripts.independent_review_continuation_policy import (  # noqa: E402
+    MAX_INDEPENDENT_CONTINUATIONS,
+)
 from scripts.pre_handoff_retry_policy import evaluate_pre_handoff_retry  # noqa: E402
 
 SCHEMA_VERSION = "1.0"
@@ -61,6 +64,7 @@ class CycleState(StrEnum):
     CHANGES_REQUIRED = "CHANGES_REQUIRED"
     READY_FOR_REVIEW_2 = "READY_FOR_REVIEW_2"
     PASSED = "PASSED"
+    POLICY_APPROVED_CONTINUATION = "POLICY_APPROVED_CONTINUATION"
     BLOCKED = "BLOCKED"
     STOPPED = "STOPPED"
 
@@ -282,6 +286,7 @@ def begin_implementation(repo_root: Path, ticket: str) -> dict[str, Any]:
     state = CycleState(manifest["state"])
     if state not in {
         CycleState.NEW,
+        CycleState.POLICY_APPROVED_CONTINUATION,
         CycleState.CHANGES_REQUIRED,
         CycleState.HUMAN_APPROVED_REWORK,
         CycleState.HUMAN_APPROVED_OPERATIONAL_RETRY,
@@ -381,7 +386,7 @@ def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, A
     elif repeated:
         next_state = CycleState.STOPPED
         stop_reason = "repeated_finding"
-    elif review.review_round >= MAX_REVIEW_ROUNDS:
+    elif review.review_round >= _authorized_review_limit(manifest):
         next_state = CycleState.STOPPED
         stop_reason = "review_round_limit"
     else:
@@ -409,8 +414,13 @@ def record_review(repo_root: Path, ticket: str, input_file: Path) -> dict[str, A
     return manifest
 
 
+def _continuation_review_limit(manifest: dict[str, Any]) -> int:
+    approvals = manifest.get("independent_continuations", [])
+    return approvals[-1]["source_round"] + MAX_REVIEW_ROUNDS if approvals else MAX_REVIEW_ROUNDS
+
+
 def _authorized_review_limit(manifest: dict[str, Any]) -> int:
-    return MAX_REVIEW_ROUNDS + len(manifest.get("human_recoveries", []))
+    return _continuation_review_limit(manifest) + len(manifest.get("human_recoveries", []))
 
 
 def reopen_cycle(repo_root: Path, ticket: str, reason: str) -> dict[str, Any]:
@@ -1118,11 +1128,49 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
         "operational_retries",
         "pre_handoff_retries",
         "implementation_attempt",
+        "independent_continuations",
     }
     expected = MANIFEST_KEYS | (optional & document.keys())
     _require_exact_keys(document, expected, "manifest")
     _validate_pre_handoff_fields(document)
     _validate_operational_fields(document)
+    approvals = document.get("independent_continuations", [])
+    if type(approvals) is not list or len(approvals) > MAX_INDEPENDENT_CONTINUATIONS:
+        raise CycleError("continuation_state_corrupt")
+    prior_round = 0
+    prior_generation = 0
+    for index, approval in enumerate(approvals, 1):
+        if type(approval) is not dict or set(approval) != {
+            "continuation_id",
+            "source_generation",
+            "source_round",
+            "source_head_sha",
+            "source_base_sha",
+            "findings_sha256",
+        }:
+            raise CycleError("continuation_state_corrupt")
+        if (
+            type(approval["continuation_id"]) is not int
+            or approval["continuation_id"] != index
+            or type(approval["source_generation"]) is not int
+            or approval["source_generation"] <= prior_generation
+            or type(approval["source_round"]) is not int
+            or not prior_round < approval["source_round"] <= document["review_round"]
+            or approval["source_round"] > prior_round + MAX_REVIEW_ROUNDS
+            or not isinstance(approval["findings_sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", approval["findings_sha256"]) is None
+        ):
+            raise CycleError("continuation_state_corrupt")
+        _validated_sha(approval["source_head_sha"], "continuation head")
+        _validated_sha(approval["source_base_sha"], "continuation base")
+        prior_round = approval["source_round"]
+        prior_generation = approval["source_generation"]
+    if document["state"] == "POLICY_APPROVED_CONTINUATION" and (
+        not approvals
+        or approvals[-1]["source_round"] != document["review_round"]
+        or document["active_agent"] is not None
+    ):
+        raise CycleError("continuation_state_corrupt")
     recoveries = document.get("human_recoveries", [])
     if not isinstance(recoveries, list):
         raise CycleError("manifest human_recoveries must be a list")
@@ -1153,7 +1201,7 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
             "review_round_limit",
         }:
             raise CycleError("invalid human recovery stop reason")
-        expected_round = MAX_REVIEW_ROUNDS + index
+        expected_round = _continuation_review_limit(document) + index
         if (
             type(recovery["review_round"]) is not int
             or recovery["review_round"] != expected_round
@@ -1188,7 +1236,10 @@ def _validate_manifest(document: dict[str, Any], ticket: str) -> None:
         raise CycleError("manifest review_round must be an integer")
     if not 0 <= document["review_round"] <= _authorized_review_limit(document):
         raise CycleError("manifest review_round exceeds human-authorized limit")
-    if recoveries and document["review_round"] < MAX_REVIEW_ROUNDS + len(recoveries) - 1:
+    if (
+        recoveries
+        and document["review_round"] < _continuation_review_limit(document) + len(recoveries) - 1
+    ):
         raise CycleError("manifest round predates human recovery")
     if document["state"] == CycleState.HUMAN_APPROVED_REWORK.value and (
         not recoveries or document["review_round"] != _authorized_review_limit(document) - 1

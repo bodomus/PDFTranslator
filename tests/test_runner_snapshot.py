@@ -33,6 +33,8 @@ HARNESS = (
     "tracking_hooks",
     "review_protocol",
     "pre_handoff_retry_policy",
+    "independent_review_policy",
+    "independent_review_continuation_policy",
     "cycle_ownership",
 )
 
@@ -141,6 +143,7 @@ class Pi:
                 'from scripts.agent_cycle import pdftr46_new_prelaunch\\n', encoding='utf-8')
             for name in ('agent_cycle', 'project_tracking', 'tracking_hooks',
                          'agent_progress', 'review_protocol', 'pre_handoff_retry_policy',
+                         'independent_review_policy', 'independent_review_continuation_policy',
                          'cycle_ownership'):
                 Path('scripts/' + name + '.py').write_text(
                     "raise RuntimeError('adopted new harness generation')\\n", encoding='utf-8')

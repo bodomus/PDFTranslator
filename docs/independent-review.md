@@ -344,6 +344,59 @@ intent and follow existing human recovery procedures; this service does not tran
 launch agents, consume/reset review budgets or automatically fix code. PASS creates no continuation.
 YouTrack is omitted entirely and missing issues cannot block evidence/publication.
 
+## Safe automatic fix continuation (PDFTR-52)
+
+`scripts/independent_review_continuation_policy.py` is pure eligibility/budget policy.
+`scripts/independent_review_continuation.py` is a **protected trusted-parent API**, not a CLI or
+reviewer capability. Construct `IndependentReviewContinuationService(result_service)`, explicitly
+`initialize()` once, then call `receive_and_continue(generation, executor=SubprocessExecutor(),
+config=RunnerConfig(...))` from the authenticated return-path parent. This performs PDFTR-51
+receipt/result/publication processing and then fresh policy evaluation. Already ingested intents
+may be reevaluated with `continue_cycle(...)`; `expected_generation` can bind the trigger. No raw
+findings, comments, arbitrary local JSON or operator-provided authorization input is accepted.
+
+Only PASSED with immutable internal PASS/implementation artifacts and the exact reviewed SHA is
+eligible. Current generation, accepted result, publication payload/intent and successful dispatch
+receipt are verified together. Authoritative GitHub PR/head/base/required checks are refreshed before
+authorization and again immediately before launch. Repository fingerprint, recorded branch, exact
+HEAD, clean porcelain status, and absence of merge/rebase/cherry-pick/revert/sequencer/bisect state
+must be proven. Pending/uncertain publication, unresolved dispatch, active ownership, human-recovery
+history, unsafe/corrupt state or exhausted budget requires human intervention, never a fallback.
+
+`independent-continuations.json` records authorizations separately from review/publication history.
+`MAX_INDEPENDENT_CONTINUATIONS = 2` counts durable authorizations (including fenced/rejected
+preparations), not review rounds or operational retries. One generation has one identity, additionally
+bound to repository/PR/head/base. Immutable `independent-findings-<id>.json` is reconstructed from the
+accepted result and checked against persisted result/findings digests before launch. Every entry keeps
+the previous manifest/handoff and source review/implementation snapshots remain unchanged.
+
+Lifecycle: AUTHORIZED → PREPARED → LAUNCHING → RUNNING → COMPLETED; STALE, REJECTED and
+LAUNCH_UNCERTAIN fence automatic reuse. Under the existing OS ticket lock, authorization persists
+before the artifact and policy-approved local-cycle projection. AUTHORIZED/PREPARED restart uses the
+same identity only after refreshed eligibility and positive prepared-marker evidence when begin has
+already executed. The service persists LAUNCHING before the runner's own irreversible launch marker.
+After that, neither missing handoff nor process absence is permission for another implementer. Restart
+can recognize COMPLETED from coherent PASSED/new-SHA/exited evidence; other ambiguous active phases
+require human inspection. Normal READY_FOR_REVIEW resume remains the existing runner's reviewer path;
+this service conservatively fences such interrupted execution rather than redispatching agents.
+
+The existing Pi runner owns execution, Windows Job Objects and POSIX cleanup. A policy-approved
+continuation can be dispatched only with the protected service hook, not an ordinary runner command.
+Attempts and immutable review filenames remain cumulative; each independent correction receives the
+normal two internal reviews, without resetting or converting operational/pre-handoff histories.
+Repeated internal findings still stop; exhausted internal reviews require explicit human recovery.
+Continuation does not authorize recovery from STOPPED/FAILED, nor grant retry rights after operational
+failure or pre-handoff uncertainty. After the new SHA passes Pi review, normal required CI and a new
+PDFTR-49/50 independent generation are still mandatory. Previous independent evidence is never PASS
+for the new SHA. Stable `continuation_*` rejection codes explain human-intervention fences.
+
+YouTrack is not an authorization input; absent tickets and best-effort integration warnings do not
+block the protected return path. No issue creation, recovery auto-approval, branch creation, conflict
+resolution or merge occurs. Protect **all** code/config/receipt/result/publication/continuation/cycle
+state and credentials from agent mutation; hashes and Python object injection are integrity checks,
+not substitutes for deployment isolation. Live connector/App provisioning and exact-SHA Windows and
+Ubuntu CI remain operator/CI responsibilities.
+
 ## Read-only local inspection
 
 ```powershell

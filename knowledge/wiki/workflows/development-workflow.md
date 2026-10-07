@@ -34,6 +34,9 @@ sources:
 - ../../../scripts/github_independent_review.py
 - ../../../scripts/independent_review_dispatch.py
 - ../../../scripts/independent_review_result.py
+- ../../../scripts/independent_review_continuation_policy.py
+- ../../../scripts/independent_review_continuation.py
+- ../../../tests/test_independent_review_continuation.py
 - ../../../scripts/github_review_publication.py
 - ../../../tests/test_independent_review_result.py
 - ../../../tests/test_github_independent_review.py
@@ -366,7 +369,21 @@ Stale results do not create it; historical intents lose eligibility. No agent la
 transitions occur. Known parent credentials are rejected before evidence persistence, findings rendering
 is bounded by whole findings, and full evidence remains protected locally. YouTrack is outside the path.
 Deployment must isolate code/config/history/credentials from agent authority and provision a trusted
-read-only connector and GitHub App; current Pi runner wiring/live API compatibility are not claimed.
+read-only connector and GitHub App; live API compatibility is not claimed.
+
+PDFTR-52 adds protected-parent `IndependentReviewContinuationService.receive_and_continue` and
+`continue_cycle`, consuming only the validated PDFTR-51 intent/ledger and PDFTR-49 result with exact
+receipt correlation. Pure policy rechecks current generation/head/base/CI and PASSED source cycle;
+the parent checks local identity/branch/HEAD/cleanliness/Git operations before authorization and launch.
+Separate history permits two durable authorizations per ticket and one per generation; structured
+findings and result digests are checked against accepted evidence. AUTHORIZED/PREPARED can resume
+one positively unlaunched identity, while LAUNCHING/RUNNING ambiguity fences automatic redispatch.
+The same OS ownership, Pi process containment and internal reviewer execute corrections; attempts
+and review filenames stay cumulative and each correction has two internal review slots. Existing
+operational/pre-handoff histories are neither erased nor converted to continuation budget. STOPPED,
+human-recovery history, safety failures and uncertainty remain human-owned. New SHA still requires
+normal CI and a new independent generation. There is no comment/result-file continuation CLI, issue
+creation or merge. Protected deployment state/code remains mandatory; missing YouTrack is advisory.
 
 ## Completion
 

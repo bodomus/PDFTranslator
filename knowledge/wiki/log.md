@@ -33,6 +33,13 @@ related:
 
 # ProjectWiki knowledge change log
 
+## PDFTR-52 — Safe automatic fix continuation
+
+- Documented protected PDFTR-51-to-Pi correction wiring, exact-context prelaunch refresh,
+  separate two-authorization budget, immutable findings, positive preparation resume and
+  launch-uncertainty fence. Internal Pi review and subsequent CI/independent review remain required.
+- Source: `scripts/independent_review_continuation.py`, its pure policy and focused tests.
+
 ## 2026-10-08 — Independent review return path
 
 - Documented trusted connector polling, mandatory dispatch receipt correlation, separate durable

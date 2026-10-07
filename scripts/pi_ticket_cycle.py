@@ -204,6 +204,14 @@ class RunOutcome:
         return self.state == "PASSED"
 
 
+class TrustedContinuation(Protocol):
+    """Protected parent hook, not an agent capability or caller authentication."""
+
+    def prompt(self) -> str: ...
+    def before_launch(self) -> None: ...
+    def process_exited(self) -> None: ...
+
+
 class PiExecutor(Protocol):
     """Runs one Pi child process and returns its captured result."""
 
@@ -1237,6 +1245,7 @@ def _run_cycle(
     recover: bool = False,
     recover_operational: bool = False,
     reason: str | None = None,
+    continuation: TrustedContinuation | None = None,
 ) -> RunOutcome:
     """Drive the sequential Pi cycle for one ticket; return the terminal outcome."""
     active_config = config or RunnerConfig()
@@ -1291,15 +1300,21 @@ def _run_cycle(
         facts = collect_git_facts(repo_root, manifest["base_branch"])
         if not facts.clean or facts.head_sha != manifest["current_head_sha"]:
             raise RunnerError("pre-launch resume requires clean tree and unchanged exact HEAD")
-    if not prepared_launch and status["state"] not in {
-        "NEW",
-        "CHANGES_REQUIRED",
-        "HUMAN_APPROVED_REWORK",
-        "HUMAN_APPROVED_OPERATIONAL_RETRY",
-        "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
-        "READY_FOR_REVIEW",
-        "READY_FOR_REVIEW_2",
-    }:
+    continuation_pending = continuation is not None
+    if (
+        not prepared_launch
+        and not (continuation_pending and status["state"] == "POLICY_APPROVED_CONTINUATION")
+        and status["state"]
+        not in {
+            "NEW",
+            "CHANGES_REQUIRED",
+            "HUMAN_APPROVED_REWORK",
+            "HUMAN_APPROVED_OPERATIONAL_RETRY",
+            "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
+            "READY_FOR_REVIEW",
+            "READY_FOR_REVIEW_2",
+        }
+    ):
         raise RunnerError(diagnostic)
     executor.ensure_available()
     progress.message(f"cycle ready: {status['state']}")
@@ -1309,13 +1324,18 @@ def _run_cycle(
         while True:
             manifest = _read_manifest(repo_root, ticket)
             resuming_launch = _prepared_operational_launch(directory, manifest)
-            if resuming_launch or manifest["state"] in {
-                "NEW",
-                "CHANGES_REQUIRED",
-                "HUMAN_APPROVED_REWORK",
-                "HUMAN_APPROVED_OPERATIONAL_RETRY",
-                "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
-            }:
+            if (
+                resuming_launch
+                or (continuation_pending and manifest["state"] == "POLICY_APPROVED_CONTINUATION")
+                or manifest["state"]
+                in {
+                    "NEW",
+                    "CHANGES_REQUIRED",
+                    "HUMAN_APPROVED_REWORK",
+                    "HUMAN_APPROVED_OPERATIONAL_RETRY",
+                    "HUMAN_APPROVED_PRE_HANDOFF_RETRY",
+                }
+            ):
                 if is_retry_approved(manifest):
                     _preserve_failed_attempt(repo_root, ticket, directory, manifest)
                     if active_config.progress.enabled:
@@ -1355,6 +1375,8 @@ def _run_cycle(
                     if active_config.progress.enabled
                     else None,
                 )
+                if continuation is not None:
+                    implementer_prompt += continuation.prompt()
                 round_label = f" round {attempt}" if attempt > 1 else ""
                 progress.message(
                     f"implementer{round_label} started: "
@@ -1378,6 +1400,9 @@ def _run_cycle(
                     rejection = _tracking_retry_rejection(manifest, directory)
                     if rejection:
                         raise RunnerError(rejection)
+                if continuation_pending:
+                    continuation.before_launch()
+                    continuation_pending = False
                 if operational_launch or not resuming_launch:
                     # Irreversible launch fence: a crash from here on is ambiguous, even
                     # if it occurs just before spawn. Never infer that no child exists.
@@ -1403,6 +1428,8 @@ def _run_cycle(
                 _atomic_write_json(
                     _launch_path(directory, manifest), _launch_record(manifest, "exited")
                 )
+                if continuation is not None:
+                    continuation.process_exited()
                 progress.message(f"implementer finished: exit {implementer_result.returncode}")
                 if implementer_result.returncode != 0 or implementer_result.failure_code:
                     code = implementer_result.failure_code or (

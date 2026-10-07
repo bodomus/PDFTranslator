@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Safe automatic independent-review corrections (PDFTR-52): protected parent consumes only current
+  published PDFTR-51 CHANGES_REQUIRED intent, revalidates exact generation/head/base/CI and local
+  repository safety before authorization and launch, and passes immutable structured findings to
+  the existing Pi implementer/internal reviewer. Separate durable history allows two authorizations
+  per ticket and one per generation; positively unlaunched preparation resumes the same identity,
+  while launch uncertainty never automatically retries. Cumulative attempts/reviews and existing
+  recovery budgets remain separate; no comments/file ingestion CLI or automatic merge is added.
 - Trusted independent-review return path (PDFTR-51): authenticated HTTPS polling reuses the
   PDFTR-49 result schema and requires exact PDFTR-50 receipt/generation/head/base correlation.
   Accepted results and separate publication intents persist before SHA-bound `Independent Review`
