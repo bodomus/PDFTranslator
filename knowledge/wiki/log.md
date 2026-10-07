@@ -8,6 +8,7 @@ tags:
 - project-wiki
 - log
 sources:
+- ../../Tickets/PDFTR-49-Independent-Review-Trigger-Contract.md
 - ../../Tickets/PDFTR-47-youtrack-live-sync.md
 - ../../Tickets/PDFTR-46-Self-Modifying-Runner.md
 - ../../Tickets/PDFTR-45-operational-stopped-retry.md
@@ -33,6 +34,10 @@ related:
 # ProjectWiki knowledge change log
 
 ## 2026-10-08
+
+- PDFTR-49 defines a separate exact-SHA independent-review policy and harness-only intent store.
+  Required CI, duplicate suppression, stale evidence and dispatch uncertainty fail closed;
+  local inspection is read-only and future authorization storage must be isolated from agents.
 
 - PDFTR-48 adds explicit clean pre-handoff approval with positive process-exit proof,
   monotonic retry audit, hash-checked historical evidence and shared crash-safe ticket ownership.
