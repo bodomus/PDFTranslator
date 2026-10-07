@@ -302,3 +302,42 @@ Protected PDFTR-45/46 runner/reviewer/progress files and historical `.agent-cycl
 unchanged. No new automated review was recorded. YouTrack connector lookup returned
 `Issue not found: PDFTR-47`; no ticket mutation or guessed creation occurred, and ticket/report
 attachments remain unavailable. Factual progress/test logs: `temp/PDFTR-47-R5-*` (uncommitted).
+
+## Post-cycle human-approved corrective patch — R6
+
+Baseline: clean `pdftr-47-youtrack-live-sync` at
+`c8ff18631b6c8d17b3bd8d4311cedfae2befcef7`. Only the remaining P2 independent-review finding
+was addressed. A real REST-wrapper regression first reproduced POST 504 followed by discovery
+GET 401 persisting `failed` instead of `uncertain`.
+
+Creation now rethrows the original UncertainTransport when reconciliation discovery/verification
+fails. Sanitized secondary read diagnostics are retained without replacing the mutation outcome;
+identity mismatches also preserve uncertainty and set the existing identity-safety fence. Restart
+lookup or a healthy absent lookup retains the non-repeatable creation guard. A later verified exact
+ticket/project lookup resolves only that matching uncertain creation and reuses its canonical issue,
+with no second POST. Unrelated field/definition fences and the original append-only mutation event
+are preserved. Definite mutation rejections and all mandatory pre-write preparation remain unchanged.
+
+Validation:
+- Focused uncertain-create/reconciliation tests: **47 passed**.
+- Broader tracking/validator suite: **250 passed in 3.95s**. Includes existing preparation,
+  timeout/HTTP uncertainty, definite rejection, restart and independent GitHub readiness regressions.
+- Full Windows `scripts/check.ps1`: **PASS**, Python 3.12.10; Wiki lint 0 errors/0 warnings,
+  Ruff format/lint (334 files), mypy (98 source files), **1103 passed, 3 skipped in 453.14s**,
+  coverage **89.54%**.
+- The real-wrapper matrix covers POST 502/503/504/socket timeout/connection loss followed by
+  GET 401/403/408/502/503/504/socket timeout/connection loss. It verifies original mutation
+  diagnostics, durable uncertainty, restart/re-entry without duplication, exact reconciliation,
+  unchanged unrelated fences, mismatch refusal and credential redaction.
+- Initial sandboxed pytest setup failed with WinError 5 before assertions; the same uv workflow
+  passed outside that ACL restriction. Temporary files, test logs and caches stayed under `temp/`.
+
+ProjectWiki search and scoped existing Graphify orientation were source-verified. CRG incremental
+update/caller analysis succeeded; graph output is bounded and source confirms the hooks/operator
+boundary. All six production operation sites still require preparation and execute starts at POST.
+No dependencies, module boundaries, schemas, runner/reviewer permissions, PDFTR-45/46 behavior or
+historical `.agent-cycle` artifacts changed. No new automated review or live mutation was performed.
+Read-only YouTrack lookup returned `Issue not found: PDFTR-47`; ticket fields and ticket/report
+attachments remain unavailable. Concise factual progress: `temp/PDFTR-47-R6-progress.log`;
+validation logs: `temp/PDFTR-47-R6-focused.txt`, `temp/PDFTR-47-R6-broader.txt`,
+`temp/PDFTR-47-R6-check.txt` (uncommitted).

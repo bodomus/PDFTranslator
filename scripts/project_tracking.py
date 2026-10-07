@@ -860,12 +860,25 @@ class ProjectTracking:
                     if isinstance(error, APIError) and error.status < 500 and error.status != 409:
                         raise
                     # Lost response/conflict: only exact discovery can authorize continuation.
-                    found = self.yt.request("GET", "issues/" + self.ticket + query)
-                    if found is None:
-                        raise UncertainTransport(
-                            "create outcome uncertain; discovery only on resume"
-                        ) from None
-                    return self.verify(found)
+                    try:
+                        found = self.yt.request("GET", "issues/" + self.ticket + query)
+                        if found is None:
+                            raise UncertainTransport(
+                                "create outcome uncertain; discovery only on resume"
+                            ) from None
+                        return self.verify(found)
+                    except Exception as reconciliation_error:
+                        if not isinstance(error, UncertainTransport):
+                            raise
+                        if isinstance(reconciliation_error, IdentityError):
+                            self.data["identity_unsafe"] = True
+                        self.warning(
+                            "YouTrack create reconciliation failed: "
+                            + self.diagnostic(reconciliation_error),
+                            persist=False,
+                        )
+                        # A failed read cannot replace the already uncertain mutation outcome.
+                        raise error from None
                 if isinstance(created, dict):
                     self.data["create_response_identity"] = {
                         "id": created.get("id")
@@ -905,6 +918,22 @@ class ProjectTracking:
             project=self.issue["project"]["shortName"],
             issue_url=self.yt.url + "/issue/" + self.ticket,
         )
+        create_key = hashlib.sha256(
+            f"{self.ticket}|harness|0|{self.data.get('bootstrap_sha', '')}|create".encode()
+        ).hexdigest()
+        prior_create = self.data["operations"].get(create_key)
+        if (
+            prior_create
+            and prior_create.get("status") == "uncertain"
+            and not self.data.get("identity_unsafe")
+        ):
+            # Exact discovery on resume resolves this create only; other mutation fences survive.
+            self.data["operations"][create_key] = {
+                **prior_create,
+                "status": "success",
+                "result": self.issue,
+            }
+            self.save()
         self.warn(f"[{self.ticket}] YouTrack ready: {self.ticket}")
         return self.issue
 

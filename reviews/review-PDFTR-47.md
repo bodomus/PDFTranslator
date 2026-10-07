@@ -63,3 +63,18 @@ PDFTR-45/46, cycle-state or historical artifact changes; no new automated review
 This remains an implementer completion record, not an independent review verdict. YouTrack lookup
 could not find PDFTR-47, so remote fields/attachments remain unavailable. Progress/test logs:
 `temp/PDFTR-47-R5-*`.
+
+## Post-cycle human-approved corrective patch — R6
+
+Failed creation reconciliation reads preserve the original uncertain mutation outcome and its
+non-repeatable guard, including HTTP/auth/socket failures. Restart/re-entry cannot send another
+create POST; only verified exact ticket/project discovery resolves the matching uncertain create.
+Identity mismatches preserve uncertainty and the existing identity-safety fence; unrelated mutation
+fences and the original journal event survive reconciliation.
+
+Focused regressions: 47 passed. Broader tracking/validator suite: 250 passed. Full Windows
+`scripts/check.ps1`: 1103 passed, 3 skipped in 453.14s, coverage 89.54%; Wiki lint, Ruff and mypy
+passed. No historical `.agent-cycle` artifacts, reviewer permissions or PDFTR-45/46 behavior changed.
+This is an implementer completion record, not a new independent-review verdict. No live mutation
+was performed; YouTrack PDFTR-47 remains unavailable for field updates/attachments. Concise factual
+progress and validation logs: `temp/PDFTR-47-R6-*`.

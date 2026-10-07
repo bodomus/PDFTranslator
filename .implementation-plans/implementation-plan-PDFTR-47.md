@@ -103,3 +103,20 @@ evidence or dispatch, healthy same-action restart/idempotency, and actual POST t
 Run focused preparation tests, broader tracking/validator regressions and full scripts/check.ps1;
 update only affected docs/Wiki/completion records, then commit/push the existing branch and verify
 cleanliness. No agent-cycle artifacts, historical verdicts, reviewer permissions or PDFTR-45/46 changes.
+
+## Post-cycle human-approved correction — R6
+Level 1, clean baseline c8ff18631b6c8d17b3bd8d4311cedfae2befcef7, existing ticket branch.
+Address only uncertain creation being downgraded by a failed reconciliation GET. Preserve the
+original UncertainTransport outcome and its non-repeatable protection; record sanitized secondary
+read diagnostics and keep identity mismatches fail-closed. A later exact-key/project discovery may
+resolve only the matching create operation after restart, without dispatching another create POST.
+Parameterize real REST-wrapper mutation HTTP/socket failures followed by discovery HTTP/socket
+failures; verify durable uncertainty, original diagnostics, restart/re-entry protection, exact
+reconciliation and mismatches. Retain preparation, field/definition, rejection and GitHub regressions.
+Run focused tests, broader tracking/validator tests, Wiki lint and full scripts/check.ps1. Update
+affected operational docs and completion records, commit/push the existing branch, verify cleanliness.
+No historical .agent-cycle artifacts, reviewer permissions or PDFTR-45/46 behavior changes.
+
+Completed validation: focused 47 passed; broader 250 passed; full Windows scripts/check.ps1
+1103 passed, 3 skipped in 453.14s, coverage 89.54%, Wiki lint/Ruff/mypy passed. Completion records
+and affected operational docs updated; no live mutation or authoritative agent-cycle transition.

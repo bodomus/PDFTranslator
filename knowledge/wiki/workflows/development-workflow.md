@@ -3,7 +3,7 @@ title: Development workflow
 type: workflow
 status: active
 created: 2026-09-17
-updated: 2026-10-06
+updated: 2026-10-07
 tags:
 - development
 - tickets
@@ -24,6 +24,7 @@ sources:
 - ../../../project-tracking.toml
 - ../../../tests/test_project_tracking.py
 - ../../../tests/test_youtrack_validation.py
+- ../../../tests/test_youtrack_create_reconciliation.py
 - ../../../tests/test_pi_ticket_cycle.py
 - ../../../tests/test_pi_cycle_resume.py
 - ../../../tests/test_operational_retry.py
@@ -245,6 +246,10 @@ and definitions. Preparation failures persist diagnostic events, without mutatio
 non-repeatable mutation guard, permitting the same action to retry after restart. Existing mutation
 evidence is preserved; pending intent is persisted before execution. Verification GET timeouts
 after a dispatched mutation retain its durable fence.
+An uncertain creation keeps its original mutation outcome when reconciliation GETs fail; secondary
+read diagnostics never replace that evidence. After restart, only verified exact ticket/project
+discovery resolves the matching uncertain create without another POST. Identity-safety and unrelated
+mutation fences are preserved, and the original mutation event remains in the append-only journal.
 Configured field types/estimation/date syntax are checked before bootstrap mutation; failed requested
 operator synchronization returns nonzero without an idempotent-completion claim. Implementation reports
 are attached after accepted handoff. Configuration/audit failures disable integrations, not safe

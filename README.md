@@ -106,7 +106,10 @@ schemas skip unsupported fields while safe ticket attachments and review comment
 Ignored runtime artifacts include `youtrack.json`, `youtrack-events.jsonl`, `github-events.jsonl`,
 and `human-review.json`. Mutation keys bind ticket/role/round/SHA/action. Intent is journaled before
 mutation: an uncertain create is recovered by exact-key discovery, never by blind re-creation;
-uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.
+failed reconciliation reads preserve the original uncertain mutation and its non-repeatable guard.
+Only verified exact ticket/project discovery resolves that create, including after restart;
+identity mismatches retain the safety fence and unrelated mutation fences remain intact.
+Uncertain comments/attachments require human reconciliation rather than automatic duplicate retries.
 Fields/definitions are read before writing and re-verified on resume; identical values generate no
 extra update. Pending or uncertain field/definition operations durably fence further YouTrack synchronization,
 even across restart. There is no automatic fence reset: an operator must establish that the old

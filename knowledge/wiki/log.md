@@ -3,7 +3,7 @@ title: ProjectWiki knowledge change log
 type: log
 status: active
 created: 2026-09-17
-updated: 2026-10-06
+updated: 2026-10-07
 tags:
 - project-wiki
 - log
@@ -31,6 +31,12 @@ related:
 ---
 
 # ProjectWiki knowledge change log
+
+## 2026-10-07
+
+- PDFTR-47 post-cycle R6 preserves the original uncertain creation outcome across failed
+  reconciliation reads and restart. Verified exact ticket/project discovery resolves only that create
+  without a second POST; identity-safety and unrelated mutation fences remain intact.
 
 ## 2026-10-06
 

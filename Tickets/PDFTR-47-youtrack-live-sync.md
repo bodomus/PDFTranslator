@@ -1,5 +1,17 @@
 # PDFTR-47 — YouTrack Live Synchronization Validation and Hardening
 
+## Human-approved post-cycle correction R6
+
+Address only the independent P2 finding at reviewed baseline
+`c8ff18631b6c8d17b3bd8d4311cedfae2befcef7`: reconciliation-read errors must never downgrade
+an uncertain creation POST. Retain the original mutation uncertainty and non-repeatable protection
+across HTTP 401/403/408/502/503/504, socket timeout, connection loss and restart. Only successful
+exact ticket/project reconciliation may resolve that creation, with no second POST. Identity
+mismatches remain fail-closed. Parameterize real transport mutation/read failures, preserve existing
+preparation/rejection/fencing/GitHub regressions, run focused/broader/full validation, then commit
+and push the existing branch with a clean tree. No historical .agent-cycle artifacts, reviewer
+permissions, PDFTR-45/46 behavior or unrelated ticket scope changes.
+
 ## Human-approved post-cycle correction R5
 
 Address only the remaining pre-write preparation finding at reviewed baseline
