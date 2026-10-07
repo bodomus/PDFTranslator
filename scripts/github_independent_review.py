@@ -109,8 +109,10 @@ def handle_signal(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Trusted independent-review reevaluation/dispatch")
-    parser.add_argument("command", choices=("evaluate", "signal"))
+    parser = argparse.ArgumentParser(
+        description="Trusted independent-review initialization/dispatch"
+    )
+    parser.add_argument("command", choices=("init", "evaluate", "signal"))
     parser.add_argument("ticket")
     parser.add_argument("--event", choices=sorted(SUPPORTED_EVENTS), default="manual")
     args = parser.parse_args(argv)
@@ -121,22 +123,41 @@ def main(argv: list[str] | None = None) -> int:
             raise IndependentReviewError("ticket_mismatch")
         root = Path.cwd()
         store = IndependentReviewStore(root, root / ".agent-cycle" / args.ticket, config)
-        provider = GitHubFactsProvider(config, GitHubReader(os.environ["GITHUB_TOKEN"]))
-        dispatcher = HTTPSReviewDispatcher(
-            os.environ["PDFTR_REVIEW_ENDPOINT"], os.environ["PDFTR_REVIEW_TOKEN"]
-        )
-        event = args.event
-        if args.command == "signal":
-            body = sys.stdin.buffer.read(1024 * 1024 + 1)
-            if len(body) > 1024 * 1024:
-                raise IndependentReviewError("event_size_limit")
-            event = github_event_signal(os.environ["GITHUB_EVENT_NAME"], json.loads(body))
-        output = handle_signal(event, {}, store, provider, dispatcher)
+        if args.command == "init":
+            # Explicit first use only; initialize owns the shared ticket lock.
+            load_cycle(root, args.ticket)
+            output = {"decision": "INITIALIZED", "state": store.initialize()}
+        else:
+            provider = GitHubFactsProvider(config, GitHubReader(os.environ["GITHUB_TOKEN"]))
+            dispatcher = HTTPSReviewDispatcher(
+                os.environ["PDFTR_REVIEW_ENDPOINT"], os.environ["PDFTR_REVIEW_TOKEN"]
+            )
+            event = args.event
+            if args.command == "signal":
+                body = sys.stdin.buffer.read(1024 * 1024 + 1)
+                if len(body) > 1024 * 1024:
+                    raise IndependentReviewError("event_size_limit")
+                event = github_event_signal(os.environ["GITHUB_EVENT_NAME"], json.loads(body))
+            output = handle_signal(event, {}, store, provider, dispatcher)
         print(json.dumps(output, sort_keys=True))
         return 0
-    except (IndependentReviewError, CycleError, CycleOwnershipError, OSError, KeyError, ValueError):
+    except (
+        IndependentReviewError,
+        CycleError,
+        CycleOwnershipError,
+        OSError,
+        KeyError,
+        ValueError,
+    ) as error:
         # No exceptions or environment values: URLs/auth can appear in library errors.
-        print(json.dumps({"decision": "INVALID", "reason": "trusted_evaluation_failed"}))
+        reason = (
+            "state_already_exists"
+            if args.command == "init"
+            and isinstance(error, IndependentReviewError)
+            and str(error) == "state_already_exists"
+            else "trusted_evaluation_failed"
+        )
+        print(json.dumps({"decision": "INVALID", "reason": reason}))
         return 1
 
 

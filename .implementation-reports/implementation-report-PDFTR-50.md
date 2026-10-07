@@ -89,3 +89,90 @@ check-run subset, restart uncertainty and read-only reviewer capability requirem
   durability. State/temp must share a filesystem.
 - Integration warnings requested by runner: ["YouTrack identity mismatch; remote mutation refused",
   "YouTrack authentication failed"]. No direct YouTrack mutation was attempted by this role.
+
+## Human exact-SHA review correction — 2026-10-07
+
+The human review of `81ab41bf5ea6d3b038e1368f4a0970a323cb14a7` returned CHANGES_REQUIRED
+for the missing production first-initialization entrypoint (P2 / MEDIUM). This correction is
+implemented in the same branch/workspace on the user's explicit instruction. It does not
+record an automated review verdict or change the actual ticket cycle's manifest/handoff.
+
+### Investigation and scope
+
+The production CLI exposed evaluate/signal, both reaching `request_and_dispatch` and requiring
+existing history. PDFTR-49 already provides exclusive `initialize()` and `empty_state(config)`;
+there was no production path to invoke them. Only `scripts/github_independent_review.py` changes
+in production. Policy, store, schemas, GitHub facts/transport, runner and ticket ownership remain
+unchanged; no dependencies, PDF/model/device/OCR behavior or external-library usage changes.
+
+### Implementation
+
+- Added trusted-parent/operator `init <ticket>` using the existing protected
+  `PDFTR_REVIEW_CONFIG` source and store configuration validation/ticket binding.
+- Reused `load_cycle` and its trusted harness loader before `store.initialize()`: existing cycle,
+  repository fingerprint, branch, handoff and clean unchanged HEAD must validate.
+- Store initialization uses its existing shared OS ticket ownership and atomic/fsynced persistence
+  of `empty_state(config)`. No second state constructor or weaker lock was added.
+- Init returns INITIALIZED with generation zero and no reviews. It executes before GitHub/provider
+  review transport construction and requires no dispatch credentials.
+- Existing/corrupt state rejects without replacement; a second init returns INVALID with the
+  bounded `state_already_exists` reason. Other errors retain sanitized diagnostics.
+- Normal evaluate/signal never initialize missing/deleted/corrupt history. Init performs no
+  review dispatch, result ingestion, GitHub/YouTrack mutation, merge or automatic cycle transition.
+  No force/reset/generic recovery or implicit reinitialization was introduced.
+
+### Regression evidence
+
+Twenty CLI cases in `tests/test_github_independent_review_init.py` use real temporary Git
+repositories and harness-created cycles; the eligible path also uses validated harness handoff
+and exact-SHA review to establish PASSED. External GitHub/connector operations are deterministic
+doubles. Fresh init's transport constructors are forbidden; eligible init asserts zero reads/calls.
+
+| Scenario | Observed behavior |
+| --- | --- |
+| Fresh explicit init | State exists; generation 0; reviews empty; no dispatch/receipt; Git/cycle unchanged |
+| Second init | state_already_exists; existing bytes unchanged |
+| Fresh event without init | evaluate and signal fail closed; no file or dispatch |
+| Initialized eligible flow | One generation and one exact head/base dispatch; duplicate suppressed |
+| Deleted used history | evaluate and signal fail closed; no recreation or extra dispatch |
+| Malformed/invalid existing state | Init rejects; original bytes unchanged |
+| Concurrent init | One success; competing owner rejects; complete valid state; no leftover temp file |
+| Invalid trusted config/context | Rejects absent/malformed/mismatched config and invalid cycle/Git context |
+
+### Graph/source verification
+
+Graphify preflight query found store/policy/ownership/harness relationships; `graphify update .`
+refreshed the code graph successfully and a post-change query includes the new test module.
+CRG incremental refresh succeeded before and after implementation (including the staged new test).
+Direct callees verify production `main -> load_cycle / IndependentReviewStore.initialize`.
+The scoped radius reaches the two independent-review test modules, with no PDF dependants.
+Source inspection confirms init is separate from handle_signal/dispatch and there is no policy,
+store, schema, ownership or runner diff. Static graph edges do not prove branch exclusion;
+the runtime no-transport and unchanged-cycle assertions establish it.
+
+### Validation
+
+- RED: fresh-init CLI regression failed because argparse did not accept init on the reviewed code.
+- Focused command: `uv run pytest tests/test_github_independent_review_init.py
+  tests/test_github_independent_review.py tests/test_independent_review.py --no-cov
+  -o "addopts=--strict-config --strict-markers" --basetemp=temp/PDFTR-50-init-focused-final -q`.
+  Result: 🟢 PASS — 173 passed in 11.37 seconds.
+- Full gate: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1` with
+  `PYTEST_ADDOPTS=--basetemp=temp/PDFTR-50-init-full` and repository-local uv/coverage/temp output.
+  Result: 🟢 PASS — exit 0; Wiki lint, Ruff format/lint, mypy (98 source files),
+  1319 passed and 3 skipped in 524.37 seconds. Package/branch coverage: 89.54% (80% required).
+- CLI `--help` lists init/evaluate/signal. Wiki lint: 15 pages, 159 links, zero errors/warnings.
+- Windows sandbox ACLs blocked pytest temporary-directory access and Git/Graphify cache writes;
+  validation/graph refresh run outside that sandbox. All test/temp/coverage/uv-cache output stays
+  under repository-local temp/ or the existing ignored graph directories.
+
+### Documentation and handoff boundary
+
+README, CHANGELOG, independent-review contract, affected development-workflow Wiki and log,
+ticket Markdown, this report, implementation plan and `reviews/review-PDFTR-50.md` are updated.
+The YouTrack connector reports Issue not found: PDFTR-50; remote fields/attachments cannot be
+updated and no issue is created. Local ticket/review Markdown remains available.
+Trusted deployment isolation still enforces operator-only access; init is for legitimate first
+use, never recovery after lost history. No live review dispatch or production init was invoked.
+The new implementation SHA requires a fresh human exact-SHA review; earlier reviews cannot
+authorize it. Commit/push are the requested final handoff; merge remains human-owned.

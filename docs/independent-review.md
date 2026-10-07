@@ -165,12 +165,27 @@ The trusted parent supplies these environment variables:
 - `PDFTR_REVIEW_ENDPOINT`: operator-owned HTTPS review connector URL (no redirects/userinfo).
 - `PDFTR_REVIEW_TOKEN`: connector authentication, not given to the reviewer.
 
-The existing cycle must be validated in its bound repository/task branch; the parent must explicitly
-initialize `IndependentReviewStore` once before first use. Lost/corrupt history never auto-initializes.
+The existing cycle must be validated in its bound repository/task branch; the parent/operator must
+explicitly initialize `IndependentReviewStore` once for legitimate first use with the command below.
+`init` loads only protected `PDFTR_REVIEW_CONFIG`, validates its ticket/config binding, and reuses
+the dispatch path's `load_cycle` harness validation (repository fingerprint, task branch, handoff,
+clean unchanged HEAD). It then calls the existing store's exclusive `initialize()`; the store owns
+shared ticket serialization and persists PDFTR-49 `empty_state(config)` with
+`current_generation == 0` and `reviews == []`. Concurrent owners reject; a second init returns
+`INVALID` / `state_already_exists` with existing bytes unchanged. Any existing file, including
+malformed/corrupt state, rejects rather than being replaced.
+
+Init does not construct GitHub/provider review transports and requires none of their credentials.
+It performs no dispatch, result ingestion, GitHub/YouTrack mutation, merge or automatic cycle
+transition. Only the trusted parent/operator may invoke it; deployment isolation described above
+enforces that boundary. It is a first-use operation, never a recovery/reset procedure: investigate
+lost history rather than invoking init again. Evaluate/signal still require existing valid history
+and fail closed when it is missing, deleted or corrupt; events never implicitly initialize it.
 Do not initialize or invoke dispatch inside an already-owned runner lock. The current Pi runner is
 unchanged; invoke this service after the runner releases ownership.
 
 ```powershell
+uv run python scripts/github_independent_review.py init PDFTR-50
 uv run python scripts/github_independent_review.py evaluate PDFTR-50
 ```
 

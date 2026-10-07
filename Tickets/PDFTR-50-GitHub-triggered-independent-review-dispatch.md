@@ -1185,3 +1185,28 @@ new independent review
 ```
 
 Automatic merge remains explicitly out of scope until separately designed and approved.
+
+---
+
+# Human exact-SHA review correction — 2026-10-07
+
+Reviewed SHA: `81ab41bf5ea6d3b038e1368f4a0970a323cb14a7`.
+Verdict: CHANGES_REQUIRED. P2 / MEDIUM: production evaluate/signal has no explicit first-use
+initialization for `.agent-cycle/<ticket>/independent-review.json`.
+
+Add trusted-parent/operator-only `uv run python scripts/github_independent_review.py init PDFTR-50`.
+Load protected existing configuration, validate ticket/config and existing harness repository/cycle
+bindings, and reuse `IndependentReviewStore.initialize()` / PDFTR-49 `empty_state(config)` under
+existing shared ticket ownership. Initial generation is zero with an empty reviews list.
+Existing or corrupt state must reject without changing bytes; a second init reports
+`state_already_exists`. Init performs no dispatch, result ingestion, GitHub/YouTrack mutation,
+merge or automatic cycle transition. Normal evaluate/signal with missing or deleted history
+continues to fail closed. No force/reset/recovery or implicit reinitialization is permitted.
+All existing exact head/base, exact-SHA CI, durable REQUESTED, duplicate/restart uncertainty,
+ownership, reviewer read-only, YouTrack-independent and human-merge guarantees remain.
+
+Required regressions: fresh init; repeat init; event without init; initialized eligible flow
+with one generation/dispatch; deleted used history; corrupt state; concurrent init (one success,
+one rejection, complete state); no transport invocation on init. Run focused PDFTR-49/PDFTR-50
+tests and full scripts/check.ps1, then commit and push. Report exact SHA, focused count/result,
+full gate, coverage and the initialization/fail-closed/no-reset/no-dispatch confirmations.

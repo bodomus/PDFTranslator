@@ -86,7 +86,16 @@ restart and uncertain delivery never retry automatically. Trusted service config
 must be isolated from agents; this command must not be exposed as an agent tool.
 No public webhook server, result publication, YouTrack dependency or merge authority is added.
 
+For legitimate first use, the trusted parent/operator must explicitly initialize the review store
+using the protected `PDFTR_REVIEW_CONFIG` and a valid existing ticket cycle. `init` validates the
+harness context and creates generation zero with no reviews under shared ticket ownership. It
+needs no GitHub/connector credentials and performs no dispatch or cycle transition. Repeated init
+rejects `state_already_exists`; existing/corrupt history is never overwritten. Missing or deleted
+history during evaluate/signal still fails closed. Lost history requires human investigation;
+`init` is not a recovery/reset command and must never be exposed to agents.
+
 ```powershell
+uv run python scripts/github_independent_review.py init PDFTR-50
 uv run python scripts/github_independent_review.py evaluate PDFTR-50
 ```
 

@@ -15,6 +15,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   duplicate suppression and conservative restart/timeout handling prevent automatic redispatch.
   Read-only reviewer instructions and bounded receipt metadata contain no authentication material.
   No public receiver, result publication, YouTrack requirement or automatic merge is introduced.
+- Explicit trusted-parent/operator first initialization for PDFTR-50:
+  `github_independent_review.py init <ticket>` validates protected configuration and existing
+  harness context, then creates generation-zero history through the PDFTR-49 store under shared
+  ticket ownership. Init never dispatches; repeated/existing/corrupt state rejects without
+  replacement, and normal events with missing/deleted history continue to fail closed.
 
 - Independent exact-SHA review contract (PDFTR-49): pure fail-closed PR/cycle/required-CI policy,
   unique generations, stale-result retention, exact-SHA PASS validity and harness-only serialized

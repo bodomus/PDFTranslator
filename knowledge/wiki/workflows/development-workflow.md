@@ -34,6 +34,7 @@ sources:
 - ../../../scripts/github_independent_review.py
 - ../../../scripts/independent_review_dispatch.py
 - ../../../tests/test_github_independent_review.py
+- ../../../tests/test_github_independent_review_init.py
 - ../../../tests/test_independent_review.py
 - ../../../docs/independent-review.md
 - ../../../scripts/pre_handoff_retry_policy.py
@@ -325,6 +326,12 @@ ticket lock and must not be called inside already-held ticket ownership. CLI sta
 read-only diagnostics, not authorization; no result-mutation CLI exists.
 
 PDFTR-50 adds trusted-parent GitHub event/manual reevaluation and a transport-neutral HTTPS connector.
+Before legitimate first use, the operator invokes `github_independent_review.py init <ticket>` with
+protected configuration and a valid existing harness cycle. The command validates ticket/config
+and the same repository/branch/handoff/clean-HEAD context as dispatch, then uses the PDFTR-49
+store's shared ownership and `empty_state(config)` initialization. It needs no transport credentials,
+never dispatches or transitions the cycle, and rejects existing/corrupt bytes without replacement.
+Normal evaluate/signal with missing/deleted history still fails closed; init is not recovery.
 Event payloads only wake the configured target. Fixed-host authoritative reads verify repository/PR,
 reject forks, sandwich exact-head check reads between matching PR snapshots and validate existing cycle
 Git/branch/history bindings. Configured check runs must be unique, complete and exact-SHA SUCCESS;
