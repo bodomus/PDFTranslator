@@ -14,8 +14,6 @@ from pdftranslate.glossary.models import GlossaryTranslationEvidence
 from pdftranslate.reconstruction.models import LogicalParagraph, ParagraphReconstruction
 from pdftranslate.repeated import RepeatedElementAnalysis
 
-LEGACY_DOCUMENT_SCHEMA_VERSION = "1.0"
-LEGACY_TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.1"
 DOCUMENT_SCHEMA_VERSION = "1.2"
 TRANSLATED_DOCUMENT_SCHEMA_VERSION = "1.3"
 
@@ -136,7 +134,7 @@ class TranslationMetadata(DomainModel):
 class ExtractedDocument(DomainModel):
     """Versioned intermediate representation shared by pipeline stages."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = "1.0"
+    schema_version: Literal["1.2", "1.3"] = "1.2"
     source: SourceDocument
     page_count: int = Field(ge=1)
     selected_pages: tuple[int, ...]
@@ -169,17 +167,6 @@ class ExtractedDocument(DomainModel):
             raise ValueError("selected page number exceeds page_count")
         if tuple(sorted(set(self.selected_pages))) != self.selected_pages:
             raise ValueError("selected_pages must be unique and strictly increasing")
-
-        if self.schema_version == LEGACY_DOCUMENT_SCHEMA_VERSION:
-            if self.translation is not None or self.reconstruction is not None or self.paragraphs:
-                raise ValueError("schema 1.0 cannot contain translation or reconstruction data")
-            return self
-        if self.schema_version == LEGACY_TRANSLATED_DOCUMENT_SCHEMA_VERSION:
-            if self.translation is None:
-                raise ValueError("schema 1.1 requires translation metadata")
-            if self.reconstruction is not None or self.paragraphs:
-                raise ValueError("schema 1.1 cannot contain paragraph reconstruction data")
-            return self
 
         if self.reconstruction is None:
             raise ValueError(f"schema {self.schema_version} requires reconstruction evidence")

@@ -230,41 +230,15 @@ def _split_block_pdf(path: Path) -> Path:
 
 def _translated(source: Path, text: str):
     extracted = PdfExtractor().extract(source)
-    pages = tuple(
-        page.model_copy(
-            update={
-                "text_blocks": tuple(
-                    block.model_copy(update={"translated_text": text}) for block in page.text_blocks
-                )
-            }
-        )
-        for page in extracted.pages
-    )
-    total = sum(len(page.text_blocks) for page in pages)
-    now = datetime.now(UTC)
-    metadata = TranslationMetadata(
-        status="completed",
-        backend="nllb",
-        model="fake",
-        source_language="en",
-        target_language="ru",
-        effective_device="cpu",
-        batch_size=1,
-        max_input_tokens=64,
-        started_at=now,
-        updated_at=now,
-        completed_at=now,
-        statistics=TranslationStatistics(
-            total_blocks=total,
-            completed_blocks=total,
-            skipped_blocks=0,
-            cache_hits=0,
-            cache_misses=total,
-            translated_segments=total,
-        ),
+    paragraphs = tuple(
+        paragraph.model_copy(update={"translated_text": text}) for paragraph in extracted.paragraphs
     )
     return extracted.model_copy(
-        update={"schema_version": "1.1", "pages": pages, "translation": metadata}
+        update={
+            "schema_version": "1.3",
+            "paragraphs": paragraphs,
+            "translation": _translation_metadata(len(paragraphs)),
+        }
     )
 
 
