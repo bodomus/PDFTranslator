@@ -151,6 +151,36 @@ def test_authoritative_drift_no_launch(setup, field, value, reason):
     assert json.loads(service.path.read_text())["continuations"] == []
 
 
+@pytest.mark.parametrize("field", ["head_sha", "base_sha"])
+def test_observed_authoritative_drift_irreversibly_revokes_before_authorization(setup, field):
+    service, fake, facts, _ = setup
+    original = copy.deepcopy(service.store.load()["reviews"][0])
+    publication = copy.deepcopy(service.results._load(service.store.load()))
+    source_sha = facts[field]
+    facts[field] = "a" * 40
+    assert invoke(service, fake) == {
+        "decision": "REJECTED",
+        "reason": "continuation_" + field.removesuffix("_sha") + "_mismatch",
+    }
+    revoked = service.store.load()["reviews"][0]
+    assert revoked == dict(original, status="STALE")
+    assert json.loads(service.path.read_text())["continuations"] == []
+
+    facts[field] = source_sha
+    restarted = IndependentReviewContinuationService(service.results)
+    for _ in range(2):
+        assert invoke(restarted, fake) == {
+            "decision": "REJECTED",
+            "reason": "continuation_stale",
+        }
+    assert fake.implementer_runs == fake.reviewer_runs == 1
+    assert restarted.store.load()["reviews"][0] == revoked
+    assert restarted.results._load(restarted.store.load()) == publication
+    assert json.loads(restarted.path.read_text())["continuations"] == []
+    assert not list(restarted.store.directory.glob("independent-findings-*.json"))
+    assert cycle.cycle_status(restarted.store.root, TICKET)["state"] == "PASSED"
+
+
 @pytest.mark.parametrize(
     "field,reason",
     [

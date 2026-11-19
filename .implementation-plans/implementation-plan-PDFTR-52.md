@@ -1,5 +1,16 @@
 # PDFTR-52 implementation plan
 
+## Attempt 2 — R1 local correction (Level 1)
+- Confirmed `_evaluate` fetched authoritative drift without persisting review refresh; rejection
+  before authorization left the old generation eligible when the pair was restored.
+- Reuse PDFTR-49 `refresh_state` and existing atomic store persistence under ticket ownership,
+  before policy return/authorization. Retain precise first-observation mismatch reason codes.
+- Add service-level HEAD and BASE drift/restore/restart regressions verifying irreversible STALE,
+  unchanged immutable result/publication, no budget allocation/findings artifact and no launches.
+- Update affected README/changelog/Wiki/report; run focused review regressions and full check gate.
+- No schema, module-boundary, dependency, process lifecycle or PDF/domain changes. Source verified
+  `_evaluate` callers (`continue_cycle`, `_ContinuationLaunch.before_launch`) both hold ownership.
+
 ## Investigation (Level 2)
 Clean baseline on the expected task branch. PDFTR-51 persists validated publications and pending continuation intent but does not launch fixes. PDFTR-49 supplies immutable exact head/base generation results. The Pi runner already serializes tickets, fences every implementer launch, and contains/reaps process trees. Source verified: IndependentReviewResultService._load/_receipt, IndependentReviewStore.load, run_cycle/_run_cycle, agent_cycle implementation_attempt and record_review.
 

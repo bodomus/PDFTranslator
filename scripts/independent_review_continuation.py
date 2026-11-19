@@ -19,7 +19,7 @@ from scripts.independent_review_continuation_policy import (
     MAX_INDEPENDENT_CONTINUATIONS,
     evaluate_continuation,
 )
-from scripts.independent_review_policy import IndependentReviewError
+from scripts.independent_review_policy import IndependentReviewError, refresh_state
 from scripts.independent_review_result import IndependentReviewResultService, _atomic_json
 
 
@@ -235,6 +235,12 @@ class IndependentReviewContinuationService:
             independent, generation
         )  # Accepted authenticated receipt correlation.
         facts = self.results.provider.fetch(previous)
+        # Persist revocation under ticket ownership, even before authorization exists.
+        # refresh_state never revives STALE or changes the immutable result. Evaluate
+        # the loaded snapshot to retain precise head/base mismatch diagnostics on the
+        # first observation; those mismatches cannot authorize, and future evaluations
+        # load the durable STALE fence even if the original pair is restored.
+        self.store._persist(refresh_state(facts, independent, self.store.config))
         history = [e for e in ledger["continuations"] if e is not resume]
         return evaluate_continuation(
             previous, independent, publication, history, facts, self._safety(previous)

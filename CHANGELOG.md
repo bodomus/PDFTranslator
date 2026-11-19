@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Independent continuation durably revokes a review generation when authoritative HEAD or BASE
+  drift is observed, including before authorization. Restoring the original pair after restart
+  cannot revive stale findings; immutable results and continuation budget remain unchanged.
+
 ### Added
 
 - Safe automatic independent-review corrections (PDFTR-52): protected parent consumes only current

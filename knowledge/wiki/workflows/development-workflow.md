@@ -375,6 +375,9 @@ PDFTR-52 adds protected-parent `IndependentReviewContinuationService.receive_and
 `continue_cycle`, consuming only the validated PDFTR-51 intent/ledger and PDFTR-49 result with exact
 receipt correlation. Pure policy rechecks current generation/head/base/CI and PASSED source cycle;
 the parent checks local identity/branch/HEAD/cleanliness/Git operations before authorization and launch.
+Under ticket ownership, each authoritative refresh persists PDFTR-49's irreversible STALE revocation
+for observed HEAD/BASE drift, even before authorization exists. Restoring the original pair after
+restart cannot revive findings; results remain immutable and revocation consumes no authorization.
 Separate history permits two durable authorizations per ticket and one per generation; structured
 findings and result digests are checked against accepted evidence. AUTHORIZED/PREPARED can resume
 one positively unlaunched identity, while LAUNCHING/RUNNING ambiguity fences automatic redispatch.

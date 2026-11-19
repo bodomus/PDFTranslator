@@ -97,7 +97,9 @@ credentials unavailable to agents. The [PDFTR-52 continuation service](docs/inde
 connects the protected return path to the existing Pi implementer **and internal reviewer** when
 all exact-context safety checks pass. It permits at most two automatic correction authorizations
 per ticket, one per independent generation. Authorization persists before launch; uncertain launches
-never auto-retry. This is a trusted-parent API, not a comments/results-file CLI or merge mechanism.
+never auto-retry. Observed authoritative HEAD/BASE drift durably marks the review generation STALE,
+even before authorization; restoring the original pair cannot revive its findings or consume budget.
+This is a trusted-parent API, not a comments/results-file CLI or merge mechanism.
 
 For legitimate first use, the trusted parent/operator must explicitly initialize the review store
 using the protected `PDFTR_REVIEW_CONFIG` and a valid existing ticket cycle. `init` validates the

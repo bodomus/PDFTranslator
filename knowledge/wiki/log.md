@@ -33,6 +33,11 @@ related:
 
 # ProjectWiki knowledge change log
 
+## PDFTR-52 — Stale-generation correction (attempt 2)
+
+- Documented durable HEAD/BASE drift revocation before continuation authorization, preserving
+  immutable evidence and budget while preventing restoration/restart from reviving findings.
+
 ## PDFTR-52 — Safe automatic fix continuation
 
 - Documented protected PDFTR-51-to-Pi correction wiring, exact-context prelaunch refresh,
