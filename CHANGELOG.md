@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `book-ocr` command (PDFTR-50): fresh Tesseract OCR of scanned books with parallel, resumable
+  per-page caching, running header removal, cross-page paragraph joining, book-vocabulary
+  dehyphenation, note-marker cleanup and low-confidence word reporting, written as `book-1.0`
+  JSON plus an optional plain-text review copy.
+
 ### Removed
 
 - Agent orchestration tooling (two-agent ticket cycle, Pi runner, independent review dispatch and

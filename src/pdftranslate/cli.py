@@ -27,6 +27,13 @@ from pdftranslate.benchmark import (
     write_report_json,
     write_report_markdown,
 )
+from pdftranslate.book import (
+    BookOcrOptions,
+    TesseractError,
+    TesseractRunner,
+    book_to_text,
+    ocr_book,
+)
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.glossary import load_glossary
@@ -710,6 +717,71 @@ def extract_pdf(
         _exit_with_error(error)
 
     console.print(f"Extracted {len(document.pages)} page(s) to [path]{output.resolve()}[/path]")
+
+
+@app.command("book-ocr")
+def book_ocr(
+    input_path: Annotated[Path, typer.Argument(help="Scanned book PDF.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination for book JSON."),
+    ],
+    text_output: Annotated[
+        Path | None,
+        typer.Option("--text", help="Optional plain-text copy for human review."),
+    ] = None,
+    pages: Annotated[
+        str | None,
+        typer.Option("--pages", help="One-based page range, for example 1,3-5."),
+    ] = None,
+    language: Annotated[
+        str,
+        typer.Option("--language", help="Tesseract language, for example eng or eng+lat."),
+    ] = "eng",
+    jobs: Annotated[
+        int,
+        typer.Option("--jobs", min=1, help="Parallel Tesseract processes."),
+    ] = BookOcrOptions().jobs,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option("--work-dir", help="Per-page OCR cache; reused to resume a run."),
+    ] = None,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace existing outputs."),
+    ] = False,
+) -> None:
+    """OCR a scanned book afresh and rebuild its paragraphs, headings and page flow."""
+    targets = [output] + ([text_output] if text_output is not None else [])
+    try:
+        for target in targets:
+            if target.exists() and not overwrite:
+                raise OutputExistsError(f"output already exists; use --overwrite: {target}")
+        runner = TesseractRunner(language=language)
+
+        def report(done: int, total: int) -> None:
+            console.print(f"OCR {done}/{total} page(s)")
+
+        book = ocr_book(
+            input_path,
+            runner,
+            BookOcrOptions(pages=pages, jobs=jobs, work_dir=work_dir),
+            progress=report,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(book.model_dump_json(indent=2), encoding="utf-8")
+        if text_output is not None:
+            text_output.parent.mkdir(parents=True, exist_ok=True)
+            text_output.write_text(book_to_text(book), encoding="utf-8")
+    except (PdfInputError, OutputExistsError, TesseractError, OSError) as error:
+        _exit_with_error(error)
+
+    stats = book.statistics
+    console.print(
+        f"Rebuilt {stats.paragraphs} paragraph(s) from {stats.pages} page(s): "
+        f"{stats.headings} heading(s), {stats.cross_page_merges} cross-page merge(s), "
+        f"{stats.note_markers} note marker(s), {stats.low_confidence_words} low-confidence word(s)"
+    )
 
 
 @app.command("translate")

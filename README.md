@@ -78,6 +78,40 @@ validated independently of automatic detection's vocabulary. Semantic inline sty
 independent of marker offsets. Artifact versions and the global translation-cache revision are unchanged; translated
 JSON retains the canonical marker for compatibility with fixed-layout fallback.
 
+## Scanned books
+
+Scanned books often carry an old, low-quality OCR text layer. `book-ocr` ignores that layer,
+recognizes every selected page again with Tesseract and rebuilds the reading flow:
+
+```powershell
+uv run pdftranslate book-ocr .\book.pdf `
+  --output .\book.json `
+  --text .\book.txt `
+  --pages 60-80 `
+  --jobs 8
+```
+
+- The embedded page scan is used at its native resolution when it fills the page; other pages
+  are rendered at 400 dpi.
+- Running headers, page numbers and footers in the top and bottom page bands are removed from the
+  text and kept in `running_headers`.
+- Paragraphs continue across page breaks when the next page starts without a first-line indent or
+  with a lowercase letter. Short sentence-final lines split paragraphs that OCR merged.
+- Line-end hyphenation is resolved with word forms seen elsewhere in the same book, so
+  `infor-/mation` becomes `information` while `counter-/revolutionary` keeps its hyphen.
+- OCR renderings of superscript note numbers (`.”'®`, `.""*`, `.12`) are removed; their positions
+  are kept in `note_markers`.
+- Words recognized with confidence below 50 are listed per paragraph in `low_confidence` for later
+  correction.
+
+Per-page Tesseract results are cached in `--work-dir` (default `<book>.ocr` next to the PDF), so an
+interrupted run resumes. Each Tesseract process runs single-threaded; `--jobs` sets how many pages
+run in parallel. Requires Tesseract with the requested language data on PATH (see
+`pdftranslate doctor`).
+
+Known limits: decorative drop capitals may be misread (`Fe most` for `For most`); note numbers
+that OCR dropped entirely cannot be recovered; block quotations are not yet marked.
+
 ## Windows setup
 
 From PowerShell, clone or open the repository and run:
