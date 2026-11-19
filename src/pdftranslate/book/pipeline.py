@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,7 @@ import pymupdf
 from pdftranslate.book.assembly import AssemblyOptions, assemble_book
 from pdftranslate.book.models import BookDocument, BookOcrInfo, PageOcr
 from pdftranslate.book.tesseract import TesseractRunner, parse_tsv
+from pdftranslate.pdf.errors import PdfCorruptError, PdfNotFoundError
 from pdftranslate.pdf.page_ranges import parse_page_range
 from pdftranslate.pdf.pymupdf_backend import source_identity
 
@@ -40,15 +42,23 @@ def ocr_book(
 ) -> BookDocument:
     """OCR selected pages afresh and rebuild the book's paragraph flow.
 
-    Per-page TSV results are cached in ``work_dir`` so an interrupted run resumes.
+    Per-page TSV results are cached under ``work_dir`` in a folder keyed by the source hash and
+    OCR settings, so an interrupted run resumes without reusing results from another input.
     """
     settings = options or BookOcrOptions()
     path = source.expanduser().resolve()
+    if not path.is_file():
+        raise PdfNotFoundError(f"input PDF does not exist or is not a file: {path}")
     identity = source_identity(path)
-    work_dir = (settings.work_dir or path.with_name(f"{path.stem}.ocr")).resolve()
+    root = (settings.work_dir or path.with_name(f"{path.stem}.ocr")).resolve()
+    work_dir = root / _cache_key(identity.sha256, runner)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    with pymupdf.open(path) as document:  # type: ignore[no-untyped-call]
+    try:
+        document = pymupdf.open(path)  # type: ignore[no-untyped-call]
+    except Exception as error:
+        raise PdfCorruptError(f"cannot open PDF {path}: {error}") from error
+    with document:
         page_count = document.page_count
         selected = parse_page_range(settings.pages, page_count)
         pending: list[tuple[int, Path, int]] = []
@@ -125,6 +135,12 @@ def _page_image(document: pymupdf.Document, number: int, work_dir: Path) -> tupl
     pixmap = page.get_pixmap(dpi=_RENDER_DPI)
     pixmap.save(target)  # type: ignore[no-untyped-call]
     return target, _RENDER_DPI
+
+
+def _cache_key(sha256: str, runner: TesseractRunner) -> str:
+    """Separate caches per source file and OCR configuration so stale pages are never reused."""
+    identity = f"{sha256}\0{runner.language}\0{runner.page_segmentation_mode}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
 
 def _tsv_path(work_dir: Path, number: int) -> Path:

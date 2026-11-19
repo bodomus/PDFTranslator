@@ -754,6 +754,11 @@ def book_ocr(
     """OCR a scanned book afresh and rebuild its paragraphs, headings and page flow."""
     targets = [output] + ([text_output] if text_output is not None else [])
     try:
+        resolved = {target.expanduser().resolve() for target in targets}
+        if len(resolved) != len(targets):
+            raise OutputExistsError("--output and --text must be different files")
+        if input_path.expanduser().resolve() in resolved:
+            raise OutputExistsError("outputs must not replace the source PDF")
         for target in targets:
             if target.exists() and not overwrite:
                 raise OutputExistsError(f"output already exists; use --overwrite: {target}")
