@@ -108,6 +108,18 @@ class BookParagraph(DomainModel):
     pages: tuple[int, ...] = Field(min_length=1)
     note_markers: tuple[int, ...] = ()
     low_confidence: tuple[str, ...] = ()
+    translation: str | None = None
+    translation_error: str | None = None
+
+
+class BookTranslationInfo(DomainModel):
+    """Which engine produced the paragraph translations and how many are still missing."""
+
+    engine: str
+    engine_id: str
+    target_language: Literal["ru"] = "ru"
+    translated: int = Field(ge=0)
+    failed: int = Field(ge=0)
 
 
 class BookOcrInfo(DomainModel):
@@ -139,3 +151,4 @@ class BookDocument(DomainModel):
     statistics: BookStatistics
     running_headers: tuple[RunningHeader, ...] = ()
     paragraphs: tuple[BookParagraph, ...] = ()
+    translation: BookTranslationInfo | None = None

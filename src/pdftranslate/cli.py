@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import platform
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any, Never, Protocol, cast
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 from typer.core import TyperGroup
@@ -28,14 +30,18 @@ from pdftranslate.benchmark import (
     write_report_markdown,
 )
 from pdftranslate.book import (
+    BookDocument,
     BookOcrOptions,
     TesseractError,
     TesseractRunner,
     book_to_text,
+    book_translation_text,
     ocr_book,
+    translate_book,
 )
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
+from pdftranslate.engines import EngineError, EngineSettings, create_engine
 from pdftranslate.glossary import load_glossary
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.ocr import OcrMode, inspect_ocr_dependencies
@@ -786,6 +792,115 @@ def book_ocr(
         f"Rebuilt {stats.paragraphs} paragraph(s) from {stats.pages} page(s): "
         f"{stats.headings} heading(s), {stats.cross_page_merges} cross-page merge(s), "
         f"{stats.note_markers} note marker(s), {stats.low_confidence_words} low-confidence word(s)"
+    )
+
+
+@app.command("book-translate")
+def book_translate(
+    input_path: Annotated[Path, typer.Argument(help="Book JSON written by book-ocr.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination for the translated book JSON."),
+    ],
+    engine_name: Annotated[
+        str,
+        typer.Option("--engine", help="Translation engine: llm (local chat model) or nllb."),
+    ] = "llm",
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Model name; for llm, the name the local server uses."),
+    ] = None,
+    endpoint: Annotated[
+        str | None,
+        typer.Option("--endpoint", help="OpenAI-compatible base URL for llm, e.g. :8080/v1."),
+    ] = None,
+    temperature: Annotated[
+        float, typer.Option("--temperature", min=0.0, max=2.0, help="llm sampling temperature.")
+    ] = 0.2,
+    parallel: Annotated[
+        int, typer.Option("--parallel", min=1, help="Concurrent llm requests.")
+    ] = 1,
+    beams: Annotated[int, typer.Option("--beams", min=1, help="nllb beam search width.")] = 4,
+    device: Annotated[
+        str, typer.Option("--device", help="nllb device: auto, cpu or cuda.")
+    ] = "auto",
+    domain: Annotated[
+        str | None,
+        typer.Option("--domain", help="One line on the book's subject, given to the llm."),
+    ] = None,
+    text_output: Annotated[
+        Path | None,
+        typer.Option("--text", help="Optional plain-text Russian copy for review."),
+    ] = None,
+    cache_dir: Annotated[
+        Path | None,
+        typer.Option("--cache-dir", help="Root for model files and translation memory."),
+    ] = None,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use only locally cached nllb model files.")
+    ] = False,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace existing outputs."),
+    ] = False,
+) -> None:
+    """Translate a rebuilt book; failed paragraphs are kept and retried on the next run."""
+    settings = Settings()
+    configure_logging(settings.log_level)
+    root_cache = (cache_dir or settings.cache_dir).expanduser().resolve()
+    targets = [output] + ([text_output] if text_output is not None else [])
+    try:
+        resolved = {target.expanduser().resolve() for target in targets}
+        if len(resolved) != len(targets):
+            raise OutputExistsError("--output and --text must be different files")
+        if input_path.expanduser().resolve() in resolved:
+            raise OutputExistsError("outputs must not replace the input book JSON")
+        for target in targets:
+            if target.exists() and not overwrite:
+                raise OutputExistsError(f"output already exists; use --overwrite: {target}")
+        if device not in {"auto", "cpu", "cuda"}:
+            raise EngineError("--device must be one of: auto, cpu, cuda")
+        book = BookDocument.model_validate_json(input_path.read_text(encoding="utf-8"))
+        engine = create_engine(
+            engine_name,
+            EngineSettings(
+                model=model,
+                endpoint=endpoint,
+                api_key=os.environ.get("PDFTRANSLATE_LLM_API_KEY"),
+                temperature=temperature,
+                parallel_requests=parallel,
+                beams=beams,
+                device=device,
+                cache_dir=str(root_cache),
+                offline=offline,
+                extra={"domain": domain} if domain else {},
+            ),
+        )
+        console.print(f"Engine {engine.engine_id}")
+
+        def report(done: int, total: int, failed: int) -> None:
+            console.print(f"Paragraphs {done}/{total}; failed {failed}")
+
+        with TranslationCache(root_cache / "translation-memory.sqlite3") as cache:
+            translated = translate_book(
+                book, engine, engine_name=engine_name, cache=cache, progress=report
+            )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(translated.model_dump_json(indent=2), encoding="utf-8")
+        if text_output is not None:
+            text_output.parent.mkdir(parents=True, exist_ok=True)
+            text_output.write_text(book_translation_text(translated), encoding="utf-8")
+    except ValidationError as error:
+        _exit_with_error(ValueError(f"invalid book JSON {input_path}: {error}"))
+    except (EngineError, OutputExistsError, TranslationError, OSError, ValueError) as error:
+        _exit_with_error(error)
+
+    info = translated.translation
+    assert info is not None
+    console.print(
+        f"Translated {info.translated}/{len(translated.paragraphs)} paragraph(s) to "
+        f"[path]{output}[/path]; failed {info.failed}"
+        + ("; rerun the same command to retry them" if info.failed else "")
     )
 
 
