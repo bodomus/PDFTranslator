@@ -123,33 +123,22 @@ class PdfRenderer:
         _validate_output_paths(source, output, debug_output, failed_output, settings.overwrite)
         _validate_document(source, translated, settings.force_source_mismatch)
 
-        paragraph_mode = translated.schema_version == "1.3"
-        translations = (
-            tuple(
-                cast(str, paragraph.translated_text)
-                for paragraph in translated.paragraphs
-                if _paragraph_policy(translated, paragraph)
-                not in {
-                    RepeatedElementPolicy.PRESERVE,
-                    RepeatedElementPolicy.SKIP,
-                    RepeatedElementPolicy.REMOVE,
-                }
-            )
-            if translated.schema_version == "1.3"
-            else tuple(
-                cast(str, block.translated_text)
-                for page in translated.pages
-                for block in page.text_blocks
-            )
+        translations = tuple(
+            cast(str, paragraph.translated_text)
+            for paragraph in translated.paragraphs
+            if _paragraph_policy(translated, paragraph)
+            not in {
+                RepeatedElementPolicy.PRESERVE,
+                RepeatedElementPolicy.SKIP,
+                RepeatedElementPolicy.REMOVE,
+            }
         )
         selected_font = discover_font(font_path)
         validate_font(selected_font, translations)
-        style_by_occurrence: dict[int, ResolvedParagraphStyle] = {}
-        if translated.schema_version == "1.3":
-            resolved_styles = reconstruct_styles(extract_typography_evidence(translated))
-            style_by_occurrence = {
-                style.occurrence_index: style for style in resolved_styles.paragraphs
-            }
+        resolved_styles = reconstruct_styles(extract_typography_evidence(translated))
+        style_by_occurrence: dict[int, ResolvedParagraphStyle] = {
+            style.occurrence_index: style for style in resolved_styles.paragraphs
+        }
         output.parent.mkdir(parents=True, exist_ok=True)
 
         temporary_output = _temporary_pdf_path(output)
@@ -200,13 +189,10 @@ class PdfRenderer:
                 )
                 _ensure_render_complete(block_results, source, failed_output, plans)
 
-                if paragraph_mode:
-                    _redact_paragraph_fragments(document, translated, settings, warnings)
+                _redact_paragraph_fragments(document, translated, settings, warnings)
                 for page_model in translated.pages:
                     page = document[page_model.source_index]
                     page_plans = plans_by_source_index[page_model.source_index]
-                    if not paragraph_mode:
-                        _redact_page(page, page_plans, settings.redaction_padding, warnings)
                     _insert_page(page, page_plans, selected_font, settings.line_height)
                     for plan in page_plans:
                         text = cast(str, plan.block.translated_text)
@@ -322,13 +308,6 @@ def _plan_reflow_document(
     *,
     style_by_occurrence: dict[int, ResolvedParagraphStyle] | None = None,
 ) -> DocumentLayoutPlan:
-    if translated.schema_version != "1.3":
-        return DocumentLayoutPlan(
-            plans=(),
-            final_page_by_source=tuple(
-                (page.page_number, page.source_index + 1) for page in translated.pages
-            ),
-        )
     plans: list[LayoutPlan] = []
     final_page_by_source: list[tuple[int, int]] = []
     inserted_before = 0
@@ -552,26 +531,18 @@ def _render_units_by_page(
     excluded_occurrences: frozenset[int] = frozenset(),
 ) -> dict[int, tuple[tuple[int, TextBlock], ...]]:
     grouped: dict[int, list[tuple[int, TextBlock]]] = {}
-    if translated.schema_version == "1.3":
-        for unit_index, paragraph in enumerate(translated.paragraphs):
-            if unit_index in excluded_occurrences:
-                continue
-            if _paragraph_policy(translated, paragraph) in {
-                RepeatedElementPolicy.PRESERVE,
-                RepeatedElementPolicy.SKIP,
-                RepeatedElementPolicy.REMOVE,
-            }:
-                continue
-            grouped.setdefault(paragraph.anchor_page_number, []).append(
-                (unit_index, _paragraph_block(paragraph))
-            )
-        return {page: tuple(blocks) for page, blocks in grouped.items()}
-
-    unit_index = 0
-    for page in translated.pages:
-        for block in page.text_blocks:
-            grouped.setdefault(page.page_number, []).append((unit_index, block))
-            unit_index += 1
+    for unit_index, paragraph in enumerate(translated.paragraphs):
+        if unit_index in excluded_occurrences:
+            continue
+        if _paragraph_policy(translated, paragraph) in {
+            RepeatedElementPolicy.PRESERVE,
+            RepeatedElementPolicy.SKIP,
+            RepeatedElementPolicy.REMOVE,
+        }:
+            continue
+        grouped.setdefault(paragraph.anchor_page_number, []).append(
+            (unit_index, _paragraph_block(paragraph))
+        )
     return {page: tuple(blocks) for page, blocks in grouped.items()}
 
 
@@ -631,32 +602,23 @@ def _validate_output_paths(
 
 def _validate_document(source: Path, translated: ExtractedDocument, force_mismatch: bool) -> None:
     metadata = translated.translation
-    if translated.schema_version not in {"1.1", "1.3"} or metadata is None:
-        raise RenderingInputError("rendering requires translated document schema 1.1 or 1.3")
+    if translated.schema_version != "1.3" or metadata is None:
+        raise RenderingInputError("rendering requires translated document schema 1.3")
     if metadata.status != "completed":
         raise RenderingInputError("rendering requires a completed translation")
-    if translated.schema_version == "1.3":
-        missing = tuple(
-            paragraph.id
-            for paragraph in translated.paragraphs
-            if (
-                paragraph.translated_text is None
-                or (
-                    not paragraph.translated_text.strip()
-                    and _paragraph_policy(translated, paragraph)
-                    not in {RepeatedElementPolicy.SKIP, RepeatedElementPolicy.REMOVE}
-                )
+    missing = tuple(
+        paragraph.id
+        for paragraph in translated.paragraphs
+        if (
+            paragraph.translated_text is None
+            or (
+                not paragraph.translated_text.strip()
+                and _paragraph_policy(translated, paragraph)
+                not in {RepeatedElementPolicy.SKIP, RepeatedElementPolicy.REMOVE}
             )
         )
-        label = "paragraph"
-    else:
-        missing = tuple(
-            block.id
-            for page in translated.pages
-            for block in page.text_blocks
-            if block.translated_text is None or not block.translated_text.strip()
-        )
-        label = "block"
+    )
+    label = "paragraph"
     if missing:
         raise RenderingInputError(
             f"translated text is missing for {label}(s): {', '.join(missing[:8])}"
@@ -713,17 +675,14 @@ def _validate_document(source: Path, translated: ExtractedDocument, force_mismat
             if not _bbox_close(actual_block.bbox, expected_block.bbox):
                 raise SourceMismatchError(f"bounding box mismatch for block {expected_block.id}")
             _validate_bbox(expected_block.bbox, expected_page.width, expected_page.height)
-    if translated.schema_version == "1.3":
-        actual_paragraphs = tuple(
-            (item.id, item.text, item.fragments) for item in current.paragraphs
+    actual_paragraphs = tuple((item.id, item.text, item.fragments) for item in current.paragraphs)
+    expected_paragraphs = tuple(
+        (item.id, item.text, item.fragments) for item in translated.paragraphs
+    )
+    if actual_paragraphs != expected_paragraphs:
+        raise SourceMismatchError(
+            "paragraph reconstruction or source mapping does not match the source PDF"
         )
-        expected_paragraphs = tuple(
-            (item.id, item.text, item.fragments) for item in translated.paragraphs
-        )
-        if actual_paragraphs != expected_paragraphs:
-            raise SourceMismatchError(
-                "paragraph reconstruction or source mapping does not match the source PDF"
-            )
 
 
 def _paragraph_policy(
@@ -846,27 +805,6 @@ def _fit(
     return None, attempts
 
 
-def _redact_page(
-    page: pymupdf.Page,
-    plans: list[_BlockPlan],
-    padding: float,
-    warnings: list[str],
-) -> None:
-    for plan in plans:
-        redaction_rect = _safe_redaction_rect(plan, plans, page.rect, padding)
-        if padding > 0 and redaction_rect == plan.source_rect:
-            padded = _padded_rect(plan.source_rect, page.rect, padding)
-            if padded != plan.source_rect:
-                warnings.append(f"block {plan.block.id}: redaction padding reduced near other text")
-        page.add_redact_annot(redaction_rect, fill=plan.background, cross_out=False)
-    if plans:
-        page.apply_redactions(
-            images=0,  # preserve overlapping image objects
-            graphics=0,  # preserve overlapping vector objects
-            text=0,  # remove overlapping text
-        )
-
-
 def _insert_page(
     page: pymupdf.Page,
     plans: list[_BlockPlan],
@@ -889,27 +827,6 @@ def _insert_page(
         if remaining < -1e-6:
             raise OutputPdfError(f"layout changed while inserting block {plan.block.id}")
         shape.commit(overlay=True)
-
-
-def _safe_redaction_rect(
-    plan: _BlockPlan,
-    plans: list[_BlockPlan],
-    page_rect: pymupdf.Rect,
-    padding: float,
-) -> pymupdf.Rect:
-    candidate = _padded_rect(plan.source_rect, page_rect, padding)
-    for other in plans:
-        if other is plan:
-            continue
-        candidate_overlaps = candidate.intersects(  # type: ignore[no-untyped-call]
-            other.source_rect
-        )
-        source_overlaps = plan.source_rect.intersects(  # type: ignore[no-untyped-call]
-            other.source_rect
-        )
-        if candidate_overlaps and not source_overlaps:
-            return plan.source_rect
-    return candidate
 
 
 def _padded_rect(rect: pymupdf.Rect, page_rect: pymupdf.Rect, padding: float) -> pymupdf.Rect:
@@ -1201,61 +1118,46 @@ def _render_results(
                 ),
                 inline_style_decisions=inline_decisions,
             )
-    if translated.schema_version == "1.3":
-        for unit_index, paragraph in enumerate(translated.paragraphs):
-            policy = _paragraph_policy(translated, paragraph)
-            if policy is RepeatedElementPolicy.TRANSLATE:
-                if unit_index not in results:
-                    results[unit_index] = _unplanned_result(
-                        unit_index,
-                        paragraph.anchor_page_number,
-                        paragraph.id,
-                        paragraph.bbox,
-                        len(paragraph.translated_text or ""),
-                        min_font_size,
-                    )
-                continue
-            state = (
-                RenderState.PRESERVED
-                if policy is RepeatedElementPolicy.PRESERVE
-                else RenderState.EXCLUDED_BY_POLICY
-            )
-            results[unit_index] = BlockRenderResult(
-                unit_index=unit_index,
-                page_number=paragraph.anchor_page_number,
-                block_id=paragraph.id,
-                policy=policy,
-                state=state,
-                source_bbox=paragraph.bbox,
-                final_bbox=paragraph.bbox,
-                initial_font_size=None,
-                font_size=None,
-                min_font_size=min_font_size,
-                fitting_attempts=0,
-                expanded=False,
-                overflow=False,
-                translated_character_count=len(paragraph.translated_text or ""),
-                strategy=RenderStrategy.ANCHORED_PRESERVED,
-                target_pages=(
-                    (final_page_by_source or {}).get(
-                        paragraph.anchor_page_number, paragraph.anchor_page_number
-                    ),
+    for unit_index, paragraph in enumerate(translated.paragraphs):
+        policy = _paragraph_policy(translated, paragraph)
+        if policy is RepeatedElementPolicy.TRANSLATE:
+            if unit_index not in results:
+                results[unit_index] = _unplanned_result(
+                    unit_index,
+                    paragraph.anchor_page_number,
+                    paragraph.id,
+                    paragraph.bbox,
+                    len(paragraph.translated_text or ""),
+                    min_font_size,
+                )
+            continue
+        state = (
+            RenderState.PRESERVED
+            if policy is RepeatedElementPolicy.PRESERVE
+            else RenderState.EXCLUDED_BY_POLICY
+        )
+        results[unit_index] = BlockRenderResult(
+            unit_index=unit_index,
+            page_number=paragraph.anchor_page_number,
+            block_id=paragraph.id,
+            policy=policy,
+            state=state,
+            source_bbox=paragraph.bbox,
+            final_bbox=paragraph.bbox,
+            initial_font_size=None,
+            font_size=None,
+            min_font_size=min_font_size,
+            fitting_attempts=0,
+            expanded=False,
+            overflow=False,
+            translated_character_count=len(paragraph.translated_text or ""),
+            strategy=RenderStrategy.ANCHORED_PRESERVED,
+            target_pages=(
+                (final_page_by_source or {}).get(
+                    paragraph.anchor_page_number, paragraph.anchor_page_number
                 ),
-            )
-    else:
-        unit_index = 0
-        for page in translated.pages:
-            for block in page.text_blocks:
-                if unit_index not in results:
-                    results[unit_index] = _unplanned_result(
-                        unit_index,
-                        page.page_number,
-                        block.id,
-                        block.bbox,
-                        len(block.translated_text or ""),
-                        min_font_size,
-                    )
-                unit_index += 1
+            ),
+        )
     return tuple(results[index] for index in sorted(results))
 
 

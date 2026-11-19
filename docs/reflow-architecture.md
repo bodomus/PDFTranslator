@@ -5,8 +5,8 @@
 PDFTR-23 promotes the PDFTR-22 proof into a production boundary under
 `src/pdftranslate/rendering/reflow/`. The normal renderer automatically selects reflow only for
 confidently classified single-column body prose and headings. The fixed-layout
-renderer remains authoritative for other content, and the isolated executable PoC remains under
-`scripts/reflow_poc/` as historical evidence rather than a production dependency.
+renderer remains authoritative for other content. The original executable PoC is preserved on the
+`legacy` branch under `scripts/reflow_poc/`.
 
 PDFTR-24 extends that boundary to conservatively discovered, ordered footnote groups. It uses the
 source footnote region first and then bounded dedicated continuation pages, coordinated through one

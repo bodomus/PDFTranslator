@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- Agent orchestration tooling (two-agent ticket cycle, Pi runner, independent review dispatch and
+  publication, YouTrack synchronization, ProjectWiki) and its tests, ticket/review/plan archives,
+  and related README/CI steps. The complete previous state is preserved on the `legacy` branch.
+- The reflow proof-of-concept script; production reflow lives in `pdftranslate.rendering.reflow`.
+- Block-level legacy translation and rendering (document schemas 1.0/1.1). Translation now
+  requires extracted schema 1.2 and rendering requires translated schema 1.3.
+
 ### Added
 
 - Trusted independent-review return path (PDFTR-51): authenticated HTTPS polling reuses the

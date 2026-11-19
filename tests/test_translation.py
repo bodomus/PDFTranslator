@@ -84,38 +84,6 @@ class OomTranslator(FakeTranslator):
         return [f"RU {texts[0]}"]
 
 
-def _document(*texts: str) -> ExtractedDocument:
-    blocks = tuple(
-        TextBlock(
-            id=f"p1-b{index}",
-            text=text,
-            bbox=BoundingBox(x0=0, y0=index * 10, x1=100, y1=index * 10 + 8),
-            original_order=index,
-            normalized_order=index,
-        )
-        for index, text in enumerate(texts)
-    )
-    return ExtractedDocument(
-        source=SourceDocument(path="C:/input/source.pdf", file_size=100, sha256="0" * 64),
-        page_count=1,
-        selected_pages=(1,),
-        metadata=DocumentMetadata(),
-        encrypted=False,
-        password_required=False,
-        pages=(
-            ExtractedPage(
-                page_number=1,
-                source_index=0,
-                width=100,
-                height=100,
-                rotation=0,
-                classification=PageClassification.TEXT,
-                text_blocks=blocks,
-            ),
-        ),
-    )
-
-
 def _paragraph_document(*paragraph_texts: str, paragraph_id: str = "p1-b1") -> ExtractedDocument:
     box = BoundingBox(x0=0, y0=0, x1=100, y1=40)
     block = TextBlock(
@@ -196,7 +164,7 @@ def test_pipeline_preserves_originals_protected_tokens_and_duplicates(tmp_path: 
         "Visit https://example.com, email a@example.com, use C:\\docs\\a.txt, "
         "then set 25 mm for item ID-12345."
     )
-    source = _document(protected, protected, "42", "A normal sentence.")
+    source = _paragraph_document(protected, protected, "42", "A normal sentence.")
     translator = FakeTranslator()
 
     with TranslationCache(tmp_path / "cache.sqlite3") as cache:
@@ -207,8 +175,8 @@ def test_pipeline_preserves_originals_protected_tokens_and_duplicates(tmp_path: 
             options=TranslationOptions(batch_size=2, max_input_tokens=30),
         )
 
-    blocks = result.pages[0].text_blocks
-    assert result.schema_version == "1.1"
+    blocks = result.paragraphs
+    assert result.schema_version == "1.3"
     assert [block.text for block in blocks] == [protected, protected, "42", "A normal sentence."]
     assert blocks[0].translated_text == blocks[1].translated_text
     assert "https://example.com" in (blocks[0].translated_text or "")
@@ -458,7 +426,7 @@ def test_foreign_language_evidence_is_exposed_in_diagnostics(tmp_path: Path) -> 
 
 
 def test_cache_prevents_work_across_runs(tmp_path: Path) -> None:
-    source = _document("Repeated source sentence.")
+    source = _paragraph_document("Repeated source sentence.")
     cache_path = tmp_path / "cache.sqlite3"
     first = FakeTranslator()
     with TranslationCache(cache_path) as cache:
@@ -485,7 +453,7 @@ def test_cache_prevents_work_across_runs(tmp_path: Path) -> None:
 
 
 def test_long_text_is_segmented_without_truncation(tmp_path: Path) -> None:
-    source = _document(" ".join(f"word{number}" for number in range(30)))
+    source = _paragraph_document(" ".join(f"word{number}" for number in range(30)))
     translator = FakeTranslator()
     with TranslationCache(tmp_path / "cache.sqlite3") as cache:
         result = translate_document(
@@ -499,13 +467,13 @@ def test_long_text_is_segmented_without_truncation(tmp_path: Path) -> None:
     assert all(translator.count_tokens(text) <= 8 for batch in translator.batches for text in batch)
     assert result.translation is not None
     assert result.translation.warnings
-    translated = result.pages[0].text_blocks[0].translated_text or ""
+    translated = result.paragraphs[0].translated_text or ""
     assert all(f"word{number}" in translated for number in range(30))
 
 
 def test_oom_batches_are_split_with_a_finite_fallback(tmp_path: Path) -> None:
     translator = OomTranslator()
-    source = _document("First sentence.", "Second sentence.")
+    source = _paragraph_document("First sentence.", "Second sentence.")
     with TranslationCache(tmp_path / "cache.sqlite3") as cache:
         result = translate_document(
             source,
@@ -520,7 +488,7 @@ def test_oom_batches_are_split_with_a_finite_fallback(tmp_path: Path) -> None:
 
 
 def test_interruption_checkpoint_can_resume(tmp_path: Path) -> None:
-    source = _document("Translate this sentence.")
+    source = _paragraph_document("Translate this sentence.")
     checkpoints: list[ExtractedDocument] = []
     cache_path = tmp_path / "cache.sqlite3"
 

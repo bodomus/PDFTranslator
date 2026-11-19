@@ -50,7 +50,7 @@ packages = ["src/pdftranslate"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
-extend-exclude = [".agents", ".codex", ".code-review-graph", "graphify-out", "Tasks", "Tickets"]
+extend-exclude = [".code-review-graph", "graphify-out"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
