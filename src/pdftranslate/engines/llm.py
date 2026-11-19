@@ -145,8 +145,11 @@ def validate_translation(source: str, translation: str) -> str | None:
     """Reject empty, untranslated or wildly mis-sized output; return the reason or None."""
     if not translation:
         return "empty translation"
-    if _LATIN_WORD.search(source) and not _CYRILLIC.search(translation):
-        return "output contains no Russian text"
+    if not _CYRILLIC.search(translation):
+        if _LATIN_WORD.search(source):
+            return "output contains no Russian text"
+        if set(_LATIN_WORD.findall(translation)) - set(_LATIN_WORD.findall(source)):
+            return "output is English text that is not in the source"
     ratio = len(translation) / max(1, len(source))
     if len(source) >= 80 and not 0.5 <= ratio <= 2.5:
         return f"suspicious length ratio {ratio:.2f}"

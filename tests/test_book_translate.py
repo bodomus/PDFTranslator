@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from pdftranslate.book import BookDocument, book_translation_text, translate_book
 from pdftranslate.book.models import BookOcrInfo, BookParagraph, BookStatistics
-from pdftranslate.book.translate import _schedule
+from pdftranslate.book.translate import _schedule, needs_translation
 from pdftranslate.cli import app
 from pdftranslate.domain.document import SourceDocument
 from pdftranslate.engines import (
@@ -248,6 +248,7 @@ def test_clean_output_and_validation() -> None:
     long_source = "word " * 40
     assert validate_translation(long_source, "Слово") is not None
     assert validate_translation("1945", "1945") is None
+    assert validate_translation("1", "Could you clarify what you mean?") is not None
 
 
 def test_split_sentences_keeps_abbreviations_and_initials() -> None:
@@ -354,3 +355,14 @@ def test_book_translate_cli_rejects_bad_input(tmp_path: Path) -> None:
     no_model = runner.invoke(app, ["book-translate", str(source), "-o", str(tmp_path / "o.json")])
     assert no_model.exit_code == 2
     assert "--model" in no_model.output
+
+
+def test_numbers_and_roman_numerals_are_not_sent_to_the_engine() -> None:
+    engine = FakeEngine()
+
+    result = translate_book(_book(["1", "XIV", "— 3 —", "One"]), engine, engine_name="fake")
+
+    assert [item.translation for item in result.paragraphs] == ["1", "XIV", "— 3 —", "ONE"]
+    assert engine.calls == [["One"]]
+    assert not needs_translation("IV.")
+    assert needs_translation("Vlad")
