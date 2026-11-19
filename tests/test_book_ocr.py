@@ -280,3 +280,54 @@ def test_runner_invokes_tsv_with_single_thread_and_reports_failures(tmp_path: Pa
     assert environments[-1]["OMP_THREAD_LIMIT"] == "1"
     with pytest.raises(TesseractError, match="cannot read"):
         runner.recognize(tmp_path / "bad.png", 300)
+
+
+def test_paragraphs_do_not_merge_across_omitted_pages() -> None:
+    first = _page(1, [(1, 300, f"Start {FULL}"), (1, 350, f"middle {FULL}")])
+    third = _page(3, [(1, 300, f"continued {FULL}"), (1, 350, "end.")])
+
+    book = assemble_book([first, third])
+
+    assert [item.pages for item in book.paragraphs] == [(1,), (3,)]
+
+
+def test_corrupt_pdf_is_a_user_facing_input_error(tmp_path: Path) -> None:
+    from pdftranslate.pdf.errors import PdfCorruptError, PdfNotFoundError
+
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"not a pdf")
+
+    with pytest.raises(PdfCorruptError):
+        ocr_book(broken, FakeRunner(), BookOcrOptions(work_dir=tmp_path / "w"))  # type: ignore[arg-type]
+    with pytest.raises(PdfNotFoundError):
+        ocr_book(tmp_path / "missing.pdf", FakeRunner())  # type: ignore[arg-type]
+
+
+def test_cache_is_separate_per_ocr_language(tmp_path: Path) -> None:
+    source = _scanned_pdf(tmp_path / "book.pdf", 1)
+    options = BookOcrOptions(work_dir=tmp_path / "work", jobs=1)
+    ocr_book(source, FakeRunner(), options)  # type: ignore[arg-type]
+
+    latin = FakeRunner()
+    latin.language = "eng+lat"
+    book = ocr_book(source, latin, options)  # type: ignore[arg-type]
+
+    assert len(latin.calls) == 1
+    assert book.ocr.language == "eng+lat"
+
+
+def test_cli_rejects_identical_json_and_text_outputs(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from pdftranslate.cli import app
+
+    source = _scanned_pdf(tmp_path / "book.pdf", 1)
+    target = tmp_path / "out.json"
+
+    result = CliRunner().invoke(
+        app, ["book-ocr", str(source), "-o", str(target), "--text", str(target)]
+    )
+
+    assert result.exit_code == 2
+    assert "different files" in result.output
+    assert not target.exists()

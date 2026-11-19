@@ -104,8 +104,9 @@ uv run pdftranslate book-ocr .\book.pdf `
 - Words recognized with confidence below 50 are listed per paragraph in `low_confidence` for later
   correction.
 
-Per-page Tesseract results are cached in `--work-dir` (default `<book>.ocr` next to the PDF), so an
-interrupted run resumes. Each Tesseract process runs single-threaded; `--jobs` sets how many pages
+Per-page Tesseract results are cached in `--work-dir` (default `<book>.ocr` next to the PDF), in a
+subfolder keyed by the source hash and OCR settings, so an interrupted run resumes and a changed
+source or language never reuses stale pages. Paragraphs are only joined across adjacent pages. Each Tesseract process runs single-threaded; `--jobs` sets how many pages
 run in parallel. Requires Tesseract with the requested language data on PATH (see
 `pdftranslate doctor`).
 

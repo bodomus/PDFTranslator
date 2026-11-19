@@ -304,7 +304,7 @@ def _split_at_short_lines(
 
 
 def _continues(previous: _Draft, block: PageBlock, page_number: int) -> bool:
-    if previous.kind != "body" or previous.from_page >= page_number:
+    if previous.kind != "body" or page_number != previous.from_page + 1:
         return False
     if block.lines[0].text[:1].islower():
         return True
