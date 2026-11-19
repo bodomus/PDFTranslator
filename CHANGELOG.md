@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   per-page caching, running header removal, cross-page paragraph joining, book-vocabulary
   dehyphenation, note-marker cleanup and low-confidence word reporting, written as `book-1.0`
   JSON plus an optional plain-text review copy.
+- `book-translate` command and pluggable engine layer (PDFTR-46): `llm` engine for local
+  OpenAI-compatible chat servers with previous-paragraph context, literary EN-to-RU prompt,
+  output cleanup and validation; `nllb` engine with sentence segmentation and beam search.
+  Failed paragraphs are recorded instead of aborting, and finished ones are cached for reruns.
 
 ### Removed
 

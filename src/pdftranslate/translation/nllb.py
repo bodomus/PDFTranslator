@@ -105,6 +105,7 @@ class NllbTranslator:
         cache_dir: Path,
         offline: bool = False,
         max_input_tokens: int = 512,
+        num_beams: int = 1,
         loader: Loader | None = None,
         torch_runtime: _TorchRuntime | None = None,
     ) -> None:
@@ -112,6 +113,9 @@ class NllbTranslator:
             raise TranslationBackendError("NLLB backend currently supports only English to Russian")
         if max_input_tokens < 8:
             raise TranslationBackendError("max_input_tokens must be at least 8")
+        if num_beams < 1:
+            raise TranslationBackendError("num_beams must be at least 1")
+        self._num_beams = num_beams
 
         self.model_name = model_name
         self._source_code = LANGUAGE_CODES[source_language]
@@ -211,6 +215,7 @@ class NllbTranslator:
                 **inputs,
                 forced_bos_token_id=self._target_token_id,
                 max_new_tokens=max(32, self._max_input_tokens * 2),
+                num_beams=self._num_beams,
             )
         translated = self._tokenizer.batch_decode(generated, skip_special_tokens=True)
         if len(translated) != len(texts):

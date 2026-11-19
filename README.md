@@ -113,6 +113,37 @@ run in parallel. Requires Tesseract with the requested language data on PATH (se
 Known limits: decorative drop capitals may be misread (`Fe most` for `For most`); note numbers
 that OCR dropped entirely cannot be recovered; block quotations are not yet marked.
 
+### Translating a book
+
+`book-translate` translates every paragraph of a `book-ocr` JSON file with a pluggable engine and
+writes the same JSON with `translation` (or `translation_error`) on each paragraph:
+
+```powershell
+# Local chat model behind an OpenAI-compatible server (llama.cpp, Ollama, LM Studio)
+uv run pdftranslate book-translate .\book.json `
+  --output .\book.ru.json `
+  --text .\book.ru.txt `
+  --engine llm `
+  --model qwen3 `
+  --endpoint http://localhost:8080/v1 `
+  --domain "history of Soviet intelligence"
+
+# NLLB through transformers, sentence by sentence with beam search
+uv run pdftranslate book-translate .\book.json -o .\book.nllb.json --engine nllb --beams 4
+```
+
+- Engines: `llm` sends the previous paragraph and its translation as context and keeps Russian
+  names, abbreviations and Latin expressions per its system prompt; `nllb` translates single
+  sentences. `PDFTRANSLATE_LLM_API_KEY` is sent as a bearer token if set.
+- `--parallel N` serves N llm requests at once by splitting the book into N contiguous lanes; the
+  server needs matching slots (`llama-server --parallel N`).
+- A paragraph that fails (server error, empty, untranslated or wildly mis-sized output after one
+  retry) keeps `translation_error` and does not stop the book. Finished paragraphs are stored in
+  the translation memory under `--cache-dir`, so rerunning the same command only translates what
+  is missing.
+- New engines implement `TranslationEngine` in `pdftranslate.engines` and register a factory with
+  `register_engine`; the engine id (model and every output-changing setting) namespaces the cache.
+
 ## Windows setup
 
 From PowerShell, clone or open the repository and run:
