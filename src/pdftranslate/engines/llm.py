@@ -21,7 +21,7 @@ from pdftranslate.engines.base import (
 PostJson = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any]]
 
 DEFAULT_ENDPOINT = "http://localhost:8080/v1"
-PROMPT_REVISION = 2
+PROMPT_REVISION = 3
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _FENCE = re.compile(r"^```[a-z]*\n?|\n?```$")
@@ -42,6 +42,8 @@ Rules:
 - Latin and other foreign expressions that a Russian edition would keep (agent provocateur,
   modus vivendi, persona non grata) stay in the original language.
 - Keep abbreviations such as KGB, NKVD, FCD in their usual Russian form (КГБ, НКВД, ПГУ).
+- Codenames written in capitals stay in capitals and in Cyrillic (VAZA -> ВАЗА,
+  HOMER -> ГОМЕР); a Russian codename becomes the Russian word (STARIK -> СТАРИК).
 - Keep the paragraph as one paragraph."""
 
 
@@ -84,8 +86,8 @@ class LlmEngine:
         if request.glossary:
             terms = "\n".join(f"- {source} -> {target}" for source, target in request.glossary)
             system += (
-                "\n\nUse these established translations, inflected as Russian grammar requires:\n"
-                + terms
+                "\n\nThis book's established translations; use them wherever the term has this "
+                "meaning, inflected as Russian grammar requires:\n" + terms
             )
         messages = [{"role": "system", "content": system}]
         if request.previous_source and request.previous_translation:

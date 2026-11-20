@@ -204,7 +204,7 @@ def test_llm_engine_builds_prompt_with_context_glossary_and_domain() -> None:
     assert "KGB history" in messages[0]["content"]
     assert "Lubyanka -> Лубянка" in messages[0]["content"]
     assert messages[-1]["content"] == "Kryuchkov returned."
-    assert engine.engine_id == "llm:qwen:t0.2:p2:KGB history"
+    assert engine.engine_id == "llm:qwen:t0.2:p3:KGB history"
     assert engine.capabilities.uses_context
 
 
@@ -403,3 +403,119 @@ def test_llm_engine_reports_reasoning_without_answer_once() -> None:
     error = engine.translate([EngineRequest("Hello")])[0].error
     assert error is not None and "reasoning" in error
     assert calls == 1
+
+
+def _glossary_file(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "book.tsv"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_tsv_glossary_loads_kinds_and_rejects_bad_lines(tmp_path: Path) -> None:
+    from pdftranslate.glossary import GlossaryError, load_glossary
+
+    loaded = load_glossary(
+        _glossary_file(
+            tmp_path,
+            "# comment\nKryuchkov\tКрючков\tname\nresidency\tрезидентура\tterm\n\n",
+        )
+    )
+    entries = loaded.document.entries
+    assert [(item.source, item.case_sensitive) for item in entries] == [
+        ("Kryuchkov", True),
+        ("residency", False),
+    ]
+    with pytest.raises(GlossaryError, match=":1: expected"):
+        load_glossary(_glossary_file(tmp_path, "Kryuchkov\tКрючков\n"))
+    with pytest.raises(GlossaryError, match="no entries"):
+        load_glossary(_glossary_file(tmp_path, "# nothing\n"))
+
+
+class GlossaryEngine(FakeEngine):
+    def __init__(self, reply: str) -> None:
+        super().__init__()
+        self.reply = reply
+        self._capabilities = EngineCapabilities(uses_context=True, uses_glossary=True)
+
+    def translate(self, requests: Sequence[EngineRequest]) -> list[EngineResult]:
+        self.requests.extend(requests)
+        return [EngineResult(self.reply) for _request in requests]
+
+
+def test_translate_book_sends_paragraph_terms_and_reports_misses(tmp_path: Path) -> None:
+    from pdftranslate.glossary import load_glossary
+
+    glossary = load_glossary(
+        _glossary_file(
+            tmp_path,
+            "Kryuchkov\tКрючков\tname\nFCD\tПГУ\tabbr\nmain adversary\tглавный противник\tterm\n",
+        )
+    ).document
+    engine = GlossaryEngine("Крючкова назначили в ПГУ.")
+
+    result = translate_book(
+        _book(["Kryuchkov’s FCD watched the Main Adversary."]),
+        engine,
+        engine_name="fake",
+        glossary=glossary,
+    )
+
+    assert engine.requests[0].glossary == (
+        ("Kryuchkov", "Крючков"),
+        ("FCD", "ПГУ"),
+        ("Main Adversary", "главный противник"),
+    )
+    assert result.paragraphs[0].glossary_misses == ("Main Adversary",)
+    assert result.translation is not None
+    assert (result.translation.glossary_entries, result.translation.glossary_misses) == (3, 1)
+
+
+def test_glossary_misses_allow_inflection_and_yo() -> None:
+    from pdftranslate.book.translate import glossary_misses
+
+    pairs = (("Khrushchev", "Хрущёв"), ("Cheka", "ЧК"), ("illegals", "нелегалы"))
+    assert glossary_misses("Хрущева и ЧК ценили нелегалов.", pairs) == ()
+    assert glossary_misses("Он ушёл.", (("IBM", "IBM"),)) == ("IBM",)
+
+
+def test_engines_without_glossary_support_get_no_terms(tmp_path: Path) -> None:
+    from pdftranslate.glossary import load_glossary
+
+    glossary = load_glossary(_glossary_file(tmp_path, "Kryuchkov\tКрючков\tname\n")).document
+    engine = FakeEngine()
+    translate_book(_book(["Kryuchkov left."]), engine, engine_name="fake", glossary=glossary)
+    assert engine.requests[0].glossary == ()
+
+
+def test_extract_terms_finds_names_and_codenames() -> None:
+    from pdftranslate.book.terms import extract_terms, terms_to_tsv
+
+    text = (
+        "The agent VAZA met Kryuchkov in the residency. When Kryuchkov arrived, the Centre "
+        "praised VAZA. Later Kryuchkov’s deputy and the Main Adversary argued. "
+        "The KGB and the KGB again. The party ended; the party left."
+    )
+    book = _book([text, "12. Andrew and Gordievsky, KGB, p. 1."])
+
+    terms = extract_terms(book, min_count=2)
+
+    found = {(item.term, item.kind): item.count for item in terms}
+    assert found[("Kryuchkov", "name")] == 3
+    assert found[("VAZA", "caps")] == 2
+    assert found[("KGB", "caps")] == 2
+    assert ("The", "name") not in found
+    assert all(item.term != "Gordievsky" for item in terms)
+    assert terms_to_tsv(terms).startswith("term\tkind\tcount\texample\n")
+
+
+def test_book_terms_cli(tmp_path: Path) -> None:
+    source = tmp_path / "book.json"
+    source.write_text(_book(["VAZA met VAZA and VAZA."]).model_dump_json(), encoding="utf-8")
+    target = tmp_path / "terms.tsv"
+
+    result = CliRunner().invoke(app, ["book-terms", str(source), "-o", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "VAZA\tcaps\t3" in target.read_text(encoding="utf-8")
+    again = CliRunner().invoke(app, ["book-terms", str(source), "-o", str(target)])
+    assert again.exit_code == 2

@@ -110,6 +110,7 @@ class BookParagraph(DomainModel):
     low_confidence: tuple[str, ...] = ()
     translation: str | None = None
     translation_error: str | None = None
+    glossary_misses: tuple[str, ...] = ()
 
 
 class BookTranslationInfo(DomainModel):
@@ -120,6 +121,8 @@ class BookTranslationInfo(DomainModel):
     target_language: Literal["ru"] = "ru"
     translated: int = Field(ge=0)
     failed: int = Field(ge=0)
+    glossary_entries: int = Field(default=0, ge=0)
+    glossary_misses: int = Field(default=0, ge=0)
 
 
 class BookOcrInfo(DomainModel):

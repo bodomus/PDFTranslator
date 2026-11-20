@@ -146,6 +146,14 @@ uv run pdftranslate book-translate .\book.json -o .\book.nllb.json --engine nllb
   retry) keeps `translation_error` and does not stop the book. Finished paragraphs are stored in
   the translation memory under `--cache-dir`, so rerunning the same command only translates what
   is missing.
+- `--glossary book.tsv` fixes names and terms across the book. Each line is
+  `source<TAB>target<TAB>kind`, where kind is `name`, `abbr`, `codename` or `ocr` (matched
+  case-sensitively) or `term` (any case); `#` starts a comment. The llm engine gets the entries
+  found in each paragraph and inflects them. Paragraphs whose translation lacks a glossary form
+  list the sources in `glossary_misses` for review. Glossary JSON files are accepted too.
+- `book-terms book.json -o terms.tsv` lists candidates for that glossary: capitalised names and
+  phrases that the book does not use as ordinary words, abbreviations and codenames, with counts
+  and an example. Note paragraphs (`12. ...`) are skipped.
 - New engines implement `TranslationEngine` in `pdftranslate.engines` and register a factory with
   `register_engine`; the engine id (model and every output-changing setting) namespaces the cache.
 
