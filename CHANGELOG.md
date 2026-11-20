@@ -18,6 +18,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   output cleanup and validation; `nllb` engine with sentence segmentation and beam search.
   Failed paragraphs are recorded instead of aborting, and finished ones are cached for reruns.
 
+### Fixed
+
+- `book-translate`: number-only paragraphs are copied instead of being sent to the engine; llm
+  output that adds English words absent from the source is rejected; reasoning is turned off on
+  Ollama via `reasoning_effort` and a reasoning-only answer fails without a retry. The llm prompt
+  revision is now 2, so translations cached by earlier versions are not reused.
+
 ### Removed
 
 - Agent orchestration tooling (two-agent ticket cycle, Pi runner, independent review dispatch and

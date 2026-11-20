@@ -21,7 +21,7 @@ from pdftranslate.engines.base import (
 PostJson = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any]]
 
 DEFAULT_ENDPOINT = "http://localhost:8080/v1"
-PROMPT_REVISION = 1
+PROMPT_REVISION = 2
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _FENCE = re.compile(r"^```[a-z]*\n?|\n?```$")

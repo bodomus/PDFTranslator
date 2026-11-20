@@ -204,7 +204,7 @@ def test_llm_engine_builds_prompt_with_context_glossary_and_domain() -> None:
     assert "KGB history" in messages[0]["content"]
     assert "Lubyanka -> Лубянка" in messages[0]["content"]
     assert messages[-1]["content"] == "Kryuchkov returned."
-    assert engine.engine_id == "llm:qwen:t0.2:p1:KGB history"
+    assert engine.engine_id == "llm:qwen:t0.2:p2:KGB history"
     assert engine.capabilities.uses_context
 
 
