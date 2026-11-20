@@ -55,6 +55,7 @@ class LlmEngine:
         self._endpoint = (settings.endpoint or DEFAULT_ENDPOINT).rstrip("/")
         self._post = post_json or _post_json
         self._domain = settings.extra.get("domain", "").strip()
+        self._reasoning_off = True
 
     @property
     def engine_id(self) -> str:
@@ -114,21 +115,39 @@ class LlmEngine:
             "temperature": self._settings.temperature,
             "max_tokens": self._settings.max_output_tokens,
             "stream": False,
-            # Qwen3-style models: answer directly instead of emitting a reasoning block.
+            # Answer directly instead of reasoning first: llama.cpp and LM Studio read the chat
+            # template switch, Ollama reads reasoning_effort.
             "chat_template_kwargs": {"enable_thinking": False},
         }
+        if self._reasoning_off:
+            payload["reasoning_effort"] = "none"
         headers = {"Content-Type": "application/json"}
         if self._settings.api_key:
             headers["Authorization"] = f"Bearer {self._settings.api_key}"
-        response = self._post(
-            f"{self._endpoint}/chat/completions", payload, headers, self._settings.timeout_seconds
-        )
+        url = f"{self._endpoint}/chat/completions"
         try:
-            return str(response["choices"][0]["message"]["content"])
-        except (KeyError, IndexError, TypeError) as error:
+            response = self._post(url, payload, headers, self._settings.timeout_seconds)
+        except EngineError as error:
+            # A server that rejects the field gets the request again without it, once for all.
+            if not (self._reasoning_off and "reasoning_effort" in str(error)):
+                raise
+            self._reasoning_off = False
+            payload.pop("reasoning_effort")
+            response = self._post(url, payload, headers, self._settings.timeout_seconds)
+        try:
+            message = response["choices"][0]["message"]
+            content = str(message.get("content") or "")
+        except (KeyError, IndexError, TypeError, AttributeError) as error:
             raise EngineError(
                 f"unexpected response from {self._endpoint}: {response!r:.200}"
             ) from error
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        if not content.strip() and reasoning:
+            raise EngineError(
+                "the model spent its output on reasoning and gave no answer; "
+                "turn thinking off for this model on the server"
+            )
+        return content
 
 
 def clean_output(text: str) -> str:

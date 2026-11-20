@@ -366,3 +366,40 @@ def test_numbers_and_roman_numerals_are_not_sent_to_the_engine() -> None:
     assert engine.calls == [["One"]]
     assert not needs_translation("IV.")
     assert needs_translation("Vlad")
+
+
+def test_llm_engine_asks_servers_to_skip_reasoning() -> None:
+    engine, sent = _llm(["Привет"])
+    engine.translate([EngineRequest("Hello")])
+    payload = sent[0][1]
+    assert payload["reasoning_effort"] == "none"
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_llm_engine_drops_reasoning_effort_when_server_rejects_it() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def post(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> Any:
+        sent.append(dict(payload))
+        if "reasoning_effort" in payload:
+            raise EngineError(f"{url} returned HTTP 400: unknown field reasoning_effort")
+        return {"choices": [{"message": {"content": "Привет"}}]}
+
+    engine = LlmEngine(EngineSettings(model="qwen"), post_json=post)
+    assert engine.translate([EngineRequest("Hello")])[0].text == "Привет"
+    assert engine.translate([EngineRequest("Hello")])[0].text == "Привет"
+    assert ["reasoning_effort" in item for item in sent] == [True, False, False]
+
+
+def test_llm_engine_reports_reasoning_without_answer_once() -> None:
+    calls = 0
+
+    def post(*_args: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"choices": [{"message": {"content": "", "reasoning": "Let me think..."}}]}
+
+    engine = LlmEngine(EngineSettings(model="qwen"), post_json=post)
+    error = engine.translate([EngineRequest("Hello")])[0].error
+    assert error is not None and "reasoning" in error
+    assert calls == 1
