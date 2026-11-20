@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from pdftranslate.book import BookDocument, book_translation_text, translate_book
 from pdftranslate.book.models import BookOcrInfo, BookParagraph, BookStatistics
-from pdftranslate.book.translate import _schedule
+from pdftranslate.book.translate import _schedule, needs_translation
 from pdftranslate.cli import app
 from pdftranslate.domain.document import SourceDocument
 from pdftranslate.engines import (
@@ -204,7 +204,7 @@ def test_llm_engine_builds_prompt_with_context_glossary_and_domain() -> None:
     assert "KGB history" in messages[0]["content"]
     assert "Lubyanka -> Лубянка" in messages[0]["content"]
     assert messages[-1]["content"] == "Kryuchkov returned."
-    assert engine.engine_id == "llm:qwen:t0.2:p1:KGB history"
+    assert engine.engine_id == "llm:qwen:t0.2:p2:KGB history"
     assert engine.capabilities.uses_context
 
 
@@ -248,6 +248,7 @@ def test_clean_output_and_validation() -> None:
     long_source = "word " * 40
     assert validate_translation(long_source, "Слово") is not None
     assert validate_translation("1945", "1945") is None
+    assert validate_translation("1", "Could you clarify what you mean?") is not None
 
 
 def test_split_sentences_keeps_abbreviations_and_initials() -> None:
@@ -354,3 +355,51 @@ def test_book_translate_cli_rejects_bad_input(tmp_path: Path) -> None:
     no_model = runner.invoke(app, ["book-translate", str(source), "-o", str(tmp_path / "o.json")])
     assert no_model.exit_code == 2
     assert "--model" in no_model.output
+
+
+def test_numbers_and_roman_numerals_are_not_sent_to_the_engine() -> None:
+    engine = FakeEngine()
+
+    result = translate_book(_book(["1", "XIV", "— 3 —", "One"]), engine, engine_name="fake")
+
+    assert [item.translation for item in result.paragraphs] == ["1", "XIV", "— 3 —", "ONE"]
+    assert engine.calls == [["One"]]
+    assert not needs_translation("IV.")
+    assert needs_translation("Vlad")
+
+
+def test_llm_engine_asks_servers_to_skip_reasoning() -> None:
+    engine, sent = _llm(["Привет"])
+    engine.translate([EngineRequest("Hello")])
+    payload = sent[0][1]
+    assert payload["reasoning_effort"] == "none"
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_llm_engine_drops_reasoning_effort_when_server_rejects_it() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def post(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> Any:
+        sent.append(dict(payload))
+        if "reasoning_effort" in payload:
+            raise EngineError(f"{url} returned HTTP 400: unknown field reasoning_effort")
+        return {"choices": [{"message": {"content": "Привет"}}]}
+
+    engine = LlmEngine(EngineSettings(model="qwen"), post_json=post)
+    assert engine.translate([EngineRequest("Hello")])[0].text == "Привет"
+    assert engine.translate([EngineRequest("Hello")])[0].text == "Привет"
+    assert ["reasoning_effort" in item for item in sent] == [True, False, False]
+
+
+def test_llm_engine_reports_reasoning_without_answer_once() -> None:
+    calls = 0
+
+    def post(*_args: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"choices": [{"message": {"content": "", "reasoning": "Let me think..."}}]}
+
+    engine = LlmEngine(EngineSettings(model="qwen"), post_json=post)
+    error = engine.translate([EngineRequest("Hello")])[0].error
+    assert error is not None and "reasoning" in error
+    assert calls == 1

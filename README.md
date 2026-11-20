@@ -137,6 +137,11 @@ uv run pdftranslate book-translate .\book.json -o .\book.nllb.json --engine nllb
   sentences. `PDFTRANSLATE_LLM_API_KEY` is sent as a bearer token if set.
 - `--parallel N` serves N llm requests at once by splitting the book into N contiguous lanes; the
   server needs matching slots (`llama-server --parallel N`).
+- Paragraphs without words (chapter numbers, Roman numerals, punctuation) are copied unchanged
+  and never sent to the engine.
+- The llm engine asks the server to answer without a reasoning phase (`enable_thinking: false`
+  for llama.cpp and LM Studio, `reasoning_effort: "none"` for Ollama). An answer that holds only
+  reasoning is reported as a failure.
 - A paragraph that fails (server error, empty, untranslated or wildly mis-sized output after one
   retry) keeps `translation_error` and does not stop the book. Finished paragraphs are stored in
   the translation memory under `--cache-dir`, so rerunning the same command only translates what

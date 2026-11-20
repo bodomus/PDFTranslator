@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Sequence
 
 from pdftranslate.book.models import BookDocument, BookParagraph, BookTranslationInfo
@@ -14,6 +15,8 @@ BookProgress = Callable[[int, int, int], None]
 
 # Engines without context get this many paragraphs per call; their own batching does the rest.
 NO_CONTEXT_BATCH = 16
+
+_ROMAN = re.compile(r"[IVXLCDM]+")
 
 
 def translate_book(
@@ -52,6 +55,9 @@ def translate_book(
     for step in schedule:
         pending: list[tuple[int, EngineRequest, str]] = []
         for index in step:
+            if not needs_translation(paragraphs[index].text):
+                finish(index, EngineResult(paragraphs[index].text))
+                continue
             with_context = capabilities.uses_context and index not in lane_starts
             request = _request(paragraphs, translations, index, with_context)
             key = _cache_text(request)
@@ -106,6 +112,15 @@ def book_translation_text(book: BookDocument) -> str:
         text = item.translation if item.translation is not None else f"[НЕ ПЕРЕВЕДЕНО] {item.text}"
         chunks.append(f"## {text}" if item.kind == "heading" else text)
     return "\n\n".join(chunks) + "\n"
+
+
+def needs_translation(text: str) -> bool:
+    """False for numbers, Roman numerals and punctuation, which are kept as they are.
+
+    A chat model given a bare "1" or "IV" tends to answer it as a question instead.
+    """
+    letters = "".join(character for character in text if character.isalpha())
+    return bool(letters) and not _ROMAN.fullmatch(letters)
 
 
 def _schedule(total: int, uses_context: bool, parallel: int) -> list[list[int]]:
