@@ -39,10 +39,11 @@ from pdftranslate.book import (
     ocr_book,
     translate_book,
 )
+from pdftranslate.book.terms import extract_terms, terms_to_tsv
 from pdftranslate.config import Settings
 from pdftranslate.domain.document import ExtractedDocument, InspectionReport
 from pdftranslate.engines import EngineError, EngineSettings, create_engine
-from pdftranslate.glossary import load_glossary
+from pdftranslate.glossary import GlossaryError, load_glossary
 from pdftranslate.logging_config import configure_logging
 from pdftranslate.ocr import OcrMode, inspect_ocr_dependencies
 from pdftranslate.pdf import PdfAnalyzer, PdfExtractor, PdfInputError
@@ -828,6 +829,13 @@ def book_translate(
         str | None,
         typer.Option("--domain", help="One line on the book's subject, given to the llm."),
     ] = None,
+    glossary: Annotated[
+        Path | None,
+        typer.Option(
+            "--glossary",
+            help="Book glossary: TSV (source, target, kind) or glossary JSON; used by llm.",
+        ),
+    ] = None,
     text_output: Annotated[
         Path | None,
         typer.Option("--text", help="Optional plain-text Russian copy for review."),
@@ -861,6 +869,7 @@ def book_translate(
         if device not in {"auto", "cpu", "cuda"}:
             raise EngineError("--device must be one of: auto, cpu, cuda")
         book = BookDocument.model_validate_json(input_path.read_text(encoding="utf-8"))
+        loaded_glossary = load_glossary(glossary) if glossary is not None else None
         engine = create_engine(
             engine_name,
             EngineSettings(
@@ -883,7 +892,12 @@ def book_translate(
 
         with TranslationCache(root_cache / "translation-memory.sqlite3") as cache:
             translated = translate_book(
-                book, engine, engine_name=engine_name, cache=cache, progress=report
+                book,
+                engine,
+                engine_name=engine_name,
+                cache=cache,
+                glossary=loaded_glossary.document if loaded_glossary else None,
+                progress=report,
             )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(translated.model_dump_json(indent=2), encoding="utf-8")
@@ -892,7 +906,14 @@ def book_translate(
             text_output.write_text(book_translation_text(translated), encoding="utf-8")
     except ValidationError as error:
         _exit_with_error(ValueError(f"invalid book JSON {input_path}: {error}"))
-    except (EngineError, OutputExistsError, TranslationError, OSError, ValueError) as error:
+    except (
+        EngineError,
+        GlossaryError,
+        OutputExistsError,
+        TranslationError,
+        OSError,
+        ValueError,
+    ) as error:
         _exit_with_error(error)
 
     info = translated.translation
@@ -902,6 +923,43 @@ def book_translate(
         f"[path]{output}[/path]; failed {info.failed}"
         + ("; rerun the same command to retry them" if info.failed else "")
     )
+    if info.glossary_entries:
+        console.print(
+            f"Glossary: {info.glossary_entries} entr(ies); {info.glossary_misses} term(s) "
+            "missing from their paragraph's translation (see glossary_misses in the JSON)"
+        )
+
+
+@app.command("book-terms")
+def book_terms(
+    input_path: Annotated[Path, typer.Argument(help="Book JSON written by book-ocr.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination TSV: term, kind, count, example."),
+    ],
+    min_count: Annotated[
+        int, typer.Option("--min-count", min=1, help="Skip terms seen fewer times.")
+    ] = 3,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace an existing output."),
+    ] = False,
+) -> None:
+    """List names, abbreviations and codenames worth fixing in a book glossary."""
+    try:
+        if output.expanduser().resolve() == input_path.expanduser().resolve():
+            raise OutputExistsError("output must not replace the input book JSON")
+        if output.exists() and not overwrite:
+            raise OutputExistsError(f"output already exists; use --overwrite: {output}")
+        book = BookDocument.model_validate_json(input_path.read_text(encoding="utf-8"))
+        terms = extract_terms(book, min_count=min_count)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(terms_to_tsv(terms), encoding="utf-8")
+    except ValidationError as error:
+        _exit_with_error(ValueError(f"invalid book JSON {input_path}: {error}"))
+    except (OutputExistsError, OSError) as error:
+        _exit_with_error(error)
+    console.print(f"Wrote {len(terms)} term candidate(s) to [path]{output}[/path]")
 
 
 @app.command("translate")

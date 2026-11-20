@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 from pdftranslate.book.models import BookDocument, BookParagraph, BookTranslationInfo
 from pdftranslate.engines.base import EngineRequest, EngineResult, TranslationEngine
+from pdftranslate.glossary import GlossaryDocument, find_glossary_matches
 from pdftranslate.translation.cache import TranslationCache
 
 BookProgress = Callable[[int, int, int], None]
@@ -17,6 +18,8 @@ BookProgress = Callable[[int, int, int], None]
 NO_CONTEXT_BATCH = 16
 
 _ROMAN = re.compile(r"[IVXLCDM]+")
+_RU_WORD = re.compile(r"[А-Яа-яЁё]+")
+_ENDING_LETTERS = "аеиоуыэюяйь"
 
 
 def translate_book(
@@ -25,6 +28,7 @@ def translate_book(
     *,
     engine_name: str,
     cache: TranslationCache | None = None,
+    glossary: GlossaryDocument | None = None,
     progress: BookProgress | None = None,
 ) -> BookDocument:
     """Return the book with a translation, or the failure reason, on every paragraph.
@@ -33,9 +37,17 @@ def translate_book(
     while serving several requests at once, the book is cut into contiguous lanes that advance
     in lockstep: step k translates the k-th paragraph of every lane. Finished paragraphs are
     cached, so rerunning after a crash or with failures only spends work on what is missing.
+
+    With a glossary, each request carries the entries found in its paragraph, and every
+    translated paragraph lists in ``glossary_misses`` the sources whose Russian form it lacks.
     """
     paragraphs = list(book.paragraphs)
     total = len(paragraphs)
+    use_glossary = glossary is not None and engine.capabilities.uses_glossary
+    terms = [
+        _paragraph_terms(item.text, glossary) if use_glossary and glossary else ()
+        for item in paragraphs
+    ]
     translations: list[str | None] = [None] * total
     errors: list[str | None] = [None] * total
     done = 0
@@ -59,7 +71,7 @@ def translate_book(
                 finish(index, EngineResult(paragraphs[index].text))
                 continue
             with_context = capabilities.uses_context and index not in lane_starts
-            request = _request(paragraphs, translations, index, with_context)
+            request = _request(paragraphs, translations, index, with_context, terms[index])
             key = _cache_text(request)
             cached = _cache_get(cache, engine.engine_id, key)
             if cached is not None:
@@ -88,8 +100,16 @@ def translate_book(
             progress(done, total, failed)
 
     updated = tuple(
-        paragraph.model_copy(update={"translation": text, "translation_error": error})
-        for paragraph, text, error in zip(paragraphs, translations, errors, strict=True)
+        paragraph.model_copy(
+            update={
+                "translation": text,
+                "translation_error": error,
+                "glossary_misses": glossary_misses(text, pairs) if text is not None else (),
+            }
+        )
+        for paragraph, text, error, pairs in zip(
+            paragraphs, translations, errors, terms, strict=True
+        )
     )
     missing = sum(text is None for text in translations)
     return book.model_copy(
@@ -100,6 +120,8 @@ def translate_book(
                 engine_id=engine.engine_id,
                 translated=total - missing,
                 failed=missing,
+                glossary_entries=len(glossary.entries) if use_glossary and glossary else 0,
+                glossary_misses=sum(len(item.glossary_misses) for item in updated),
             ),
         }
     )
@@ -112,6 +134,25 @@ def book_translation_text(book: BookDocument) -> str:
         text = item.translation if item.translation is not None else f"[НЕ ПЕРЕВЕДЕНО] {item.text}"
         chunks.append(f"## {text}" if item.kind == "heading" else text)
     return "\n\n".join(chunks) + "\n"
+
+
+def glossary_misses(translation: str, pairs: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """Sources whose glossary form is absent from the translation, allowing for inflection.
+
+    Each Russian word of the target must appear with any ending on its stem: Крючков matches
+    Крючкова, главный противник matches главного противника but not главное противоречие.
+    """
+    words = [_fold(word) for word in _RU_WORD.findall(translation)]
+    missing: list[str] = []
+    for source, target in pairs:
+        forms = [_fold(word) for word in _RU_WORD.findall(target)]
+        if forms:
+            found = all(any(_inflects(word, form) for word in words) for form in forms)
+        else:
+            found = target in translation
+        if not found:
+            missing.append(source)
+    return tuple(missing)
 
 
 def needs_translation(text: str) -> bool:
@@ -144,18 +185,40 @@ def _request(
     translations: Sequence[str | None],
     index: int,
     with_context: bool,
+    glossary: tuple[tuple[str, str], ...],
 ) -> EngineRequest:
     text = paragraphs[index].text
-    if not with_context:
-        return EngineRequest(text)
-    previous = translations[index - 1]
+    previous = translations[index - 1] if with_context else None
     if previous is None:
-        return EngineRequest(text)
+        return EngineRequest(text, glossary=glossary)
     return EngineRequest(
         text,
         previous_source=paragraphs[index - 1].text,
         previous_translation=previous,
+        glossary=glossary,
     )
+
+
+def _paragraph_terms(text: str, glossary: GlossaryDocument) -> tuple[tuple[str, str], ...]:
+    pairs = (
+        (text[match.start : match.end], match.entry.target)
+        for match in find_glossary_matches(text, glossary)
+    )
+    # One line per source form, in reading order.
+    return tuple(dict.fromkeys(pairs))
+
+
+def _fold(word: str) -> str:
+    return word.casefold().replace("ё", "е")
+
+
+def _inflects(word: str, form: str) -> bool:
+    """True when word is form with another ending: the form minus its final vowels (and й, ь)
+    is the stem, and the word adds at most four letters to it."""
+    stem = form.rstrip(_ENDING_LETTERS) or form
+    if len(stem) < 2:
+        stem = form
+    return word.startswith(stem) and len(word) - len(stem) <= 4
 
 
 def _cache_text(request: EngineRequest) -> str:

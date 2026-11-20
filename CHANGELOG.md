@@ -18,6 +18,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   output cleanup and validation; `nllb` engine with sentence segmentation and beam search.
   Failed paragraphs are recorded instead of aborting, and finished ones are cached for reruns.
 
+- Book glossary (PDFTR-48): `book-terms` lists name, abbreviation and codename candidates;
+  `book-translate --glossary` accepts a hand-editable TSV, sends each paragraph's entries to the
+  llm engine and records `glossary_misses` per paragraph. The llm prompt now keeps capitalised
+  codenames in Cyrillic capitals (prompt revision 3).
+
 ### Fixed
 
 - `book-translate`: number-only paragraphs are copied instead of being sent to the engine; llm
