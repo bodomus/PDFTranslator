@@ -476,6 +476,9 @@ def test_glossary_misses_allow_inflection_and_yo() -> None:
     pairs = (("Khrushchev", "Хрущёв"), ("Cheka", "ЧК"), ("illegals", "нелегалы"))
     assert glossary_misses("Хрущева и ЧК ценили нелегалов.", pairs) == ()
     assert glossary_misses("Он ушёл.", (("IBM", "IBM"),)) == ("IBM",)
+    adversary = (("Main Adversary", "главный противник"),)
+    assert glossary_misses("главного противника", adversary) == ()
+    assert glossary_misses("главное противоречие", adversary) == ("Main Adversary",)
 
 
 def test_engines_without_glossary_support_get_no_terms(tmp_path: Path) -> None:
@@ -504,6 +507,8 @@ def test_extract_terms_finds_names_and_codenames() -> None:
     assert found[("VAZA", "caps")] == 2
     assert found[("KGB", "caps")] == 2
     assert ("The", "name") not in found
+    openers = extract_terms(_book(["Kryuchkov arrived. Kryuchkov left."]), min_count=2)
+    assert [(item.term, item.count) for item in openers] == [("Kryuchkov", 2)]
     assert all(item.term != "Gordievsky" for item in terms)
     assert terms_to_tsv(terms).startswith("term\tkind\tcount\texample\n")
 
@@ -519,3 +524,6 @@ def test_book_terms_cli(tmp_path: Path) -> None:
     assert "VAZA\tcaps\t3" in target.read_text(encoding="utf-8")
     again = CliRunner().invoke(app, ["book-terms", str(source), "-o", str(target)])
     assert again.exit_code == 2
+    itself = CliRunner().invoke(app, ["book-terms", str(source), "-o", str(source), "--overwrite"])
+    assert itself.exit_code == 2
+    assert "must not replace" in itself.output

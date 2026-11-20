@@ -947,6 +947,8 @@ def book_terms(
 ) -> None:
     """List names, abbreviations and codenames worth fixing in a book glossary."""
     try:
+        if output.expanduser().resolve() == input_path.expanduser().resolve():
+            raise OutputExistsError("output must not replace the input book JSON")
         if output.exists() and not overwrite:
             raise OutputExistsError(f"output already exists; use --overwrite: {output}")
         book = BookDocument.model_validate_json(input_path.read_text(encoding="utf-8"))

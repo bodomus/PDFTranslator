@@ -77,7 +77,8 @@ def extract_terms(
             if _SENTENCE_START.search(text[: match.start()]):
                 # Drop a sentence-initial ordinary word ("When Andropov ..." -> "Andropov").
                 first = words[0]
-                if lower[first.casefold()] >= 1 or not named[first]:
+                ordinary = lower[first.casefold()] >= 1
+                if ordinary or (len(words) > 1 and not named[first]):
                     rest = phrase[len(first) :].lstrip(" -")
                     if not rest:
                         continue

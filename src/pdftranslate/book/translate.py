@@ -19,6 +19,7 @@ NO_CONTEXT_BATCH = 16
 
 _ROMAN = re.compile(r"[IVXLCDM]+")
 _RU_WORD = re.compile(r"[А-Яа-яЁё]+")
+_ENDING_LETTERS = "аеиоуыэюяйь"
 
 
 def translate_book(
@@ -138,15 +139,15 @@ def book_translation_text(book: BookDocument) -> str:
 def glossary_misses(translation: str, pairs: Sequence[tuple[str, str]]) -> tuple[str, ...]:
     """Sources whose glossary form is absent from the translation, allowing for inflection.
 
-    Each Russian word of the target must appear with its stem: the word minus up to three
-    final letters, never shorter than three letters (Крючков matches Крючкова, ЧК matches ЧК).
+    Each Russian word of the target must appear with any ending on its stem: Крючков matches
+    Крючкова, главный противник matches главного противника but not главное противоречие.
     """
     words = [_fold(word) for word in _RU_WORD.findall(translation)]
     missing: list[str] = []
     for source, target in pairs:
-        stems = [_stem(_fold(word)) for word in _RU_WORD.findall(target)]
-        if stems:
-            found = all(any(word.startswith(stem) for word in words) for stem in stems)
+        forms = [_fold(word) for word in _RU_WORD.findall(target)]
+        if forms:
+            found = all(any(_inflects(word, form) for word in words) for form in forms)
         else:
             found = target in translation
         if not found:
@@ -211,8 +212,13 @@ def _fold(word: str) -> str:
     return word.casefold().replace("ё", "е")
 
 
-def _stem(word: str) -> str:
-    return word if len(word) <= 3 else word[: max(3, len(word) - 3)]
+def _inflects(word: str, form: str) -> bool:
+    """True when word is form with another ending: the form minus its final vowels (and й, ь)
+    is the stem, and the word adds at most four letters to it."""
+    stem = form.rstrip(_ENDING_LETTERS) or form
+    if len(stem) < 2:
+        stem = form
+    return word.startswith(stem) and len(word) - len(stem) <= 4
 
 
 def _cache_text(request: EngineRequest) -> str:
